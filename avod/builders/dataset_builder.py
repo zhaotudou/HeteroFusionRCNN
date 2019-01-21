@@ -26,6 +26,7 @@ class DatasetBuilder(object):
 
     KITTI_TRAIN = KittiDatasetConfig(
         name="kitti",
+        dataset_dir=avod.root_dir() + "/../dataset/Kitti/object",
         data_split="train",
         data_split_dir="training",
         has_labels=True,

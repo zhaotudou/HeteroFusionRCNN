@@ -22,4 +22,8 @@ message EvalConfig {
 
     // Kitti native evaluation
     optional float kitti_score_threshold = 6 [default = 0.1];
+   
+    // for debug only
+    optional bool kitti_native_eval_only = 7 [default = false];
+    optional int32 kitti_native_eval_step = 8;
 }

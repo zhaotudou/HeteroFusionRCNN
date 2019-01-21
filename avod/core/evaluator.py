@@ -237,14 +237,15 @@ class Evaluator:
                                         self._total_loss],
                                        feed_dict=feed_dict)
 
-                rpn_objectness_loss = eval_losses[RpnModel.LOSS_RPN_OBJECTNESS]
-                rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
+                if self.model_config.alternating_training_step != 2:
+                    rpn_objectness_loss = eval_losses[RpnModel.LOSS_RPN_OBJECTNESS]
+                    rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
 
-                self._update_rpn_losses(eval_rpn_losses,
-                                        rpn_objectness_loss,
-                                        rpn_regression_loss,
-                                        eval_total_loss,
-                                        global_step)
+                    self._update_rpn_losses(eval_rpn_losses,
+                                            rpn_objectness_loss,
+                                            rpn_regression_loss,
+                                            eval_total_loss,
+                                            global_step)
 
                 # Save proposals
                 proposals_and_scores = \
@@ -413,11 +414,6 @@ class Evaluator:
         if not os.path.exists(self.checkpoint_dir):
             raise ValueError('{} must have at least one checkpoint entry.'
                              .format(self.checkpoint_dir))
-
-        # Copy kitti native eval code into the predictions folder
-        if self.do_kitti_native_eval:
-            evaluator_utils.copy_kitti_native_code(
-                self.model_config.checkpoint_name)
 
         if self.skip_evaluated_checkpoints:
             already_evaluated_ckpts = self.get_evaluated_ckpts(
@@ -1014,10 +1010,10 @@ class Evaluator:
         """
 
         top_anchors = predictions[RpnModel.PRED_TOP_ANCHORS]
-        top_proposals = box_3d_encoder.anchors_to_box_3d(top_anchors)
+        #top_proposals = box_3d_encoder.anchors_to_box_3d(top_anchors)
         softmax_scores = predictions[RpnModel.PRED_TOP_OBJECTNESS_SOFTMAX]
 
-        proposals_and_scores = np.column_stack((top_proposals,
+        proposals_and_scores = np.column_stack((top_anchors,
                                                 softmax_scores))
 
         return proposals_and_scores

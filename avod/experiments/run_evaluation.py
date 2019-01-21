@@ -23,6 +23,8 @@ def evaluate(model_config, eval_config, dataset_config):
     if eval_mode not in ['val', 'test']:
         raise ValueError('Evaluation mode can only be set to `val` or `test`')
     evaluate_repeatedly = eval_config.evaluate_repeatedly
+    kitti_native_eval_only = eval_config.kitti_native_eval_only
+    kitti_native_eval_step = eval_config.kitti_native_eval_step
 
     # Parse dataset config
     data_split = dataset_config.data_split
@@ -79,7 +81,9 @@ def evaluate(model_config, eval_config, dataset_config):
                                     dataset_config,
                                     eval_config)
         
-        if evaluate_repeatedly:
+        if kitti_native_eval_only:
+            model_evaluator.run_kitti_native_eval(kitti_native_eval_step)
+        elif evaluate_repeatedly:
             model_evaluator.repeated_checkpoint_run()
         else:
             model_evaluator.run_latest_checkpoints()

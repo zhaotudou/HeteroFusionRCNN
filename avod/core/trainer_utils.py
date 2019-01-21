@@ -47,7 +47,8 @@ def load_model_weights(sess, checkpoint_dir):
         sess: A TensorFlow session
         checkpoint_dir: Path to the weights to be loaded
     """
-
+    #variables_to_restore = slim.get_model_variables()
+    variables_to_restore = slim.get_variables()
     init_fn = slim.assign_from_checkpoint_fn(
-        checkpoint_dir, slim.get_model_variables(), ignore_missing_vars=True)
+        checkpoint_dir, variables_to_restore, ignore_missing_vars=True)
     init_fn(sess)

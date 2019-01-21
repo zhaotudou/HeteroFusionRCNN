@@ -149,6 +149,7 @@ class RpnModel(model.DetectionModel):
             self._path_drop_probabilities[0] = 1.0
             self._path_drop_probabilities[1] = 1.0
         '''
+
     def _add_placeholder(self, dtype, shape, name):
         placeholder = tf.placeholder(dtype, shape, name)
         self.placeholders[name] = placeholder
@@ -959,15 +960,15 @@ class RpnModel(model.DetectionModel):
                         localization_loss = localization_loss / num_positives
                         tf.summary.scalar('regression', localization_loss)
 
-            with tf.variable_scope('total_loss'):
-                total_loss = objectness_loss + localization_loss
+            with tf.variable_scope('rpn_loss'):
+                rpn_loss = objectness_loss + localization_loss
 
         loss_dict = {
             self.LOSS_RPN_OBJECTNESS: objectness_loss,
             self.LOSS_RPN_REGRESSION: localization_loss,
         }
 
-        return loss_dict, total_loss
+        return loss_dict, rpn_loss
 
     def create_path_drop_masks(self,
                                p_img,

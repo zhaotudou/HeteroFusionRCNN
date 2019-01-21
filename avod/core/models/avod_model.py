@@ -20,6 +20,11 @@ from avod.core.models.rpn_model import RpnModel
 
 class AvodModel(model.DetectionModel):
     ##############################
+    # Keys for Placeholders
+    ##############################
+    PL_PROPOSALS = 'proposals_pl'
+    
+    ##############################
     # Keys for Predictions
     ##############################
     # Mini batch (mb) ground truth
@@ -113,16 +118,39 @@ class AvodModel(model.DetectionModel):
                              'should be one of ["train", "val", "test"]')
         self._train_val_test = train_val_test
         self._is_training = (self._train_val_test == 'train')
+        self.dataset.train_val_test = self._train_val_test
 
         self.sample_info = {}
+        
+        # Network input placeholders
+        self.placeholders = dict()
 
+        # Inputs to network placeholders
+        self._placeholder_inputs = dict()
+        
+    def _add_placeholder(self, dtype, shape, name):
+        placeholder = tf.placeholder(dtype, shape, name)
+        self.placeholders[name] = placeholder
+        return placeholder
+
+    def _set_up_input_pls(self):
+        """Sets up input placeholders by adding them to self._placeholders.
+        Keys are defined as self.PL_*.
+        """
+        with tf.variable_scope('pl_proposals'):
+             self._proposals_pl = self._add_placeholder(tf.float32, [None, 6], self.PL_PROPOSALS)
+    
     def build(self):
         rpn_model = self._rpn_model
 
         # Share the same prediction dict as RPN
         prediction_dict = rpn_model.build()
-
-        top_anchors = prediction_dict[RpnModel.PRED_TOP_ANCHORS]
+        
+        if self.model_config.alternating_training_step == 2:
+            self._set_up_input_pls()
+            top_anchors = self.placeholders[AvodModel.PL_PROPOSALS]
+        else:
+            top_anchors = prediction_dict[RpnModel.PRED_TOP_ANCHORS]
         ground_plane = rpn_model.placeholders[RpnModel.PL_GROUND_PLANE]
 
         class_labels = rpn_model.placeholders[RpnModel.PL_LABEL_CLASSES]
@@ -521,6 +549,7 @@ class AvodModel(model.DetectionModel):
                                                   nms_indices)
             top_classification_softmax = tf.gather(all_cls_softmax,
                                                    nms_indices)
+            tf.summary.histogram('top_classification_scores', top_classification_softmax[:, 1])
             top_prediction_anchors = tf.gather(prediction_anchors,
                                                nms_indices)
 
@@ -662,11 +691,21 @@ class AvodModel(model.DetectionModel):
     def create_feed_dict(self):
         feed_dict = self._rpn_model.create_feed_dict()
         self.sample_info = self._rpn_model.sample_info
+        if self.model_config.alternating_training_step == 2:
+            self._placeholder_inputs[self.PL_PROPOSALS] = self.dataset.load_proposals(self.sample_info['sample_name'])
+        
+            for key, value in self.placeholders.items():
+                feed_dict[value] = self._placeholder_inputs[key]
         return feed_dict
 
     def loss(self, prediction_dict):
         # Note: The loss should be using mini-batch values only
-        loss_dict, rpn_loss = self._rpn_model.loss(prediction_dict)
+        if self.model_config.alternating_training_step in [2, 4]:
+            loss_dict = {}
+            rpn_loss = tf.constant(0.0)
+        else:
+            loss_dict, rpn_loss = self._rpn_model.loss(prediction_dict)
+        
         losses_output = avod_loss_builder.build(self, prediction_dict)
 
         classification_loss = \
@@ -690,7 +729,7 @@ class AvodModel(model.DetectionModel):
         if ang_loss_norm is not None:
             loss_dict.update({self.LOSS_FINAL_ORIENTATION: ang_loss_norm})
 
-        with tf.variable_scope('model_total_loss'):
+        with tf.variable_scope('total_loss'):
             total_loss = rpn_loss + avod_loss
 
         return loss_dict, total_loss

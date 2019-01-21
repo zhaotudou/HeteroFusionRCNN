@@ -165,6 +165,7 @@ class KittiDataset:
         self.planes_dir = self._data_split_dir + '/planes'
         self.velo_dir = self._data_split_dir + '/velodyne'
         self.depth_dir = self._data_split_dir + '/depth_' + str(self._cam_idx)
+        self.proposal_dir = self._data_split_dir + '/proposal'
 
         # Labels are always in the training folder
         self.label_dir = self.dataset_dir + \
@@ -195,6 +196,9 @@ class KittiDataset:
 
     def get_bev_sample_path(self, sample_name):
         return self.bev_image_dir + '/' + sample_name + '.png'
+
+    def get_proposal_path(self, sample_name):
+        return self.proposal_dir + '/' + sample_name + '.txt'
 
     # Cluster info
     def get_cluster_info(self):
@@ -365,6 +369,10 @@ class KittiDataset:
             sample_dicts.append(sample_dict)
 
         return sample_dicts
+
+    def load_proposals(self, sample_name):
+        proposals = np.loadtxt(self.get_proposal_path(sample_name))[:, 0:6]
+        return proposals
 
     def _shuffle_samples(self):
         perm = np.arange(self.num_samples)

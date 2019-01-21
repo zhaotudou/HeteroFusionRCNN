@@ -76,12 +76,21 @@ def train(model, train_config):
 
     # Create the train op
     with tf.variable_scope('train_op'):
+        variables_to_train = None
+        if model_config.alternating_training_step == 3:
+            variables_to_train = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "pc_bottleneck")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "proposal_roi_pooling")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "anchor_predictor")
+        elif model_config.alternating_training_step == 4:
+            variables_to_train = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "avod_roi_pooling")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "box_predictor")
         train_op = slim.learning.create_train_op(
             total_loss,
             training_optimizer,
             clip_gradient_norm=1.0,
             global_step=global_step_tensor,
-            summarize_gradients=True)
+            summarize_gradients=True,
+            variables_to_train=variables_to_train)
 
     # Save checkpoints regularly.
     saver = tf.train.Saver(max_to_keep=max_checkpoints,
@@ -134,7 +143,11 @@ def train(model, train_config):
                                        saver)
         if len(saver.last_checkpoints) > 0:
             checkpoint_to_restore = saver.last_checkpoints[-1]
-            saver.restore(sess, checkpoint_to_restore)
+            if model_config.alternating_training_step in [3, 4]:
+                sess.run(init)
+                trainer_utils.load_model_weights(sess, checkpoint_to_restore)
+            else:
+                saver.restore(sess, checkpoint_to_restore)
         else:
             # Initialize the variables
             sess.run(init)
