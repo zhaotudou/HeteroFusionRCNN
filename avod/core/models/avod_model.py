@@ -700,7 +700,7 @@ class AvodModel(model.DetectionModel):
 
     def loss(self, prediction_dict):
         # Note: The loss should be using mini-batch values only
-        if self.model_config.alternating_training_step in [2, 4]:
+        if self.model_config.alternating_training_step == 2:
             loss_dict = {}
             rpn_loss = tf.constant(0.0)
         else:
