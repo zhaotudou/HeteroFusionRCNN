@@ -1,3 +1,4 @@
+KEY_LABEL_SEG = 'label_seg'
 KEY_LABEL_BOXES_3D = 'label_boxes_3d'
 KEY_LABEL_ANCHORS = 'label_anchors'
 KEY_LABEL_CLASSES = 'label_classes'

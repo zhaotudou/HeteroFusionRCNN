@@ -37,6 +37,7 @@ def train(model, train_config):
     #############################
     # Get training configurations
     #############################
+    batch_size = train_config.batch_size
     max_iterations = train_config.max_iterations
     summary_interval = train_config.summary_interval
     checkpoint_interval = \
@@ -179,7 +180,7 @@ def train(model, train_config):
                 checkpoint_path, global_step))
 
         # Create feed_dict for inferencing
-        feed_dict = model.create_feed_dict()
+        feed_dict = model.create_feed_dict(batch_size)
 
         # Write summaries and train op
         if step % summary_interval == 0:

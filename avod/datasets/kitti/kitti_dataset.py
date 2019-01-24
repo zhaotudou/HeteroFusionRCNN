@@ -62,6 +62,7 @@ class KittiDataset:
         # without anchor_info. This is initialized to False, but is overwritten
         # via the config inside the model.
         self.train_on_all_samples = False
+        self.eval_all_samples = False
 
         self._set_up_classes_name()
 
@@ -210,6 +211,12 @@ class KittiDataset:
             self.kitti_utils.anchor_strides,
             sample_name)
 
+    def get_label_seg(self, sample_name):
+        return self.kitti_utils.get_label_seg(
+            self.classes_name,
+            self.kitti_utils.expand_gt_size,
+            sample_name)
+
     # Data loading methods
     def load_sample_names(self, data_split):
         """Load the sample names listed in this dataset's set file
@@ -247,28 +254,22 @@ class KittiDataset:
 
             # Only read labels if they exist
             if self.has_labels:
-                # Read mini batch first to see if it is empty
-                anchors_info = self.get_anchors_info(sample_name)
-
-                if (not anchors_info) and self.train_val_test == 'train' \
-                        and (not self.train_on_all_samples):
-                    empty_sample_dict = {
-                        constants.KEY_SAMPLE_NAME: sample_name,
-                        constants.KEY_ANCHORS_INFO: anchors_info
-                    }
-                    return [empty_sample_dict]
+                label_seg = self.get_label_seg(sample_name)
+                foreground_point_num = len(label_seg[label_seg > 0])
+                if (foreground_point_num <= 0) and \
+                        ((self.train_val_test == 'train' and (not self.train_on_all_samples)) or
+                        (self.train_val_test == 'val' and (not self.eval_all_samples))):
+                    continue
 
                 obj_labels = obj_utils.read_labels(self.label_dir,
                                                    int(sample_name))
-
                 # Only use objects that match dataset classes
                 obj_labels = self.kitti_utils.filter_labels(obj_labels)
 
             else:
                 obj_labels = None
-
-                anchors_info = []
-
+                
+                label_seg = np.zeros(16384)
                 label_anchors = np.zeros((1, 6))
                 label_boxes_3d = np.zeros((1, 7))
                 label_classes = np.zeros(1)
@@ -280,12 +281,8 @@ class KittiDataset:
                 sample_name))
             rgb_image = cv_bgr_image[..., :: -1]
             image_shape = rgb_image.shape[0:2]
-            image_input = rgb_image
+            #image_input = rgb_image
             
-            # Get ground plane
-            ground_plane = obj_utils.get_road_plane(int(sample_name),
-                                                    self.planes_dir)
-
             # Get calibration
             # stereo_calib_p2 = calib_utils.read_calibration(self.calib_dir,
             #                                               int(sample_name)).p2
@@ -293,6 +290,7 @@ class KittiDataset:
             point_cloud = self.kitti_utils.get_point_cloud(self.pc_source,
                                                            img_idx,
                                                            image_shape)
+            point_cloud = point_cloud.T
 
             # Augmentation (Flipping)
             if kitti_aug.AUG_FLIPPING in sample.augs:
@@ -300,7 +298,7 @@ class KittiDataset:
                 point_cloud = kitti_aug.flip_point_cloud(point_cloud)
                 obj_labels = [kitti_aug.flip_label_in_3d_only(obj)
                               for obj in obj_labels]
-                ground_plane = kitti_aug.flip_ground_plane(ground_plane)
+                #ground_plane = kitti_aug.flip_ground_plane(ground_plane)
                 #stereo_calib_p2 = kitti_aug.flip_stereo_calib_p2(
                 #    stereo_calib_p2, image_shape)
 
@@ -321,7 +319,6 @@ class KittiDataset:
 
                 # Return empty anchors_info if no ground truth after filtering
                 if len(label_boxes_3d) == 0:
-                    anchors_info = []
                     if self.train_on_all_samples:
                         # If training without any positive labels, we cannot
                         # set these to zeros, because later on the offset calc
@@ -340,28 +337,14 @@ class KittiDataset:
                 else:
                     label_anchors = box_3d_encoder.box_3d_to_anchor(
                         label_boxes_3d, ortho_rotate=True)
-            '''
-            # Create BEV maps
-            bev_images = self.kitti_utils.create_bev_maps(
-                point_cloud, ground_plane)
-
-            height_maps = bev_images.get('height_maps')
-            density_map = bev_images.get('density_map')
-            bev_input = np.dstack((*height_maps, density_map))
-            '''
+            
             sample_dict = {
+                constants.KEY_LABEL_SEG: label_seg,
                 constants.KEY_LABEL_BOXES_3D: label_boxes_3d,
                 constants.KEY_LABEL_ANCHORS: label_anchors,
                 constants.KEY_LABEL_CLASSES: label_classes,
 
-                constants.KEY_IMAGE_INPUT: image_input,
-                #constants.KEY_BEV_INPUT: bev_input,
-
-                constants.KEY_ANCHORS_INFO: anchors_info,
-
                 constants.KEY_POINT_CLOUD: point_cloud,
-                constants.KEY_GROUND_PLANE: ground_plane,
-                #constants.KEY_STEREO_CALIB_P2: stereo_calib_p2,
 
                 constants.KEY_SAMPLE_NAME: sample_name,
                 constants.KEY_SAMPLE_AUGS: sample.augs
@@ -399,36 +382,39 @@ class KittiDataset:
         if self.epochs_completed == 0 and start == 0 and shuffle:
             self._shuffle_samples()
 
-        # Go to the next epoch
-        if start + batch_size >= self.num_samples:
+        while len(samples_in_batch) < batch_size:
+            remain = batch_size - len(samples_in_batch)
+            # Go to the next epoch
+            start = self._index_in_epoch
+            if start + remain >= self.num_samples:
 
-            # Finished epoch
-            self.epochs_completed += 1
+                # Finished epoch
+                self.epochs_completed += 1
 
-            # Get the rest examples in this epoch
-            rest_num_examples = self.num_samples - start
+                # Get the rest examples in this epoch
+                rest_num_examples = self.num_samples - start
 
-            # Append those samples to the current batch
-            samples_in_batch.extend(
-                self.load_samples(np.arange(start, self.num_samples)))
+                # Append those samples to the current batch
+                samples_in_batch.extend(
+                    self.load_samples(np.arange(start, self.num_samples)))
 
-            # Shuffle the data
-            if shuffle:
-                self._shuffle_samples()
+                # Shuffle the data
+                if shuffle:
+                    self._shuffle_samples()
 
-            # Start next epoch
-            start = 0
-            self._index_in_epoch = batch_size - rest_num_examples
-            end = self._index_in_epoch
+                # Start next epoch
+                start = 0
+                self._index_in_epoch = remain - rest_num_examples
+                end = self._index_in_epoch
 
-            # Append the rest of the batch
-            samples_in_batch.extend(self.load_samples(np.arange(start, end)))
+                # Append the rest of the batch
+                samples_in_batch.extend(self.load_samples(np.arange(start, end)))
 
-        else:
-            self._index_in_epoch += batch_size
-            end = self._index_in_epoch
+            else:
+                self._index_in_epoch += remain
+                end = self._index_in_epoch
 
-            # Append the samples in the range to the batch
-            samples_in_batch.extend(self.load_samples(np.arange(start, end)))
+                # Append the samples in the range to the batch
+                samples_in_batch.extend(self.load_samples(np.arange(start, end)))
 
         return samples_in_batch

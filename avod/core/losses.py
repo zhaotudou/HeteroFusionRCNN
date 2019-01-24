@@ -173,3 +173,25 @@ class WeightedSoftmaxLoss(Loss):
             logits=tf.reshape(prediction_tensor, [-1, num_classes])))
 
         return tf.reduce_sum(per_row_cross_ent) * weight
+
+class WeightedFocalLoss(Loss):
+    
+    def _compute_loss(self, pred, target, weight, alpha=0.25, gamma=2):
+        """
+        Args:
+            pred:   softmax output props, [Batch, Points, Classes]
+            target: gt one-hot [Batch, Points, Classes]
+        Return:
+            focolloss = -alpha * [(1 - pt) ^ gamma] * log(pt)
+        """
+        epsilon = 1e-07
+
+        pred = tf.clip_by_value(pred, epsilon, 1.0 - epsilon)
+        
+        cross_entropy = -target * tf.log(pred)
+
+        f_weight = alpha * target * tf.pow((1 - pred), gamma)
+
+        loss = f_weight * cross_entropy
+
+        return tf.reduce_sum(loss) * weight

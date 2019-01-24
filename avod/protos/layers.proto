@@ -39,6 +39,13 @@ message PointCNNLayersConfig {
       repeated int32 xdconv_param = 1;
     }
     repeated XDConvLayer xdconv_layer = 6;
+    
+    // FCLayer [channel, dropout_rate]
+    message FCLayer {
+        required int32 C = 1;
+        required float dropout_rate = 2;
+    }
+    repeated FCLayer fc_layer = 7;
 }
 
 message VGGLayersConfig {

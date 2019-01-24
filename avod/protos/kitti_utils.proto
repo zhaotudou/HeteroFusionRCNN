@@ -15,22 +15,11 @@ message KittiUtilsConfig {
     // Anchor filtering density threshold
     optional int32 density_threshold = 4 [default = 1];
 
-    required BevGenerator bev_generator = 20;
+    optional LabelSegConfig label_seg_config = 20;
 
-    required MiniBatchConfig mini_batch_config = 21;
+    optional MiniBatchConfig mini_batch_config = 21;
 }
 
-message BevGenerator {
-    oneof bev_maps_type {
-        Slices slices = 1;
-    }
-
-    message Slices {
-        // Min and max height
-        required float height_lo = 1;
-        required float height_hi = 2;
-
-        // Number of slices to create
-        required int32 num_slices = 3;
-    }
+message LabelSegConfig {
+    required float expand_gt_size = 1;
 }

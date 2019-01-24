@@ -688,8 +688,8 @@ class AvodModel(model.DetectionModel):
 
         return mb_mask, mb_class_label_indices, mb_gt_indices
 
-    def create_feed_dict(self):
-        feed_dict = self._rpn_model.create_feed_dict()
+    def create_feed_dict(self, batch_size=1):
+        feed_dict = self._rpn_model.create_feed_dict(batch_size)
         self.sample_info = self._rpn_model.sample_info
         if self.model_config.alternating_training_step == 2:
             self._placeholder_inputs[self.PL_PROPOSALS] = self.dataset.load_proposals(self.sample_info['sample_name'])

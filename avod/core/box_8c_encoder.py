@@ -17,6 +17,28 @@ def np_box_3d_to_box_8co(box_3d):
         corners_3d: An ndarray or a tensor of shape (3 x 8) representing
             the box as corners in the following format ->
             [[x1,...,x8], [y1...,y8], [z1,...,z8]].
+                        
+        P8 *_______________*P5       
+          /|              /|
+         / |             / |
+        /  |            /  |
+       /   |    z-axis /   |
+      /    |        / /    |
+  P7 *_____|_______/_* P6  |
+     |  P4 *------/--|-----* P1
+     |    /      /   |    /
+     |   /      /    |   /
+     |  /      /_____|__/_____ x-axis
+     | /       |     | /
+     |/        |     |/
+  P3 *_________|_____* P2
+               |
+               |
+               |y_axis
+    
+    
+    
+    
     """
 
     format_checker.check_box_3d_format(box_3d)
@@ -59,6 +81,38 @@ def np_box_3d_to_box_8co(box_3d):
 
     return box_8c
 
+def np_box_8co_to_facet(boxes_8co):
+    """
+    Args:
+        boxes_8co: N x 8 x 3
+    Returns:
+        facets: all faces plane represented by ax+by+cz+d = 0
+                (N x 6 x [a,b,c,d])
+                (a,b,c) is the inner norm pointing inwards of the object
+    """
+    b = boxes_8co
+    norm = [] 
+    def inward_plane(boxes, i,j,k, s):
+        unkown_norm = np.cross(b[:,k,:] - b[:,j,:], b[:,j,:] - b[:,i,:], axis=-1)
+        direction = np.einsum('ij,ij->i',b[:,s,:] - b[:,j,:], unkown_norm) > 0
+        inner_norm = np.einsum('ij,i->ij', unkown_norm, direction*2-1)
+        d = -np.einsum('ij,ij->i',b[:,j,:], inner_norm).reshape((-1,1))
+        return np.concatenate((inner_norm, d, b[:,j,:]), axis=1)
+    
+    # bottom p3,p4,p1, check with p6
+    norm.append(inward_plane(b, 2,3,0, 5))
+    # right p1,p2,p6, check with p3
+    norm.append(inward_plane(b, 0,1,5, 2))
+    # top p6,p5,p8, check with p1
+    norm.append(inward_plane(b, 5,4,7, 0))
+    # left p8,p7,p3, check with p6
+    norm.append(inward_plane(b, 7,6,2, 5))
+    # behind p4,p1,p5, check with p2
+    norm.append(inward_plane(b, 3,0,4, 1))
+    # front p2,p6,p7, check with p5
+    norm.append(inward_plane(b, 1,5,6, 4))
+    # stack all
+    return np.stack(norm, axis=1)
 
 def tf_box_3d_to_box_8co(boxes_3d):
     """Computes the 3D bounding box corner positions from Box3D format.

@@ -11,6 +11,7 @@ from avod.core import box_3d_encoder
 from avod.core import constants
 from avod.core import losses
 from avod.core import model
+from avod.core import pointfly as pf
 from avod.core import summary_utils
 from avod.core.anchor_generators import grid_anchor_3d_generator
 from avod.datasets.kitti import kitti_aug
@@ -20,9 +21,9 @@ class RpnModel(model.DetectionModel):
     ##############################
     # Keys for Placeholders
     ##############################
-    PL_PC_INPUT = 'pc_input_pl'
+    PL_PC_INPUTS = 'pc_inputs_pl'
     #PL_IMG_INPUT = 'img_input_pl'
-    PL_ANCHORS = 'anchors_pl'
+    #PL_ANCHORS = 'anchors_pl'
 
     '''
     PL_BEV_ANCHORS = 'bev_anchors_pl'
@@ -30,13 +31,10 @@ class RpnModel(model.DetectionModel):
     PL_IMG_ANCHORS = 'img_anchors_pl'
     PL_IMG_ANCHORS_NORM = 'img_anchors_norm_pl'
     '''
+    PL_LABEL_SEGS = 'label_segs_pl'
     PL_LABEL_ANCHORS = 'label_anchors_pl'
     PL_LABEL_BOXES_3D = 'label_boxes_3d_pl'
     PL_LABEL_CLASSES = 'label_classes_pl'
-
-    PL_ANCHOR_IOUS = 'anchor_ious_pl'
-    PL_ANCHOR_OFFSETS = 'anchor_offsets_pl'
-    PL_ANCHOR_CLASSES = 'anchor_classes_pl'
 
     # Sample info, including keys for projection to image space
     # (e.g. camera matrix, image index, etc.)
@@ -44,13 +42,13 @@ class RpnModel(model.DetectionModel):
     PL_CALIB_P2 = 'frame_calib_p2'
     PL_IMG_IDX = 'current_img_idx'
     '''
-    PL_GROUND_PLANE = 'ground_plane'
 
     ##############################
     # Keys for Predictions
     ##############################
-    PRED_ANCHORS = 'rpn_anchors'
-
+    PRED_SEG_SOFTMAX = 'rpn_seg_softmax'
+    PRED_SEG_GT = 'rpn_seg_gt'
+    
     PRED_MB_OBJECTNESS_GT = 'rpn_mb_objectness_gt'
     PRED_MB_OFFSETS_GT = 'rpn_mb_offsets_gt'
 
@@ -65,6 +63,7 @@ class RpnModel(model.DetectionModel):
     ##############################
     # Keys for Loss
     ##############################
+    LOSS_RPN_SEGMENTATION = 'rpn_segmentation_loss'
     LOSS_RPN_OBJECTNESS = 'rpn_objectness_loss'
     LOSS_RPN_REGRESSION = 'rpn_regression_loss'
 
@@ -125,10 +124,12 @@ class RpnModel(model.DetectionModel):
         self._placeholder_inputs = dict()
 
         # Information about the current sample
-        self.sample_info = dict()
+        self.samples_info = []
 
         # Dataset
         self.dataset = dataset
+        self.num_classes = dataset.num_classes
+        # Overwrite the dataset's variable with the config
         self.dataset.train_val_test = self._train_val_test
         self._area_extents = self.dataset.kitti_utils.area_extents
         self._bev_extents = self.dataset.kitti_utils.bev_extents
@@ -136,12 +137,13 @@ class RpnModel(model.DetectionModel):
         self._anchor_strides = self.dataset.kitti_utils.anchor_strides
         self._anchor_generator = \
             grid_anchor_3d_generator.GridAnchor3dGenerator()
-
+        
         #self._path_drop_probabilities = self._config.path_drop_probabilities
         self._train_on_all_samples = self._config.train_on_all_samples
         self._eval_all_samples = self._config.eval_all_samples
         # Overwrite the dataset's variable with the config
         self.dataset.train_on_all_samples = self._train_on_all_samples
+        self.dataset.eval_all_samples = self._eval_all_samples
         '''
         if self._train_val_test in ["val", "test"]:
             # Disable path-drop, this should already be disabled inside the
@@ -161,75 +163,25 @@ class RpnModel(model.DetectionModel):
         """
         with tf.variable_scope('pc_input'):
             # Placeholder for PC input, to be filled in with feed_dict
-            pc_input_placeholder = self._add_placeholder(tf.float32, (None, self._pc_data_dim),
-                                                          self.PL_PC_INPUT)
-
-            self._pc_input_batches = tf.expand_dims(
-                pc_input_placeholder, axis=0)
+            pc_input_placeholder = self._add_placeholder(
+                                        tf.float32, (None, None, self._pc_data_dim),
+                                        self.PL_PC_INPUTS)
 
             self._pc_pts_preprocessed, self._pc_fts_preprocessed = \
                 self._pc_feature_extractor.preprocess_input(
-                    self._pc_input_batches, 
+                    pc_input_placeholder, 
                     self._config.input_config,
                     self._is_training)
-        '''
-        with tf.variable_scope('img_input'):
-            # Take variable size input images
-            img_input_placeholder = self._add_placeholder(
-                tf.float32,
-                [None, None, self._img_depth],
-                self.PL_IMG_INPUT)
-
-            self._img_input_batches = tf.expand_dims(
-                img_input_placeholder, axis=0)
-
-            self._img_preprocessed = \
-                self._img_feature_extractor.preprocess_input(
-                    self._img_input_batches, self._img_pixel_size)
-
-            # Summary Image
-            tf.summary.image("rgb_image", self._img_preprocessed,
-                             max_outputs=2)
-        '''
+        
         with tf.variable_scope('pl_labels'):
-            self._add_placeholder(tf.float32, [None, 6],
-                                  self.PL_LABEL_ANCHORS)
-            self._add_placeholder(tf.float32, [None, 7],
-                                  self.PL_LABEL_BOXES_3D)
-            self._add_placeholder(tf.float32, [None],
-                                  self.PL_LABEL_CLASSES)
-
-        # Placeholders for anchors
-        with tf.variable_scope('pl_anchors'):
-            self._anchors_pl = self._add_placeholder(
-                    tf.float32, [None, 6], self.PL_ANCHORS)
-            self._add_placeholder(tf.float32, [None],
-                                  self.PL_ANCHOR_IOUS)
-            self._add_placeholder(tf.float32, [None, 6],
-                                  self.PL_ANCHOR_OFFSETS)
-            self._add_placeholder(tf.float32, [None],
-                                  self.PL_ANCHOR_CLASSES)
-            '''
-            with tf.variable_scope('bev_anchor_projections'):
-                self._add_placeholder(tf.float32, [None, 4],
-                                      self.PL_BEV_ANCHORS)
-                self._bev_anchors_norm_pl = self._add_placeholder(
-                    tf.float32, [None, 4], self.PL_BEV_ANCHORS_NORM)
-
-            with tf.variable_scope('img_anchor_projections'):
-                self._add_placeholder(tf.float32, [None, 4],
-                                      self.PL_IMG_ANCHORS)
-                self._img_anchors_norm_pl = self._add_placeholder(
-                    tf.float32, [None, 4], self.PL_IMG_ANCHORS_NORM)
-            '''
-            with tf.variable_scope('sample_info'):
-                # the calib matrix shape is (3 x 4)
-                #self._add_placeholder(
-                #    tf.float32, [3, 4], self.PL_CALIB_P2)
-                #self._add_placeholder(tf.int32,
-                #                      shape=[1],
-                #                      name=self.PL_IMG_IDX)
-                self._add_placeholder(tf.float32, [4], self.PL_GROUND_PLANE)
+            self._add_placeholder(tf.int32, [None, None], 
+                                  self.PL_LABEL_SEGS)
+            #self._add_placeholder(tf.float32, [None, 6],
+            #                      self.PL_LABEL_ANCHORS)
+            #self._add_placeholder(tf.float32, [None, 7],
+            #                      self.PL_LABEL_BOXES_3D)
+            #self._add_placeholder(tf.float32, [None],
+            #                      self.PL_LABEL_CLASSES)
 
     def _set_up_feature_extractors(self):
         """Sets up feature extractors and stores feature maps and
@@ -237,54 +189,12 @@ class RpnModel(model.DetectionModel):
         """
 
         #self.bev_feature_maps, self.bev_end_points = \
-        self.pc_pts, self.pc_fts = \
+        self._pc_pts, self._pc_fts = \
             self._pc_feature_extractor.build(
                 self._pc_pts_preprocessed,
                 self._pc_fts_preprocessed,
                 self._is_training)
-        tf.summary.histogram('pc_fts', self.pc_fts)
-        '''
-        self.img_feature_maps, self.img_end_points = \
-            self._img_feature_extractor.build(
-                self._img_preprocessed,
-                self._img_pixel_size,
-                self._is_training)
-        '''
-        with tf.variable_scope('pc_bottleneck'):
-            #self.bev_bottleneck = slim.conv2d(
-            net = tf.expand_dims(self.pc_fts, 2)
-            net = slim.conv2d(
-                net,
-                1, [1, 1],
-                padding = 'VALID',
-                scope='bottleneck',
-                normalizer_fn=slim.batch_norm,
-                normalizer_params={
-                    'is_training': self._is_training})
-            self.pc_bottleneck = tf.squeeze(net, axis=2)
-            tf.summary.histogram('pc_bottleneck', self.pc_bottleneck)
-
-
-        '''
-        with tf.variable_scope('img_bottleneck'):
-            self.img_bottleneck = slim.conv2d(
-                self.img_feature_maps,
-                1, [1, 1],
-                scope='bottleneck',
-                normalizer_fn=slim.batch_norm,
-                normalizer_params={
-                    'is_training': self._is_training})
-        '''
-        # # Visualize the end point feature maps being used
-        # for feature_map in list(self.bev_end_points.items()):
-        #     if 'conv' in feature_map[0]:
-        #         summary_utils.add_feature_maps_from_dict(self.bev_end_points,
-        #                                                  feature_map[0])
-        #
-        # for feature_map in list(self.img_end_points.items()):
-        #     if 'conv' in feature_map[0]:
-        #         summary_utils.add_feature_maps_from_dict(self.img_end_points,
-        #                                                  feature_map[0])
+        tf.summary.histogram('pc_fts', self._pc_fts)
 
     def build(self):
 
@@ -294,92 +204,10 @@ class RpnModel(model.DetectionModel):
         # Setup feature extractors
         self._set_up_feature_extractors()
 
-        pc_proposal_input = self.pc_bottleneck
-        #img_proposal_input = self.img_bottleneck
-
-        fusion_mean_div_factor = 2.0
-
-        # If both img and bev probabilites are set to 1.0, don't do
-        # path drop.
+        seg_logits = pf.dense(self._pc_fts, self.num_classes + 1, 'seg_logits', 
+                              self._is_training, with_bn=False, activation=None)
+        seg_softmax = tf.nn.softmax(seg_logits)
         '''
-        if not (self._path_drop_probabilities[0] ==
-                self._path_drop_probabilities[1] == 1.0):
-            with tf.variable_scope('rpn_path_drop'):
-
-                random_values = tf.random_uniform(shape=[3],
-                                                  minval=0.0,
-                                                  maxval=1.0)
-
-                img_mask, bev_mask = self.create_path_drop_masks(
-                    self._path_drop_probabilities[0],
-                    self._path_drop_probabilities[1],
-                    random_values)
-
-                img_proposal_input = tf.multiply(img_proposal_input,
-                                                 img_mask)
-
-                bev_proposal_input = tf.multiply(bev_proposal_input,
-                                                 bev_mask)
-
-                self.img_path_drop_mask = img_mask
-                self.bev_path_drop_mask = bev_mask
-
-                # Overwrite the division factor
-                fusion_mean_div_factor = img_mask + bev_mask
-        '''
-        with tf.variable_scope('proposal_roi_pooling'):
-
-            with tf.variable_scope('box_indices'):
-                def get_box_indices(boxes):
-                    proposals_shape = boxes.get_shape().as_list()
-                    if any(dim is None for dim in proposals_shape):
-                        proposals_shape = tf.shape(boxes)
-                    ones_mat = tf.ones(proposals_shape[:2], dtype=tf.int32)
-                    multiplier = tf.expand_dims(
-                        tf.range(start=0, limit=proposals_shape[0]), 1)
-                    return tf.reshape(ones_mat * multiplier, [-1])
-
-                boxes_batches = tf.expand_dims(
-                    self._anchors_pl, axis=0)
-
-                # These should be all 0's since there is only 1 image
-                tf_box_indices = get_box_indices(boxes_batches)
-
-            # Do ROI Pooling on PC
-            from cropping import tf_cropping
-            _, pc_proposal_rois, _, non_empty_box = tf_cropping.pc_crop_and_sample(
-                self.pc_pts,
-                pc_proposal_input,
-                self._anchors_pl,
-                tf_box_indices,
-                self._proposal_roi_crop_size)
-            
-            non_empty_pc_proposal_rois = tf.boolean_mask(pc_proposal_rois, non_empty_box)
-            tf.summary.histogram('non_empty_box', tf.cast(non_empty_box, tf.int8))
-            tf.summary.histogram('non_empty_pc_proposal_rois', non_empty_pc_proposal_rois)
-            '''
-            # Do ROI Pooling on image
-            img_proposal_rois = tf.image.crop_and_resize(
-                img_proposal_input,
-                self._img_anchors_norm_pl,
-                tf_box_indices,
-                self._proposal_roi_crop_size)
-            '''
-        '''
-        with tf.variable_scope('proposal_roi_fusion'):
-            rpn_fusion_out = None
-            if self._fusion_method == 'mean':
-                tf_features_sum = tf.add(bev_proposal_rois, img_proposal_rois)
-                rpn_fusion_out = tf.divide(tf_features_sum,
-                                           fusion_mean_div_factor)
-            elif self._fusion_method == 'concat':
-                rpn_fusion_out = tf.concat(
-                    [bev_proposal_rois, img_proposal_rois], axis=3)
-            else:
-                raise ValueError('Invalid fusion method', self._fusion_method)
-        '''
-        rpn_fusion_out = non_empty_pc_proposal_rois
-        # TODO: move this section into an separate AnchorPredictor class
         with tf.variable_scope('anchor_predictor', 'ap', [rpn_fusion_out]):
             tensor_in = rpn_fusion_out
             tensor_in = tf.expand_dims(tensor_in, 2)
@@ -459,19 +287,6 @@ class RpnModel(model.DetectionModel):
                     reg_fc8, [1, 2],
                     name='reg_fc8/squeezed')
 
-        # Histogram summaries
-        '''
-        with tf.variable_scope('histograms_feature_extractor'):
-            with tf.variable_scope('bev_vgg'):
-                for end_point in self.bev_end_points:
-                    tf.summary.histogram(
-                        end_point, self.bev_end_points[end_point])
-
-            with tf.variable_scope('img_vgg'):
-                for end_point in self.img_end_points:
-                    tf.summary.histogram(
-                        end_point, self.img_end_points[end_point])
-        '''
         with tf.variable_scope('histograms_rpn'):
             with tf.variable_scope('anchor_predictor'):
                 fc_layers = [cls_fc6, cls_fc7, cls_fc8, objectness,
@@ -527,55 +342,19 @@ class RpnModel(model.DetectionModel):
             mini_batch_utils = self.dataset.kitti_utils.mini_batch_utils
             mini_batch_mask, _ = \
                 mini_batch_utils.sample_rpn_mini_batch(all_ious_gt)
-        '''
-        # ROI summary images
-        rpn_mini_batch_size = \
-            self.dataset.kitti_utils.mini_batch_utils.rpn_mini_batch_size
-        with tf.variable_scope('bev_rpn_rois'):
-            mb_bev_anchors_norm = tf.boolean_mask(self._bev_anchors_norm_pl,
-                                                  mini_batch_mask)
-            mb_bev_box_indices = tf.zeros_like(
-                tf.boolean_mask(all_classes_gt, mini_batch_mask),
-                dtype=tf.int32)
-
-            # Show the ROIs of the BEV input density map
-            # for the mini batch anchors
-            bev_input_rois = tf.image.crop_and_resize(
-                self._bev_preprocessed,
-                mb_bev_anchors_norm,
-                mb_bev_box_indices,
-                (32, 32))
-
-            bev_input_roi_summary_images = tf.split(
-                bev_input_rois, self._bev_depth, axis=3)
-            tf.summary.image('bev_rpn_rois',
-                             bev_input_roi_summary_images[-1],
-                             max_outputs=rpn_mini_batch_size)
-
-        with tf.variable_scope('img_rpn_rois'):
-            # ROIs on image input
-            mb_img_anchors_norm = tf.boolean_mask(self._img_anchors_norm_pl,
-                                                  mini_batch_mask)
-            mb_img_box_indices = tf.zeros_like(
-                tf.boolean_mask(all_classes_gt, mini_batch_mask),
-                dtype=tf.int32)
-
-            # Do test ROI pooling on mini batch
-            img_input_rois = tf.image.crop_and_resize(
-                self._img_preprocessed,
-                mb_img_anchors_norm,
-                mb_img_box_indices,
-                (32, 32))
-
-            tf.summary.image('img_rpn_rois',
-                             img_input_rois,
-                             max_outputs=rpn_mini_batch_size)
-        '''
+        ''' 
         # Ground Truth Tensors
         with tf.variable_scope('one_hot_classes'):
 
+            label_segs = self.placeholders[self.PL_LABEL_SEGS]
+            segs_gt_one_hot = tf.one_hot(
+                label_segs, depth=self.num_classes + 1,
+                on_value=1.0,
+                off_value=0.0)
+            
             # Anchor classification ground truth
             # Object / Not Object
+            '''
             min_pos_iou = \
                 self.dataset.kitti_utils.mini_batch_utils.rpn_pos_iou_range[0]
 
@@ -597,7 +376,7 @@ class RpnModel(model.DetectionModel):
                 objectness_gt, mini_batch_mask)
             offsets_gt_masked = tf.boolean_mask(all_offsets_gt,
                                                 mini_batch_mask)
-
+        '''
         # Specify the tensors to evaluate
         predictions = dict()
 
@@ -606,9 +385,9 @@ class RpnModel(model.DetectionModel):
         # predictions['anchor_offsets'] = all_offsets_gt
 
         if self._train_val_test in ['train', 'val']:
-            # All anchors
-            predictions[self.PRED_ANCHORS] = anchors
-
+            predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
+            predictions[self.PRED_SEG_GT] = segs_gt_one_hot
+            ''' 
             # Mini-batch masks
             predictions[self.PRED_MB_MASK] = mini_batch_mask
             # Mini-batch predictions
@@ -624,16 +403,16 @@ class RpnModel(model.DetectionModel):
             predictions[self.PRED_TOP_ANCHORS] = top_anchors
             predictions[
                 self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_softmax
-
+            
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_TOP_ANCHORS] = top_anchors
             predictions[
                 self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_softmax
-
+        '''
         return predictions
 
-    def create_feed_dict(self, sample_index=None):
+    def create_feed_dict(self, batch_size=16, sample_index=None):
         """ Fills in the placeholders with the actual input values.
             Currently, only a batch size of 1 is supported
 
@@ -653,67 +432,21 @@ class RpnModel(model.DetectionModel):
                 raise ValueError('sample_index should be None. Do not load '
                                  'particular samples during train or val')
 
-            # During training/validation, we need a valid sample
-            # with anchor info for loss calculation
-            sample = None
-            anchors_info = []
+            if self._train_val_test == "train":
+                # Get the a random sample from the remaining epoch
+                samples = self.dataset.next_batch(batch_size=batch_size)
 
-            valid_sample = False
-            while not valid_sample:
-                if self._train_val_test == "train":
-                    # Get the a random sample from the remaining epoch
-                    samples = self.dataset.next_batch(batch_size=1)
-
-                else:  # self._train_val_test == "val"
-                    # Load samples in order for validation
-                    samples = self.dataset.next_batch(batch_size=1,
-                                                      shuffle=False)
-
-                # Only handle one sample at a time for now
-                sample = samples[0]
-                anchors_info = sample.get(constants.KEY_ANCHORS_INFO)
-
-                # When training, if the mini batch is empty, go to the next
-                # sample. Otherwise carry on with found the valid sample.
-                # For validation, even if 'anchors_info' is empty, keep the
-                # sample (this will help penalize false positives.)
-                # We will substitue the necessary info with zeros later on.
-                # Note: Training/validating all samples can be switched off.
-                train_cond = (self._train_val_test == "train" and
-                              self._train_on_all_samples)
-                eval_cond = (self._train_val_test == "val" and
-                             self._eval_all_samples)
-                if anchors_info or train_cond or eval_cond:
-                    valid_sample = True
+            else:  # self._train_val_test == "val"
+                # Load samples in order for validation
+                samples = self.dataset.next_batch(batch_size=batch_size,
+                                                  shuffle=False)
         else:
             # For testing, any sample should work
             if sample_index is not None:
                 samples = self.dataset.load_samples([sample_index])
             else:
                 samples = self.dataset.next_batch(batch_size=1, shuffle=False)
-
-            # Only handle one sample at a time for now
-            sample = samples[0]
-            anchors_info = sample.get(constants.KEY_ANCHORS_INFO)
-
-        sample_name = sample.get(constants.KEY_SAMPLE_NAME)
-        sample_augs = sample.get(constants.KEY_SAMPLE_AUGS)
-
-        # Get ground truth data
-        label_anchors = sample.get(constants.KEY_LABEL_ANCHORS)
-        label_classes = sample.get(constants.KEY_LABEL_CLASSES)
-        # We only need orientation from box_3d
-        label_boxes_3d = sample.get(constants.KEY_LABEL_BOXES_3D)
-
-        # Network input data
-        image_input = sample.get(constants.KEY_IMAGE_INPUT)
-        # Image shape (h, w)
-        image_shape = [image_input.shape[0], image_input.shape[1]]
-
-        # bev_input = sample.get(constants.KEY_PC_INPUT)
         
-        pc_input = sample.get(constants.KEY_POINT_CLOUD)
-        pc_input = pc_input.T
         if self._is_training:
             offset = int(random.gauss(0, self._pc_sample_pts * self._pc_sample_pts_variance))
             offset = max(offset, -self._pc_sample_pts * self._pc_sample_pts_clip)
@@ -721,24 +454,51 @@ class RpnModel(model.DetectionModel):
             pc_sample_pts = int(self._pc_sample_pts + offset)
         else:
             pc_sample_pts = self._pc_sample_pts
-        pool_size = pc_input.shape[0]
-        if pool_size > pc_sample_pts:
-            choices = np.random.choice(pool_size, pc_sample_pts, replace=False)
-        else:
-            choices = np.concatenate((np.random.choice(pool_size, pool_size, replace=False),
-                                      np.random.choice(pool_size, pc_sample_pts - pool_size, replace=True)))
-        pc_input = pc_input[choices]
+        
+        pc_inputs = []
+        label_segs = []
+        self.samples_info.clear()
+        for sample in samples:
+            # Get ground truth data
+            label_anchors = sample.get(constants.KEY_LABEL_ANCHORS)
+            label_classes = sample.get(constants.KEY_LABEL_CLASSES)
+            # We only need orientation from box_3d
+            label_boxes_3d = sample.get(constants.KEY_LABEL_BOXES_3D)
 
-        ground_plane = sample.get(constants.KEY_GROUND_PLANE)
+            # Network input data
+            # image_input = sample.get(constants.KEY_IMAGE_INPUT)
+            # Image shape (h, w)
+            # image_shape = [image_input.shape[0], image_input.shape[1]]
+
+            # bev_input = sample.get(constants.KEY_PC_INPUT)
+            pc_input = sample.get(constants.KEY_POINT_CLOUD)
+            label_seg = sample.get(constants.KEY_LABEL_SEG)
+            pool_size = pc_input.shape[0]
+            if pool_size > pc_sample_pts:
+                choices = np.random.choice(pool_size, pc_sample_pts, replace=False)
+            else:
+                choices = np.concatenate((np.random.choice(pool_size, pool_size, replace=False),
+                                          np.random.choice(pool_size, pc_sample_pts - pool_size, replace=True)))
+            pc_input = pc_input[choices]
+            label_seg = label_seg[choices]
+            
+            pc_inputs.append(pc_input)
+            label_segs.append(label_seg)
+            
+            # Temporary sample info for debugging
+            sample_name = sample.get(constants.KEY_SAMPLE_NAME)
+            self.samples_info.append(sample_name)
+
+        # ground_plane = sample.get(constants.KEY_GROUND_PLANE)
         # stereo_calib_p2 = sample.get(constants.KEY_STEREO_CALIB_P2)
 
         # Fill the placeholders for anchor information
-        self._fill_anchor_pl_inputs(anchors_info=anchors_info,
-                                    ground_plane=ground_plane,
-                                    pc_input=pc_input.T,
-                                    image_shape=image_shape,
-                                    sample_name=sample_name,
-                                    sample_augs=sample_augs)
+        # self._fill_anchor_pl_inputs(anchors_info=anchors_info,
+        #                            ground_plane=ground_plane,
+        #                            pc_input=pc_input,
+        #                            image_shape=image_shape,
+        #                            sample_name=sample_name,
+        #                            sample_augs=sample_augs)
 
         # this is a list to match the explicit shape for the placeholder
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
@@ -746,22 +506,18 @@ class RpnModel(model.DetectionModel):
         # Fill in the rest
         # self._placeholder_inputs[self.PL_BEV_INPUT] = bev_input
         # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
-        self._placeholder_inputs[self.PL_PC_INPUT] = pc_input
-
-        self._placeholder_inputs[self.PL_LABEL_ANCHORS] = label_anchors
-        self._placeholder_inputs[self.PL_LABEL_BOXES_3D] = label_boxes_3d
-        self._placeholder_inputs[self.PL_LABEL_CLASSES] = label_classes
+        self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(pc_inputs)
+        self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(label_segs)
+        
+        #self._placeholder_inputs[self.PL_LABEL_ANCHORS] = label_anchors
+        #self._placeholder_inputs[self.PL_LABEL_BOXES_3D] = label_boxes_3d
+        #self._placeholder_inputs[self.PL_LABEL_CLASSES] = label_classes
 
         # Sample Info
         # img_idx is a list to match the placeholder shape
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
         # self._placeholder_inputs[self.PL_CALIB_P2] = stereo_calib_p2
-        self._placeholder_inputs[self.PL_GROUND_PLANE] = ground_plane
-
-        # Temporary sample info for debugging
-        self.sample_info.clear()
-        self.sample_info['sample_name'] = sample_name
-        #self.sample_info['rpn_mini_batch'] = anchors_info
+        # self._placeholder_inputs[self.PL_GROUND_PLANE] = ground_plane
 
         # Create a feed_dict and fill it with input values
         feed_dict = dict()
@@ -918,6 +674,9 @@ class RpnModel(model.DetectionModel):
 
     def loss(self, prediction_dict):
 
+        seg_softmax = prediction_dict[self.PRED_SEG_SOFTMAX]
+        seg_gt = prediction_dict[self.PRED_SEG_GT]
+        '''
         # these should include mini-batch values only
         objectness_gt = prediction_dict[self.PRED_MB_OBJECTNESS_GT]
         offsets_gt = prediction_dict[self.PRED_MB_OFFSETS_GT]
@@ -926,8 +685,17 @@ class RpnModel(model.DetectionModel):
         with tf.variable_scope('rpn_prediction_mini_batch'):
             objectness = prediction_dict[self.PRED_MB_OBJECTNESS]
             offsets = prediction_dict[self.PRED_MB_OFFSETS]
-
+        '''
         with tf.variable_scope('rpn_losses'):
+            with tf.variable_scope('segmentation'):
+                seg_loss = losses.WeightedFocalLoss()
+                seg_loss_weight = self._config.loss_config.seg_loss_weight
+                segmentation_loss = seg_loss(
+                            seg_softmax,
+                            seg_gt,
+                            weight=seg_loss_weight)
+                tf.summary.scalar('segmentation', segmentation_loss)
+            '''
             with tf.variable_scope('objectness'):
                 cls_loss = losses.WeightedSoftmaxLoss()
                 cls_loss_weight = self._config.loss_config.cls_loss_weight
@@ -959,76 +727,15 @@ class RpnModel(model.DetectionModel):
                             [tf.assert_positive(num_positives)]):
                         localization_loss = localization_loss / num_positives
                         tf.summary.scalar('regression', localization_loss)
-
+            '''
             with tf.variable_scope('rpn_loss'):
-                rpn_loss = objectness_loss + localization_loss
+                rpn_loss = segmentation_loss
+                #rpn_loss = segmentation_loss + objectness_loss + localization_loss
 
         loss_dict = {
-            self.LOSS_RPN_OBJECTNESS: objectness_loss,
-            self.LOSS_RPN_REGRESSION: localization_loss,
+            self.LOSS_RPN_SEGMENTATION: segmentation_loss,
+            #self.LOSS_RPN_OBJECTNESS: objectness_loss,
+            #self.LOSS_RPN_REGRESSION: localization_loss,
         }
 
         return loss_dict, rpn_loss
-
-    def create_path_drop_masks(self,
-                               p_img,
-                               p_bev,
-                               random_values):
-        """Determines global path drop decision based on given probabilities.
-
-        Args:
-            p_img: A tensor of float32, probability of keeping image branch
-            p_bev: A tensor of float32, probability of keeping bev branch
-            random_values: A tensor of float32 of shape [3], the results
-                of coin flips, values should range from 0.0 - 1.0.
-
-        Returns:
-            final_img_mask: A constant tensor mask containing either one or zero
-                depending on the final coin flip probability.
-            final_bev_mask: A constant tensor mask containing either one or zero
-                depending on the final coin flip probability.
-        """
-
-        def keep_branch(): return tf.constant(1.0)
-
-        def kill_branch(): return tf.constant(0.0)
-
-        # The logic works as follows:
-        # We have flipped 3 coins, first determines the chance of keeping
-        # the image branch, second determines keeping bev branch, the third
-        # makes the final decision in the case where both branches were killed
-        # off, otherwise the initial img and bev chances are kept.
-
-        img_chances = tf.case([(tf.less(random_values[0], p_img),
-                                keep_branch)], default=kill_branch)
-
-        bev_chances = tf.case([(tf.less(random_values[1], p_bev),
-                                keep_branch)], default=kill_branch)
-
-        # Decision to determine whether both branches were killed off
-        third_flip = tf.logical_or(tf.cast(img_chances, dtype=tf.bool),
-                                   tf.cast(bev_chances, dtype=tf.bool))
-        third_flip = tf.cast(third_flip, dtype=tf.float32)
-
-        # Make a second choice, for the third case
-        # Here we use a 50/50 chance to keep either image or bev
-        # If its greater than 0.5, keep the image
-        img_second_flip = tf.case([(tf.greater(random_values[2], 0.5),
-                                    keep_branch)],
-                                  default=kill_branch)
-        # If its less than or equal to 0.5, keep bev
-        bev_second_flip = tf.case([(tf.less_equal(random_values[2], 0.5),
-                                    keep_branch)],
-                                  default=kill_branch)
-
-        # Use lambda since this returns another condition and it needs to
-        # be callable
-        final_img_mask = tf.case([(tf.equal(third_flip, 1),
-                                   lambda: img_chances)],
-                                 default=lambda: img_second_flip)
-
-        final_bev_mask = tf.case([(tf.equal(third_flip, 1),
-                                   lambda: bev_chances)],
-                                 default=lambda: bev_second_flip)
-
-        return final_img_mask, final_bev_mask

@@ -8,7 +8,7 @@ from wavedata.tools.obj_detection import obj_utils
 
 from avod.builders import bev_generator_builder
 from avod.core.label_cluster_utils import LabelClusterUtils
-from avod.core.mini_batch_utils import MiniBatchUtils
+from avod.core.label_seg_utils import LabelSegUtils
 
 
 class KittiUtils(object):
@@ -37,9 +37,7 @@ class KittiUtils(object):
         self.bev_extents = self.area_extents[[0, 2]]
         self.voxel_size = self.config.voxel_size
         self.anchor_strides = np.reshape(self.config.anchor_strides, (-1, 2))
-
-        self.bev_generator = bev_generator_builder.build(
-            self.config.bev_generator, self)
+        self.expand_gt_size = self.config.label_seg_config.expand_gt_size 
 
         self._density_threshold = self.config.density_threshold
 
@@ -50,9 +48,9 @@ class KittiUtils(object):
                 'Could not find depth maps, please run '
                 'demos/save_lidar_depth_maps.py in wavedata first')
 
-        # Mini Batch Utils
-        self.mini_batch_utils = MiniBatchUtils(self.dataset)
-        self._mini_batch_dir = self.mini_batch_utils.mini_batch_dir
+        # Label Seg Utils
+        self.label_seg_utils = LabelSegUtils(self.dataset)
+        self._label_seg_dir = self.label_seg_utils.label_seg_dir
 
         # Label Clusters
         self.clusters, self.std_devs = \
@@ -106,24 +104,6 @@ class KittiUtils(object):
         slice_filter = np.logical_xor(offset_filter, road_filter)
         return slice_filter
 
-    def create_bev_maps(self, point_cloud, ground_plane):
-        """ Calculates bev maps
-
-        Args:
-            point_cloud: point cloud
-            ground_plane: ground_plane coefficients
-
-        Returns:
-            Dictionary with entries for each type of map (e.g. height, density)
-        """
-
-        bev_maps = self.bev_generator.generate_bev(self.pc_source,
-                                                   point_cloud,
-                                                   ground_plane,
-                                                   self.area_extents,
-                                                   self.voxel_size)
-
-        return bev_maps
 
     def get_anchors_info(self, classes_name, anchor_strides, sample_name):
 
@@ -131,6 +111,13 @@ class KittiUtils(object):
                                                               anchor_strides,
                                                               sample_name)
         return anchors_info
+
+    def get_label_seg(self, classes_name, expand_gt_size, sample_name):
+
+        label_seg = self.label_seg_utils.get_label_seg(classes_name,
+                                                         expand_gt_size,
+                                                         sample_name)
+        return label_seg
 
     def get_point_cloud(self, source, img_idx, image_shape=None):
         """ Gets the points from the point cloud for a particular image,

@@ -61,6 +61,23 @@ class WeightedL2LocalizationLossTest(tf.test.TestCase):
             loss_output = sess.run(loss)
             self.assertAllClose(loss_output, expected_loss)
 
+class WeightedFocalLossTest(tf.test.TestCase):
+
+    def testReturnsCorrectLoss(self):
+        y_pred = tf.constant([[[0.1, 0.7, 0.2],
+                               [0.6, 0.2, 0.2]],
+                              [[0.1, 0.7, 0.2],
+                               [0.6, 0.2, 0.2]]], tf.float32)
+        y_label = tf.constant([[[0, 1, 0],
+                                [1, 0, 0]],
+                               [[0, 1, 0],
+                                [1, 0, 0]]], tf.float32)
+        loss_op = losses.WeightedFocalLoss()
+        loss = loss_op(y_pred, y_label, weight=1.0)
+    
+        with self.test_session() as sess:
+            loss = sess.run(loss)
+            print(loss)
 
 if __name__ == '__main__':
     tf.test.main()
