@@ -54,7 +54,7 @@ class LabelSegUtils:
             sample_name: image name to read the corresponding file
 
         Returns:
-            label_segs: class index of the point
+            label_seg: [class_idx, box_idx]
                 (e.g. 0 or 1, for "Background" or "Car")
 
             [] if the file contains an empty array
@@ -104,11 +104,11 @@ class LabelSegUtils:
            bbox_8co: (M x 8 x 3)
            categories: (M)
          Return:
-           label_seg: (N)
+           label_seg: (N x [category_idx, box_idx])
         '''
         num_points = raw_xyz.shape[0]
         num_boxes = bbox_8co.shape[0]
-        label_seg = np.zeros((num_points), dtype=int)
+        label_seg = np.zeros((num_points, 2), dtype=int)
         if num_boxes > 0:
             facets = box_8c_encoder.np_box_8co_to_facet(bbox_8co)
         for i in range(num_boxes):
@@ -126,7 +126,7 @@ class LabelSegUtils:
             min_z = z.min(axis = 0)
             
             for j in range(num_points):
-                if label_seg[j] > 0:
+                if label_seg[j,0] > 0:
                     continue
                 point = raw_xyz[j,:]
                 px, py, pz = point[0], point[1], point[2]
@@ -136,7 +136,8 @@ class LabelSegUtils:
                    pz > max_z or pz < min_z:
                     continue
                 elif cls.point_inside_facet(point, facet, box):
-                    label_seg[j] = category
+                    label_seg[j, 0] = category
+                    label_seg[j, 1] = i + 1
         return label_seg
 
     @classmethod
@@ -159,7 +160,7 @@ class LabelSegUtils:
         return True
 
 def main():
-    raw_xyz = np.asarray([[0.55, 0, 0.1],[-0.3, -0.5, -0.3]])
+    raw_xyz = np.asarray([[1.0, 0, 0.1],[-0.3, -0.5, -0.3]])
     bbox_3d = np.asarray([0, 0, 0, 1, 1, 1, 3.14/4])
     bbox_8co = box_8c_encoder.np_box_3d_to_box_8co(bbox_3d).T
     bbox_8co = bbox_8co.reshape(1, 8, 3)
@@ -167,6 +168,8 @@ def main():
     categories = np.asarray([1])
     label_seg = LabelSegUtils.label_point_cloud(raw_xyz, bbox_8co, categories)
     print(label_seg)
+    foreground = label_seg[label_seg[:,0] > 0]
+    print(foreground)
 
 if __name__ == '__main__':
     main()

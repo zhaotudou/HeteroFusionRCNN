@@ -86,7 +86,7 @@ class LabelSegPreprocessor(object):
                       "(Ground Truth Filter)".format(
                           sample_idx + 1, num_samples,
                           classes_name, sample_name))
-                label_seg = np.zeros((point_cloud.shape[0]), dtype=int)
+                label_seg = np.zeros((point_cloud.shape[0], 2), dtype=int)
                 self._save_to_file(classes_name, expand_gt_size,
                                    sample_name, label_seg)
                 continue
@@ -109,12 +109,12 @@ class LabelSegPreprocessor(object):
                                     point_cloud, 
                                     label_boxes_8co, 
                                     label_classes)
-            foreground_points = label_seg[label_seg > 0]
+            foreground_points = label_seg[label_seg[:,0] > 0]
             print("{} / {}:"
                   "{:>6} foreground points, "
                   "for {:>3} {}(s) for sample {}".format(
                       sample_idx + 1, num_samples,
-                      len(foreground_points),
+                      foreground_points.shape[0],
                       len(obj_labels), classes_name, sample_name
                   ))
 
@@ -152,7 +152,7 @@ class LabelSegPreprocessor(object):
             classes_name (str): classes name, e.g. 'Car', 'Pedestrian',
                 'Cyclist', 'People'
             sample_name (str): name of sample, e.g. '000123'
-            label_seg: ndarray of label seg of shape (N)
+            label_seg: ndarray of label seg of shape (N, 2)
                 defaults to an empty array
         """
 

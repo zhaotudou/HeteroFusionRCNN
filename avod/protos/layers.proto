@@ -21,6 +21,11 @@ message FeatureExtractor {
     }
 }
 
+message FCLayer {
+    required int32 C = 1;
+    required float dropout_rate = 2;
+}
+
 message PointCNNLayersConfig {
     required string sampling = 1;
     required bool with_X_transformation = 2;
@@ -41,10 +46,6 @@ message PointCNNLayersConfig {
     repeated XDConvLayer xdconv_layer = 6;
     
     // FCLayer [channel, dropout_rate]
-    message FCLayer {
-        required int32 C = 1;
-        required float dropout_rate = 2;
-    }
     repeated FCLayer fc_layer = 7;
 }
 
@@ -86,21 +87,8 @@ message PyramidLayersConfig {
 }
 
 message RPNLayersConfig {
-    // Anchor predictor layer configs
-    // classification fc layer size
-    required int32 cls_fc6 = 1;
-    required int32 cls_fc7 = 2;
-
-    // Regression fc layer size
-    required int32 reg_fc6 = 3;
-    required int32 reg_fc7 = 4;
-
-    // L2 weight decay
-    required float l2_weight_decay = 6;
-
-    // Dropout probability - the probabilit that a neuron's
-    // output is kept during dropout
-    optional float keep_prob = 5 [default = 0.5];
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer fc_layer = 7;
 }
 
 message AVODLayersConfig{

@@ -255,7 +255,7 @@ class KittiDataset:
             # Only read labels if they exist
             if self.has_labels:
                 label_seg = self.get_label_seg(sample_name)
-                foreground_point_num = len(label_seg[label_seg > 0])
+                foreground_point_num = label_seg[label_seg[:, 0] > 0].shape[0]
                 if (foreground_point_num <= 0) and \
                         ((self.train_val_test == 'train' and (not self.train_on_all_samples)) or
                         (self.train_val_test == 'val' and (not self.eval_all_samples))):
@@ -269,10 +269,10 @@ class KittiDataset:
             else:
                 obj_labels = None
                 
-                label_seg = np.zeros(16384)
-                label_anchors = np.zeros((1, 6))
+                label_seg = np.zeros(16384, 2)
+                #label_anchors = np.zeros((1, 6))
                 label_boxes_3d = np.zeros((1, 7))
-                label_classes = np.zeros(1)
+                #label_classes = np.zeros(1)
 
             img_idx = int(sample_name)
 
@@ -312,10 +312,10 @@ class KittiDataset:
                     [box_3d_encoder.object_label_to_box_3d(obj_label)
                      for obj_label in obj_labels])
 
-                label_classes = [
-                    self.kitti_utils.class_str_to_index(obj_label.type)
-                    for obj_label in obj_labels]
-                label_classes = np.asarray(label_classes, dtype=np.int32)
+                #label_classes = [
+                #    self.kitti_utils.class_str_to_index(obj_label.type)
+                #    for obj_label in obj_labels]
+                #label_classes = np.asarray(label_classes, dtype=np.int32)
 
                 # Return empty anchors_info if no ground truth after filtering
                 if len(label_boxes_3d) == 0:
@@ -326,23 +326,24 @@ class KittiDataset:
                         # number here that does not break the offset calculation
                         # should work, since the negative samples won't be
                         # regressed in any case.
-                        dummy_anchors = [[-1000, -1000, -1000, 1, 1, 1]]
-                        label_anchors = np.asarray(dummy_anchors)
+                        #dummy_anchors = [[-1000, -1000, -1000, 1, 1, 1]]
+                        #label_anchors = np.asarray(dummy_anchors)
                         dummy_boxes = [[-1000, -1000, -1000, 1, 1, 1, 0]]
                         label_boxes_3d = np.asarray(dummy_boxes)
                     else:
-                        label_anchors = np.zeros((1, 6))
+                        #label_anchors = np.zeros((1, 6))
                         label_boxes_3d = np.zeros((1, 7))
-                    label_classes = np.zeros(1)
+                    #label_classes = np.zeros(1)
                 else:
-                    label_anchors = box_3d_encoder.box_3d_to_anchor(
-                        label_boxes_3d, ortho_rotate=True)
+                    pass
+                    #label_anchors = box_3d_encoder.box_3d_to_anchor(
+                    #    label_boxes_3d, ortho_rotate=True)
             
             sample_dict = {
                 constants.KEY_LABEL_SEG: label_seg,
                 constants.KEY_LABEL_BOXES_3D: label_boxes_3d,
-                constants.KEY_LABEL_ANCHORS: label_anchors,
-                constants.KEY_LABEL_CLASSES: label_classes,
+                #constants.KEY_LABEL_ANCHORS: label_anchors,
+                #constants.KEY_LABEL_CLASSES: label_classes,
 
                 constants.KEY_POINT_CLOUD: point_cloud,
 

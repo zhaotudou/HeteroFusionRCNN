@@ -22,26 +22,11 @@ class RpnModel(model.DetectionModel):
     # Keys for Placeholders
     ##############################
     PL_PC_INPUTS = 'pc_inputs_pl'
-    #PL_IMG_INPUT = 'img_input_pl'
-    #PL_ANCHORS = 'anchors_pl'
 
-    '''
-    PL_BEV_ANCHORS = 'bev_anchors_pl'
-    PL_BEV_ANCHORS_NORM = 'bev_anchors_norm_pl'
-    PL_IMG_ANCHORS = 'img_anchors_pl'
-    PL_IMG_ANCHORS_NORM = 'img_anchors_norm_pl'
-    '''
     PL_LABEL_SEGS = 'label_segs_pl'
-    PL_LABEL_ANCHORS = 'label_anchors_pl'
+    #PL_LABEL_ANCHORS = 'label_anchors_pl'
     PL_LABEL_BOXES_3D = 'label_boxes_3d_pl'
-    PL_LABEL_CLASSES = 'label_classes_pl'
-
-    # Sample info, including keys for projection to image space
-    # (e.g. camera matrix, image index, etc.)
-    '''
-    PL_CALIB_P2 = 'frame_calib_p2'
-    PL_IMG_IDX = 'current_img_idx'
-    '''
+    #PL_LABEL_CLASSES = 'label_classes_pl'
 
     ##############################
     # Keys for Predictions
@@ -107,6 +92,11 @@ class RpnModel(model.DetectionModel):
             self._nms_size = rpn_config.rpn_test_nms_size
 
         self._nms_iou_thresh = rpn_config.rpn_nms_iou_thresh
+        
+        self.NUM_BIN_X = int(rpn_config.rpn_xz_search_range * 2 / rpn_config.rpn_xz_bin_len)
+        self.NUM_BIN_Z = self.NUM_BIN_X
+        self.XZ_BIN_LEN = rpn_config.rpn_xz_bin_len
+        self.NUM_BIN_THETA = rpn_config.rpn_theta_bin_num
 
         # Feature Extractor Nets
         self._pc_feature_extractor = \
@@ -174,12 +164,12 @@ class RpnModel(model.DetectionModel):
                     self._is_training)
         
         with tf.variable_scope('pl_labels'):
-            self._add_placeholder(tf.int32, [None, None], 
+            self._add_placeholder(tf.int32, [None, None, 2], 
                                   self.PL_LABEL_SEGS)
             #self._add_placeholder(tf.float32, [None, 6],
             #                      self.PL_LABEL_ANCHORS)
-            #self._add_placeholder(tf.float32, [None, 7],
-            #                      self.PL_LABEL_BOXES_3D)
+            self._add_placeholder(tf.float32, [None, None, 7],
+                                  self.PL_LABEL_BOXES_3D)
             #self._add_placeholder(tf.float32, [None],
             #                      self.PL_LABEL_CLASSES)
 
@@ -204,93 +194,39 @@ class RpnModel(model.DetectionModel):
         # Setup feature extractors
         self._set_up_feature_extractors()
 
+        # foreground point segmentation
         seg_logits = pf.dense(self._pc_fts, self.num_classes + 1, 'seg_logits', 
                               self._is_training, with_bn=False, activation=None)
-        seg_softmax = tf.nn.softmax(seg_logits)
-        '''
-        with tf.variable_scope('anchor_predictor', 'ap', [rpn_fusion_out]):
-            tensor_in = rpn_fusion_out
-            tensor_in = tf.expand_dims(tensor_in, 2)
-
+        seg_softmax = tf.nn.softmax(seg_logits, name='seg_softmax')
+        
+        seg_prediction = tf.argmax(seg_softmax, axis=-1, name='seg_prediction')
+        foreground_pts = tf.reshape(self._pc_pts[seg_prediction > 0],
+                                [self._pc_pts.shape[0].value, -1, self._pc_pts.shape[2].value])
+        foreground_fts = tf.reshape(self._pc_fts[seg_prediction > 0],
+                                [self._pc_fts.shape[0].value, -1, self._pc_fts.shape[2].value])
+        
+        # bin-based 3D proposal generation
+        with tf.variable_scope('bin_based_rpn'):
             # Parse rpn layers config
+            fc_layers = [foreground_fts]
             layers_config = self._config.layers_config.rpn_config
-            l2_weight_decay = layers_config.l2_weight_decay
-
-            if l2_weight_decay > 0:
-                weights_regularizer = slim.l2_regularizer(l2_weight_decay)
-            else:
-                weights_regularizer = None
-
-            with slim.arg_scope([slim.conv2d],
-                                weights_regularizer=weights_regularizer):
-                # Use conv2d instead of fully_connected layers.
-                cls_fc6 = slim.conv2d(tensor_in,
-                                      layers_config.cls_fc6,
-                                      [self._proposal_roi_crop_size, 1],
-                                      padding='VALID',
-                                      scope='cls_fc6')
-
-                cls_fc6_drop = slim.dropout(cls_fc6,
-                                            layers_config.keep_prob,
-                                            is_training=self._is_training,
-                                            scope='cls_fc6_drop')
-
-                cls_fc7 = slim.conv2d(cls_fc6_drop,
-                                      layers_config.cls_fc7,
-                                      [1, 1],
-                                      scope='cls_fc7')
-
-                cls_fc7_drop = slim.dropout(cls_fc7,
-                                            layers_config.keep_prob,
-                                            is_training=self._is_training,
-                                            scope='cls_fc7_drop')
-
-                cls_fc8 = slim.conv2d(cls_fc7_drop,
-                                      2,
-                                      [1, 1],
-                                      activation_fn=None,
-                                      scope='cls_fc8')
-
-                objectness = tf.squeeze(
-                    cls_fc8, [1, 2],
-                    name='cls_fc8/squeezed')
-
-                # Use conv2d instead of fully_connected layers.
-                reg_fc6 = slim.conv2d(tensor_in,
-                                      layers_config.reg_fc6,
-                                      [self._proposal_roi_crop_size, 1],
-                                      padding='VALID',
-                                      scope='reg_fc6')
-
-                reg_fc6_drop = slim.dropout(reg_fc6,
-                                            layers_config.keep_prob,
-                                            is_training=self._is_training,
-                                            scope='reg_fc6_drop')
-
-                reg_fc7 = slim.conv2d(reg_fc6_drop,
-                                      layers_config.reg_fc7,
-                                      [1, 1],
-                                      scope='reg_fc7')
-
-                reg_fc7_drop = slim.dropout(reg_fc7,
-                                            layers_config.keep_prob,
-                                            is_training=self._is_training,
-                                            scope='reg_fc7_drop')
-
-                reg_fc8 = slim.conv2d(reg_fc7_drop,
-                                      6,
-                                      [1, 1],
-                                      activation_fn=None,
-                                      scope='reg_fc8')
-
-                offsets = tf.squeeze(
-                    reg_fc8, [1, 2],
-                    name='reg_fc8/squeezed')
+            for layer_idx, layer_param in enumerate(layers_config):
+                print(layer_param)
+                C = layer_param.C
+                dropout_rate = layer_param.dropout_rate
+                fc = pf.dense(fc_layers[-1], C, 'fc{:d}'.format(layer_idx), self._is_training)
+                fc_drop = tf.layers.dropout(fc, dropout_rate, training=self._is_training, name='fc{:d}_drop'.format(layer_idx))
+                fc_layers.append(fc_drop)
+            
+            fc_output = pf.dense(fc_layers[-1], self.NUM_BIN_X*2 + self.NUM_BIN_Z*2 + self.NUM_BIN_THETA*2 + 4, 
+                                 'fc_output', self._is_training, activation=None)
+            bin_x_logits, res_x_norms, \
+            bin_z_logits, res_z_norms, \
+            bin_theta_logits, res_theta_norms, \
+            res_y, res_h, res_w, res_l = self._parse_rpn_output(fc_output)
 
         with tf.variable_scope('histograms_rpn'):
-            with tf.variable_scope('anchor_predictor'):
-                fc_layers = [cls_fc6, cls_fc7, cls_fc8, objectness,
-                             reg_fc6, reg_fc7, reg_fc8, offsets]
+            with tf.variable_scope('bin_based_proposal'):
                 for fc_layer in fc_layers:
                     # fix the name to avoid tf warnings
                     tf.summary.histogram(fc_layer.name.replace(':', '_'),
@@ -298,6 +234,21 @@ class RpnModel(model.DetectionModel):
 
         # Return the proposals
         with tf.variable_scope('proposals'):
+            B = bin_x_logits.shape[0].value
+            p = bin_x_logits.shape[1].value
+            print(p)    # p maybe ?
+            K = bin_x_logits.shape[2].value
+
+            bin_x = tf.argmax(bin_x_logits, axis=-1) #(B,p)
+            Bs = tf.range(B)
+            ps = tf.range(p)
+            mB, mp = tf.meshgrid(Bs, ps)
+            Bp = tf.stack([tf.transpose(mB), tf.transpose(mp)], axis=2) # (B,p,2)
+            BpK = tf.concat([Bp, tf.reshape(bin_x, [B,p,1])], axis=2) # (B,p,3)
+            res_x_norm = tf.gather_nd(res_x_norms, BpK) #(B,p)
+            #TODO 
+            proposals = bin_based_box3d_encoder.decode(foreground_pts, kk)
+            
             anchors = self.placeholders[self.PL_ANCHORS]
             non_empty_anchors = tf.boolean_mask(anchors, non_empty_box)
 
@@ -329,6 +280,7 @@ class RpnModel(model.DetectionModel):
                 # top_offsets = tf.gather(offsets, top_indices)
                 # top_objectness = tf.gather(objectness, top_indices)
 
+        '''
         # Get mini batch
         all_ious_gt = self.placeholders[self.PL_ANCHOR_IOUS]
         all_offsets_gt = self.placeholders[self.PL_ANCHOR_OFFSETS]
@@ -346,9 +298,9 @@ class RpnModel(model.DetectionModel):
         # Ground Truth Tensors
         with tf.variable_scope('one_hot_classes'):
 
-            label_segs = self.placeholders[self.PL_LABEL_SEGS]
+            batch_label_segs = self.placeholders[self.PL_LABEL_SEGS]
             segs_gt_one_hot = tf.one_hot(
-                label_segs, depth=self.num_classes + 1,
+                batch_label_segs[:,:,0], depth=self.num_classes + 1,
                 on_value=1.0,
                 off_value=0.0)
             
@@ -377,6 +329,8 @@ class RpnModel(model.DetectionModel):
             offsets_gt_masked = tf.boolean_mask(all_offsets_gt,
                                                 mini_batch_mask)
         '''
+        batch_label_boxes_3d = self.placeholders[self.PL_LABEL_BOXES_3D]
+        
         # Specify the tensors to evaluate
         predictions = dict()
 
@@ -411,6 +365,42 @@ class RpnModel(model.DetectionModel):
                 self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_softmax
         '''
         return predictions
+
+    def _parse_rpn_output(self, rpn_output):
+        '''
+        Input:
+            rpn_output: (B, p, NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4
+        Output:
+            bin_x_logits
+            res_x_norms
+            
+            bin_z_logits
+            res_z_norms
+            
+            bin_theta_logits
+            res_theta_norms
+            
+            res_y
+
+            res_h
+            res_w
+            res_l
+        '''
+            bin_x_logits = tf.slice(rpn_output, [0, 0, 0], [-1, -1, self.NUM_BIN_X])
+            res_x_norms = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X], [-1, -1, self.NUM_BIN_X])
+            
+            bin_z_logits = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2], [-1, -1, self.NUM_BIN_Z])
+            res_z_norms = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z], [-1, -1, self.NUM_BIN_Z])
+
+            bin_theta_logits = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2], [-1, -1, self.NUM_BIN_THETA])
+            res_theta_norms = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA], 
+                                                  [-1, -1, self.NUM_BIN_THETA])
+
+            res_y = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA*2], [-1, -1, 1])
+            
+            res_h = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA*2+1], [-1, -1, 1])
+            res_w = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA*2+2], [-1, -1, 1])
+            res_l = tf.slice(rpn_output, [0, 0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA*2+3], [-1, -1, 1])
 
     def create_feed_dict(self, batch_size=16, sample_index=None):
         """ Fills in the placeholders with the actual input values.
@@ -455,13 +445,14 @@ class RpnModel(model.DetectionModel):
         else:
             pc_sample_pts = self._pc_sample_pts
         
-        pc_inputs = []
-        label_segs = []
+        batch_pc_inputs = []
+        batch_label_segs = []
+        batch_label_boxes_3d = []
         self.samples_info.clear()
         for sample in samples:
             # Get ground truth data
-            label_anchors = sample.get(constants.KEY_LABEL_ANCHORS)
-            label_classes = sample.get(constants.KEY_LABEL_CLASSES)
+            #label_anchors = sample.get(constants.KEY_LABEL_ANCHORS)
+            #label_classes = sample.get(constants.KEY_LABEL_CLASSES)
             # We only need orientation from box_3d
             label_boxes_3d = sample.get(constants.KEY_LABEL_BOXES_3D)
 
@@ -482,8 +473,9 @@ class RpnModel(model.DetectionModel):
             pc_input = pc_input[choices]
             label_seg = label_seg[choices]
             
-            pc_inputs.append(pc_input)
-            label_segs.append(label_seg)
+            batch_pc_inputs.append(pc_input)
+            batch_label_segs.append(label_seg)
+            batch_label_boxes_3d.append(label_boxes_3d)
             
             # Temporary sample info for debugging
             sample_name = sample.get(constants.KEY_SAMPLE_NAME)
@@ -506,11 +498,11 @@ class RpnModel(model.DetectionModel):
         # Fill in the rest
         # self._placeholder_inputs[self.PL_BEV_INPUT] = bev_input
         # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
-        self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(pc_inputs)
-        self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(label_segs)
+        self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(batch_pc_inputs)
+        self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(batch_label_segs)
         
         #self._placeholder_inputs[self.PL_LABEL_ANCHORS] = label_anchors
-        #self._placeholder_inputs[self.PL_LABEL_BOXES_3D] = label_boxes_3d
+        self._placeholder_inputs[self.PL_LABEL_BOXES_3D] = np.asarray(batch_label_boxes_3d)
         #self._placeholder_inputs[self.PL_LABEL_CLASSES] = label_classes
 
         # Sample Info
