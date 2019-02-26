@@ -73,7 +73,7 @@ def evaluate(model_config, eval_config, dataset_config):
                               dataset=dataset)
         elif model_name == 'rpn_model':
             model = RpnModel(model_config, train_val_test=eval_mode,
-                             dataset=dataset)
+                             dataset=dataset, batch_size=eval_config.batch_size)
         else:
             raise ValueError('Invalid model name {}'.format(model_name))
 

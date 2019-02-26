@@ -148,10 +148,10 @@ class WeightedSmoothL1Loss(Loss):
         abs_diff = tf.abs(diff)
         abs_diff_lt_1 = tf.less(abs_diff, 1)
 
-        anchorwise_smooth_l1norm = tf.reduce_sum(
+        smooth_l1norm = tf.reduce_sum(
             tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5),
-            axis=1) * weight
-        return anchorwise_smooth_l1norm
+            ) * weight
+        return smooth_l1norm
 
 
 class WeightedSoftmaxLoss(Loss):

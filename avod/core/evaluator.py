@@ -77,7 +77,8 @@ class Evaluator:
         # Create a variable tensor to hold the global step
         self.global_step_tensor = tf.Variable(
             0, trainable=False, name='global_step')
-
+        
+        self._batch_size = eval_config.batch_size
         eval_mode = eval_config.eval_mode
         if eval_mode not in ['val', 'test']:
             raise ValueError('Evaluation mode can only be set to `val`'
@@ -196,7 +197,7 @@ class Evaluator:
 
             # Keep track of feed_dict speed
             start_time = time.time()
-            feed_dict = self.model.create_feed_dict()
+            feed_dict = self.model.create_feed_dict(self._batch_size)
             feed_dict_time = time.time() - start_time
 
             # Get sample name from model

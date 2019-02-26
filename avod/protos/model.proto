@@ -81,11 +81,20 @@ message RpnConfig {
     // RPN Non-max suppression boxes during training
     required int32 rpn_train_nms_size = 3;
 
+    // RPN NMS IoU threshold during training
+    required float rpn_train_nms_iou_thresh = 4;
+    
     // RPN Non-max suppression boxes during testing
-    required int32 rpn_test_nms_size = 4;
+    required int32 rpn_test_nms_size = 5;
 
-    // RPN NMS IoU threshold
-    required float rpn_nms_iou_thresh = 5;
+    // RPN NMS IoU threshold during testing
+    required float rpn_test_nms_iou_thresh = 6;
+
+    required float rpn_xz_search_range = 7;
+    required float rpn_xz_bin_len = 8;
+    // in fraction of PI
+    required float rpn_theta_search_range = 9;
+    required int32 rpn_theta_bin_num = 10;
 }
 
 message AvodConfig {
@@ -103,6 +112,15 @@ message AvodConfig {
 
     // AVOD bounding box representation, one of ['box_3d', 'box_8c']
     required string avod_box_representation = 6;
+    
+    required float avod_xz_search_range = 7;
+    required float avod_xz_bin_len = 8;
+    // in fraction of PI
+    required float avod_theta_search_range = 9;
+    // in units of degree
+    required float avod_theta_bin_len = 10;
+
+    required float avod_pooling_context_length = 11; 
 }
 
 message LossConfig {

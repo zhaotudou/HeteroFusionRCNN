@@ -62,7 +62,7 @@ def inference(model_config, eval_config,
         elif model_name == 'rpn_model':
             model = RpnModel(model_config,
                              train_val_test=eval_config.eval_mode,
-                             dataset=dataset)
+                             dataset=dataset, batch_size=eval_config.batch_size)
         else:
             raise ValueError('Invalid model name {}'.format(model_name))
 

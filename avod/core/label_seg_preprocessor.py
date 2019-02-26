@@ -1,6 +1,7 @@
 # import cv2
 import numpy as np
 import os
+import copy
 
 from PIL import Image
 
@@ -86,19 +87,22 @@ class LabelSegPreprocessor(object):
                       "(Ground Truth Filter)".format(
                           sample_idx + 1, num_samples,
                           classes_name, sample_name))
-                label_seg = np.zeros((point_cloud.shape[0], 2), dtype=int)
+                label_seg = np.zeros((point_cloud.shape[0], 8), dtype=np.float32)
                 self._save_to_file(classes_name, expand_gt_size,
                                    sample_name, label_seg)
                 continue
             
-            label_boxes_3d = [
-                 box_3d_encoder.object_label_to_box_3d(obj_label)
-                 for obj_label in obj_labels]
-            for box_3d in label_boxes_3d:
+            label_boxes_3d = np.asarray(
+                [box_3d_encoder.object_label_to_box_3d(obj_label)
+                 for obj_label in obj_labels])
+            # expand_size
+            label_boxes_3d_expanded = copy.deepcopy(label_boxes_3d)
+            for box_3d in label_boxes_3d_expanded:
                 box_3d[3:6] += expand_gt_size
+            
             label_boxes_8co = np.asarray(
                 [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T
-                 for box_3d in label_boxes_3d])
+                 for box_3d in label_boxes_3d_expanded])
 
             label_classes = [
                 dataset_utils.class_str_to_index(obj_label.type)
@@ -107,7 +111,8 @@ class LabelSegPreprocessor(object):
 
             label_seg = self.label_seg_utils.label_point_cloud(
                                     point_cloud, 
-                                    label_boxes_8co, 
+                                    label_boxes_8co,
+                                    label_boxes_3d,
                                     label_classes)
             foreground_points = label_seg[label_seg[:,0] > 0]
             print("{} / {}:"
@@ -152,7 +157,7 @@ class LabelSegPreprocessor(object):
             classes_name (str): classes name, e.g. 'Car', 'Pedestrian',
                 'Cyclist', 'People'
             sample_name (str): name of sample, e.g. '000123'
-            label_seg: ndarray of label seg of shape (N, 2)
+            label_seg: ndarray of label seg of shape (N, 8)
                 defaults to an empty array
         """
 
@@ -161,5 +166,5 @@ class LabelSegPreprocessor(object):
                                                         sample_name)
 
         # Save to npy file
-        label_seg = np.asarray(label_seg, dtype=np.int32)
+        label_seg = np.asarray(label_seg, dtype=np.float32)
         np.save(file_name, label_seg)

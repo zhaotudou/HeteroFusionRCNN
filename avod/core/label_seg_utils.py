@@ -96,24 +96,26 @@ class LabelSegUtils:
             '[ ' + str(expand_gt_size) + ']'
     
     @classmethod 
-    def label_point_cloud(cls, raw_xyz, bbox_8co, categories):
+    def label_point_cloud(cls, raw_xyz, bbox_8co, bbox_3d, klasses):
         '''
         Give all points a label if it is inside a box
          Input:
            raw_xyz: (N x 3)
            bbox_8co: (M x 8 x 3)
-           categories: (M)
+           bbox_3d: (M x 7) [x,y,z,l,w,h,ry]
+           klasses: (M) [klass] 1-based, 0-background
          Return:
-           label_seg: (N x [category_idx, box_idx])
+           label_seg: (N x 8), [klass,x,y,z,l,w,h,ry] 
         '''
         num_points = raw_xyz.shape[0]
         num_boxes = bbox_8co.shape[0]
-        label_seg = np.zeros((num_points, 2), dtype=int)
+        label_seg = np.zeros((num_points, 8), dtype=np.float32)
         if num_boxes > 0:
             facets = box_8c_encoder.np_box_8co_to_facet(bbox_8co)
         for i in range(num_boxes):
-            category = categories[i]
+            klass = klasses[i]
             box = bbox_8co[i,:,:]
+            box_3d = bbox_3d[i]
             facet = facets[i,:,:]
             x = box[:,0]
             y = box[:,1]
@@ -136,8 +138,8 @@ class LabelSegUtils:
                    pz > max_z or pz < min_z:
                     continue
                 elif cls.point_inside_facet(point, facet, box):
-                    label_seg[j, 0] = category
-                    label_seg[j, 1] = i + 1
+                    label_seg[j, 0] = float(klass)
+                    label_seg[j, 1:8] = box_3d[:]
         return label_seg
 
     @classmethod
@@ -165,8 +167,8 @@ def main():
     bbox_8co = box_8c_encoder.np_box_3d_to_box_8co(bbox_3d).T
     bbox_8co = bbox_8co.reshape(1, 8, 3)
     print(bbox_8co)
-    categories = np.asarray([1])
-    label_seg = LabelSegUtils.label_point_cloud(raw_xyz, bbox_8co, categories)
+    klasses = np.asarray([1])
+    label_seg = LabelSegUtils.label_point_cloud(raw_xyz, bbox_8co, bbox_3d, klasses)
     print(label_seg)
     foreground = label_seg[label_seg[:,0] > 0]
     print(foreground)

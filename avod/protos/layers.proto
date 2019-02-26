@@ -88,7 +88,7 @@ message PyramidLayersConfig {
 
 message RPNLayersConfig {
     // FCLayer [channel, dropout_rate]
-    repeated FCLayer fc_layer = 7;
+    repeated FCLayer fc_layer = 1;
 }
 
 message AVODLayersConfig{

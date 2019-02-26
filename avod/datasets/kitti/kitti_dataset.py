@@ -268,11 +268,7 @@ class KittiDataset:
 
             else:
                 obj_labels = None
-                
-                label_seg = np.zeros(16384, 2)
-                #label_anchors = np.zeros((1, 6))
-                label_boxes_3d = np.zeros((1, 7))
-                #label_classes = np.zeros(1)
+                label_seg = np.zeros((16384, 8), dtype=np.float32)
 
             img_idx = int(sample_name)
 
@@ -283,10 +279,6 @@ class KittiDataset:
             image_shape = rgb_image.shape[0:2]
             #image_input = rgb_image
             
-            # Get calibration
-            # stereo_calib_p2 = calib_utils.read_calibration(self.calib_dir,
-            #                                               int(sample_name)).p2
-
             point_cloud = self.kitti_utils.get_point_cloud(self.pc_source,
                                                            img_idx,
                                                            image_shape)
@@ -298,53 +290,14 @@ class KittiDataset:
                 point_cloud = kitti_aug.flip_point_cloud(point_cloud)
                 obj_labels = [kitti_aug.flip_label_in_3d_only(obj)
                               for obj in obj_labels]
-                #ground_plane = kitti_aug.flip_ground_plane(ground_plane)
-                #stereo_calib_p2 = kitti_aug.flip_stereo_calib_p2(
-                #    stereo_calib_p2, image_shape)
 
             # Augmentation (Image Jitter)
             if kitti_aug.AUG_PCA_JITTER in sample.augs:
                 image_input[:, :, 0:3] = kitti_aug.apply_pca_jitter(
                     image_input[:, :, 0:3])
 
-            if obj_labels is not None:
-                label_boxes_3d = np.asarray(
-                    [box_3d_encoder.object_label_to_box_3d(obj_label)
-                     for obj_label in obj_labels])
-
-                #label_classes = [
-                #    self.kitti_utils.class_str_to_index(obj_label.type)
-                #    for obj_label in obj_labels]
-                #label_classes = np.asarray(label_classes, dtype=np.int32)
-
-                # Return empty anchors_info if no ground truth after filtering
-                if len(label_boxes_3d) == 0:
-                    if self.train_on_all_samples:
-                        # If training without any positive labels, we cannot
-                        # set these to zeros, because later on the offset calc
-                        # uses log on these anchors. So setting any arbitrary
-                        # number here that does not break the offset calculation
-                        # should work, since the negative samples won't be
-                        # regressed in any case.
-                        #dummy_anchors = [[-1000, -1000, -1000, 1, 1, 1]]
-                        #label_anchors = np.asarray(dummy_anchors)
-                        dummy_boxes = [[-1000, -1000, -1000, 1, 1, 1, 0]]
-                        label_boxes_3d = np.asarray(dummy_boxes)
-                    else:
-                        #label_anchors = np.zeros((1, 6))
-                        label_boxes_3d = np.zeros((1, 7))
-                    #label_classes = np.zeros(1)
-                else:
-                    pass
-                    #label_anchors = box_3d_encoder.box_3d_to_anchor(
-                    #    label_boxes_3d, ortho_rotate=True)
-            
             sample_dict = {
                 constants.KEY_LABEL_SEG: label_seg,
-                constants.KEY_LABEL_BOXES_3D: label_boxes_3d,
-                #constants.KEY_LABEL_ANCHORS: label_anchors,
-                #constants.KEY_LABEL_CLASSES: label_classes,
-
                 constants.KEY_POINT_CLOUD: point_cloud,
 
                 constants.KEY_SAMPLE_NAME: sample_name,
