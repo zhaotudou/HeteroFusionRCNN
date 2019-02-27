@@ -285,8 +285,13 @@ class RpnModel(model.DetectionModel):
             seg_preds = tf.argmax(seg_softmax, axis=-1, name='seg_predictions')
             seg_scores = tf.reduce_max(seg_softmax, axis=-1, name='seg_scores')
             
-            # foreground point masking
-            foreground_mask = seg_preds > 0
+        label_segs = self.placeholders[self.PL_LABEL_SEGS]
+        # foreground point masking
+        with tf.variable_scope('foreground_masking'):
+            if self._train_val_test in ['train', 'val']:
+                foreground_mask = label_segs[:,:,0] > 0
+            else:
+                foreground_mask = seg_preds > 0
             # TODO: batch_size must be 1
             foreground_pts = tf.reshape(
                     tf.boolean_mask(self._pc_pts, foreground_mask), 
@@ -444,8 +449,6 @@ class RpnModel(model.DetectionModel):
 
         # Ground Truth Seg
         with tf.variable_scope('seg_one_hot_classes'):
-            label_segs = self.placeholders[self.PL_LABEL_SEGS]
-            
             segs_gt_one_hot = tf.one_hot(
                 tf.to_int64(label_segs[:,:,0]), depth=self.num_classes + 1,
                 on_value=1.0,
@@ -632,20 +635,29 @@ class RpnModel(model.DetectionModel):
             # image_input = sample.get(constants.KEY_IMAGE_INPUT)
             # Image shape (h, w)
             # image_shape = [image_input.shape[0], image_input.shape[1]]
-
             pc_input = sample.get(constants.KEY_POINT_CLOUD)
             label_seg = sample.get(constants.KEY_LABEL_SEG)
             pool_size = pc_input.shape[0]
-            if pool_size > pc_sample_pts:
-                choices = np.random.choice(pool_size, pc_sample_pts, replace=False)
-            else:
-                choices = np.concatenate((np.random.choice(pool_size, pool_size, replace=False),
-                                          np.random.choice(pool_size, pc_sample_pts - pool_size, replace=True)))
-            pc_input = pc_input[choices]
-            label_seg = label_seg[choices]
             
-            batch_pc_inputs.append(pc_input)
-            batch_label_segs.append(label_seg)
+            def random_sample(pool_size, sample_num):
+                if pool_size > sample_num:
+                    choices = np.random.choice(pool_size, sample_num, replace=False)
+                else:
+                    choices = np.concatenate((np.random.choice(pool_size, pool_size, replace=False),
+                                              np.random.choice(pool_size, sample_num - pool_size, replace=True)))
+                return choices
+            
+            while True: 
+                choices = random_sample(pool_size, pc_sample_pts)
+                pc_input_sampled = pc_input[choices]
+                label_seg_sampled = label_seg[choices]
+                
+                foreground_point_num = label_seg_sampled[label_seg_sampled[:, 0] > 0].shape[0]
+                if foreground_point_num > 0:
+                    break
+            
+            batch_pc_inputs.append(pc_input_sampled)
+            batch_label_segs.append(label_seg_sampled)
             
             # Temporary sample info for debugging
             sample_name = sample.get(constants.KEY_SAMPLE_NAME)
@@ -701,13 +713,13 @@ class RpnModel(model.DetectionModel):
                 with tf.variable_scope('cls_norm'):
                     # normalize by the number of foreground pts
                     num_foreground_pts = prediction_dict[self.PRED_FG_PTS]
-                    #with tf.control_dependencies(
-                    #    [tf.assert_positive(num_foreground_pts)]):
-                    #    classification_loss /= num_foreground_pts
-                    classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                        classification_loss / num_foreground_pts,
-                        classification_loss)
-                    tf.summary.scalar('classification', classification_loss)
+                    with tf.control_dependencies(
+                        [tf.assert_positive(num_foreground_pts)]):
+                        classification_loss /= num_foreground_pts
+                    #classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
+                    #    classification_loss / num_foreground_pts,
+                    #    0.0)
+                    #tf.summary.scalar('classification', classification_loss)
 
             with tf.variable_scope('regression'):
                 reg_loss = losses.WeightedSmoothL1Loss()
@@ -720,13 +732,13 @@ class RpnModel(model.DetectionModel):
                                                 weight=reg_loss_weight)
                 with tf.variable_scope('reg_norm'):
                     # normalize by the number of foreground pts
-                    #with tf.control_dependencies(
-                    #    [tf.assert_positive(num_foreground_pts)]):
-                    #    regression_loss /= num_foreground_pts
-                    regression_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                        regression_loss / num_foreground_pts,
-                        regression_loss)
-                    tf.summary.scalar('regression', regression_loss)
+                    with tf.control_dependencies(
+                        [tf.assert_positive(num_foreground_pts)]):
+                        regression_loss /= num_foreground_pts
+                    #regression_loss = tf.where(tf.greater(num_foreground_pts, 0), 
+                    #    regression_loss / num_foreground_pts,
+                    #    0.0)
+                    #tf.summary.scalar('regression', regression_loss)
             
             with tf.variable_scope('rpn_loss'):
                 rpn_loss = segmentation_loss + classification_loss + regression_loss
