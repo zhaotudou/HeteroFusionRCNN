@@ -38,7 +38,7 @@ class RpnModel(model.DetectionModel):
     PRED_FG_CLS_GT = 'rpn_fg_cls_gt'
     PRED_FG_REG_GT = 'rpn_fg_reg_gt'
 
-    PRED_FG_MASK = 'rpn_fg_mask'
+    PRED_FG_PTS = 'rpn_fg_pts_num'
     PRED_FG_CLS = 'rpn_fg_cls'
     PRED_FG_REG = 'rpn_fg_reg'
 
@@ -452,8 +452,8 @@ class RpnModel(model.DetectionModel):
                 off_value=0.0)
         
         with tf.variable_scope('segmentation_accuracy'):
-            num_foreground_pts = tf.reduce_sum(tf.cast(foreground_mask, tf.float32)) / self._batch_size
-            tf.summary.scalar('foreground points num', num_foreground_pts)
+            num_foreground_pts = tf.reduce_sum(tf.cast(foreground_mask, tf.float32), name='num_foreground_pts')
+            tf.summary.scalar('foreground_points_num', num_foreground_pts)
             # seg accuracy 
             seg_correct = tf.equal(seg_preds, tf.to_int64(label_segs[:,:,0]))
             seg_in_correct = tf.not_equal(seg_preds, tf.to_int64(label_segs[:,:,0]))
@@ -523,8 +523,8 @@ class RpnModel(model.DetectionModel):
             predictions[self.PRED_SEG_GT] = segs_gt_one_hot
             predictions[self.PRED_TOTAL_PTS] = num_total_pts
 
-            # Foreground Point masks
-            predictions[self.PRED_FG_MASK] = foreground_mask
+            # Foreground Point num
+            predictions[self.PRED_FG_PTS] = num_foreground_pts
             
             # Foreground BOX predictions
             predictions[self.PRED_FG_CLS] = (bin_x_logits, bin_z_logits, bin_theta_logits)
@@ -689,7 +689,6 @@ class RpnModel(model.DetectionModel):
                     tf.summary.scalar('segmentation', segmentation_loss)
             
             # these should include foreground pts only
-            foreground_mask = prediction_dict[self.PRED_FG_MASK]
             with tf.variable_scope('classification'):
                 cls_loss = losses.WeightedSoftmaxLoss()
                 cls_loss_weight = self._config.loss_config.cls_loss_weight
@@ -701,13 +700,13 @@ class RpnModel(model.DetectionModel):
                                                     weight=cls_loss_weight)
                 with tf.variable_scope('cls_norm'):
                     # normalize by the number of foreground pts
-                    num_foreground_pts = tf.reduce_sum(tf.cast(foreground_mask, tf.float32))
-                    with tf.control_dependencies(
-                        [tf.assert_positive(num_foreground_pts)]):
-                        classification_loss /= num_foreground_pts
-                    #classificatin_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                    #    classification_loss / num_foreground_pts,
-                    #    classification_loss)
+                    num_foreground_pts = prediction_dict[self.PRED_FG_PTS]
+                    #with tf.control_dependencies(
+                    #    [tf.assert_positive(num_foreground_pts)]):
+                    #    classification_loss /= num_foreground_pts
+                    classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
+                        classification_loss / num_foreground_pts,
+                        classification_loss)
                     tf.summary.scalar('classification', classification_loss)
 
             with tf.variable_scope('regression'):
@@ -721,12 +720,12 @@ class RpnModel(model.DetectionModel):
                                                 weight=reg_loss_weight)
                 with tf.variable_scope('reg_norm'):
                     # normalize by the number of foreground pts
-                    with tf.control_dependencies(
-                        [tf.assert_positive(num_foreground_pts)]):
-                        regression_loss /= num_foreground_pts
-                    #regression_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                    #    regression_loss / num_foreground_pts,
-                    #    regression_loss)
+                    #with tf.control_dependencies(
+                    #    [tf.assert_positive(num_foreground_pts)]):
+                    #    regression_loss /= num_foreground_pts
+                    regression_loss = tf.where(tf.greater(num_foreground_pts, 0), 
+                        regression_loss / num_foreground_pts,
+                        regression_loss)
                     tf.summary.scalar('regression', regression_loss)
             
             with tf.variable_scope('rpn_loss'):

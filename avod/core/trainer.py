@@ -90,7 +90,7 @@ def train(model, train_config):
             training_optimizer,
             clip_gradient_norm=1.0,
             global_step=global_step_tensor,
-            summarize_gradients=True,
+            summarize_gradients=False,
             variables_to_train=variables_to_train)
 
     # Save checkpoints regularly.
