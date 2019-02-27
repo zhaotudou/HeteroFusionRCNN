@@ -719,7 +719,7 @@ class RpnModel(model.DetectionModel):
                     #classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
                     #    classification_loss / num_foreground_pts,
                     #    0.0)
-                    #tf.summary.scalar('classification', classification_loss)
+                    tf.summary.scalar('classification', classification_loss)
 
             with tf.variable_scope('regression'):
                 reg_loss = losses.WeightedSmoothL1Loss()
@@ -738,7 +738,7 @@ class RpnModel(model.DetectionModel):
                     #regression_loss = tf.where(tf.greater(num_foreground_pts, 0), 
                     #    regression_loss / num_foreground_pts,
                     #    0.0)
-                    #tf.summary.scalar('regression', regression_loss)
+                    tf.summary.scalar('regression', regression_loss)
             
             with tf.variable_scope('rpn_loss'):
                 rpn_loss = segmentation_loss + classification_loss + regression_loss
