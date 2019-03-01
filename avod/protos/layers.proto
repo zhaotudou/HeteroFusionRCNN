@@ -92,10 +92,10 @@ message RPNLayersConfig {
 }
 
 message AVODLayersConfig{
-    oneof fc_layers {
-        BasicFcLayers basic_fc_layers = 1;
-        FusionFcLayers fusion_fc_layers = 2;
-    }
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer mlp = 1;
+    required FeatureExtractor pc_feature_extractor = 2;
+    repeated FCLayer fc_layer = 3;
 }
 
 message BasicFcLayers {

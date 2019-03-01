@@ -85,31 +85,42 @@ def is_clockwise(p):
     y = p[:,1]
     return np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)) > 0
 
-def compute_box3d_iou(pred_boxes_3d, label_boxes_3d):
+def compute_recall_iou(pred_boxes_3d, label_boxes_3d):
     '''
     Input:
-        pred_boxes_3d: (B,p,7) [x,y,z,l,w,h,ry]
+        pred_boxes_3d: (B,n,7) [x,y,z,l,w,h,ry]
         label_boxes_3d: (B,p,7) [x,y,z,l,w,h,ry]
     Output:
-        iou2ds: (Bp), bev oriented 2d IOU
-        iou3ds: (Bp), 3d IOU
+        recalls_50: (B)
+        recalls_70: (B)
+        iou3ds: (B,n), 3d IOU
+        iou2ds: (B,n), bev oriented 2d IOU
     '''
-    pred_boxes_3d = pred_boxes_3d.reshape((-1,7))
-    label_boxes_3d = label_boxes_3d.reshape((-1,7))
+    B = pred_boxes_3d.shape[0]
+    n = pred_boxes_3d.shape[1]
+    recalls_50 = np.zeros(B, dtype=np.float32)
+    recalls_70 = np.zeros(B, dtype=np.float32)
+    iou3ds = np.zeros((B,n), dtype=np.float32)
+    iou2ds = np.zeros((B,n), dtype=np.float32)
+    for b in range(B):
+        sb_pred_boxes_3d = pred_boxes_3d[b] #(n,7)
+        sb_label_boxes_3d = np.unique(label_boxes_3d[b], axis=0) #(m,7)
+        m = sb_label_boxes_3d.shape[0]
+        sb_pred_boxes_8co = [box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in sb_pred_boxes_3d]
+        sb_label_boxes_8co = [box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in sb_label_boxes_3d]
+        sb_iou2ds = np.zeros((n,m))
+        sb_iou3ds = np.zeros((n,m))
+        for i in range(n):
+            for j in range(m):
+                iou_3d, iou_2d = box3d_iou(sb_pred_boxes_8co[i], sb_label_boxes_8co[j])
+                sb_iou2ds[i][j] = iou_2d
+                sb_iou3ds[i][j] = iou_3d
+        recalls_50[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.5) / m
+        recalls_70[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.7) / m
+        iou3ds[b] = np.max(sb_iou3ds, axis=1)
+        iou2ds[b] = np.max(sb_iou2ds, axis=1)
 
-    iou2d_list = [] 
-    iou3d_list = [] 
-    num_boxes = pred_boxes_3d.shape[0]
-    for i in range(num_boxes):
-        pred_box_8co = box_8c_encoder.np_box_3d_to_box_8co(pred_boxes_3d[i]).T
-        label_box_8co = box_8c_encoder.np_box_3d_to_box_8co(label_boxes_3d[i]).T
-        
-        iou_3d, iou_2d = box3d_iou(pred_box_8co, label_box_8co)
-        
-        iou3d_list.append(iou_3d)
-        iou2d_list.append(iou_2d)
-    return np.array(iou2d_list, dtype=np.float32), \
-        np.array(iou3d_list, dtype=np.float32)
+    return recalls_50, recalls_70, iou3ds, iou2ds
 
 def box3d_iou(corners1, corners2):
     ''' Compute 3D bounding box IoU.

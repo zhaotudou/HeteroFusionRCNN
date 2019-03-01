@@ -25,7 +25,6 @@ class RpnModel(model.DetectionModel):
     # Keys for Placeholders
     ##############################
     PL_PC_INPUTS = 'pc_inputs_pl'
-
     PL_LABEL_SEGS = 'label_segs_pl'
 
     ##############################
@@ -34,13 +33,13 @@ class RpnModel(model.DetectionModel):
     PRED_SEG_SOFTMAX = 'rpn_seg_softmax'
     PRED_SEG_GT = 'rpn_seg_gt'
     PRED_TOTAL_PTS = 'rpn_total_pts'
+    PRED_FG_MASK = 'rpn_fg_mask'
     
-    PRED_FG_CLS_GT = 'rpn_fg_cls_gt'
-    PRED_FG_REG_GT = 'rpn_fg_reg_gt'
-
-    PRED_FG_PTS = 'rpn_fg_pts_num'
     PRED_FG_CLS = 'rpn_fg_cls'
     PRED_FG_REG = 'rpn_fg_reg'
+    PRED_FG_CLS_GT = 'rpn_fg_cls_gt'
+    PRED_FG_REG_GT = 'rpn_fg_reg_gt'
+    PRED_FG_PTS = 'rpn_fg_pts_num'
 
     PRED_TOP_PROPOSALS = 'rpn_top_proposals'
     PRED_TOP_OBJECTNESS_SOFTMAX = 'rpn_top_objectness_softmax'
@@ -100,7 +99,7 @@ class RpnModel(model.DetectionModel):
        
         self.S = rpn_config.rpn_xz_search_range
         self.DELTA = rpn_config.rpn_xz_bin_len
-        self.NUM_BIN_X = int(rpn_config.rpn_xz_search_range * 2 / rpn_config.rpn_xz_bin_len)
+        self.NUM_BIN_X = int(2 * self.S / self.DELTA)
         self.NUM_BIN_Z = self.NUM_BIN_X
         
         self.R = rpn_config.rpn_theta_search_range * np.pi
@@ -493,30 +492,15 @@ class RpnModel(model.DetectionModel):
                 on_value=1.0,
                 off_value=0.0)
             
-        with tf.variable_scope('proposal_ious'): 
+        with tf.variable_scope('proposal_recall_iou'): 
             # reg iou
-            if oriented_NMS:
-                nmsed_label_box_3d = tf.reshape(
-                    tf.boolean_mask(foreground_label_boxes_3d, nms_masks), 
-                    [self._batch_size, -1, 7])  #(B,p,7)
-            else:
-                def single_batch_nms_gather_fn(args):
-                    (single_batch_label_box_3d, single_batch_nms_indice) = args
-                    single_batch_nmsed_label_box_3d = tf.gather(
-                        single_batch_label_box_3d,
-                        single_batch_nms_indice)
-                    return single_batch_nmsed_label_box_3d
-
-                nmsed_label_box_3d = tf.map_fn(
-                    single_batch_nms_gather_fn,
-                    elems=[foreground_label_boxes_3d, nms_indices],
-                    dtype=tf.float32)
-            
-            iou2ds, iou3ds = tf.py_func(box_util.compute_box3d_iou, 
-                [top_proposals, nmsed_label_box_3d],
-                [tf.float32, tf.float32])
-            tf.summary.scalar('iou_2d', tf.reduce_mean(iou2ds))
+            recalls_50, recalls_70, iou3ds, iou2ds = tf.py_func(box_util.compute_recall_iou, 
+                [top_proposals, foreground_label_boxes_3d],
+                [tf.float32, tf.float32, tf.float32, tf.float32])
+            tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
+            tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
             tf.summary.scalar('iou_3d', tf.reduce_mean(iou3ds))
+            tf.summary.scalar('iou_2d', tf.reduce_mean(iou2ds))
         
         # Specify the tensors to evaluate
         predictions = dict()
@@ -527,6 +511,7 @@ class RpnModel(model.DetectionModel):
             predictions[self.PRED_TOTAL_PTS] = num_total_pts
 
             # Foreground Point num
+            predictions[self.PRED_FG_MASK] = foreground_mask
             predictions[self.PRED_FG_PTS] = num_foreground_pts
             
             # Foreground BOX predictions
@@ -539,14 +524,14 @@ class RpnModel(model.DetectionModel):
 
             # Proposals after nms
             predictions[self.PRED_TOP_PROPOSALS] = top_proposals
-            predictions[
-                self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
+            predictions[self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
             
         else:
             # self._train_val_test == 'test'
+            predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
+            predictions[self.PRED_FG_MASK] = foreground_mask
             predictions[self.PRED_TOP_PROPOSALS] = top_proposals
-            predictions[
-                self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
+            predictions[self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
         return predictions
 
     def _parse_rpn_output(self, rpn_output):

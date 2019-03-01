@@ -36,9 +36,9 @@ def tf_decode(ref_pts,
         boxes_3d: (B,p,7) 3D box in box_3d format [x, y, z, l, w, h, ry]
     """
 
-    x = tf.to_float(bin_x) * DELTA - S + ref_pts[:,:,0] + 0.5 * DELTA + res_x_norm * DELTA
-    z = tf.to_float(bin_z) * DELTA - S + ref_pts[:,:,2] + 0.5 * DELTA + res_z_norm * DELTA
-    theta = tf.to_float(bin_theta) * DELTA_THETA - R + 0.5 * DELTA_THETA + res_theta_norm * DELTA_THETA
+    x = ref_pts[:,:,0] + (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * 0.5 * DELTA
+    z = ref_pts[:,:,2] + (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * 0.5 * DELTA
+    theta = (tf.to_float(bin_theta) + 0.5) * DELTA_THETA - R + res_theta_norm * 0.5 * DELTA_THETA
     
     y = ref_pts[:,:,1] + res_y
     
@@ -81,13 +81,13 @@ def tf_encode(ref_pts, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA):
     dtheta = boxes_3d[:,:,6]
     
     bin_x = tf.floor((dx + S) / DELTA)
-    res_x_norm = (dx + S - (bin_x + 0.5) * DELTA) / DELTA
+    res_x_norm = (dx + S - (bin_x + 0.5) * DELTA) / (0.5 * DELTA)
     
     bin_z = tf.floor((dz + S) / DELTA)
-    res_z_norm = (dz + S - (bin_z + 0.5) * DELTA) / DELTA
+    res_z_norm = (dz + S - (bin_z + 0.5) * DELTA) / (0.5 * DELTA)
     
     bin_theta = tf.floor((dtheta + R) / DELTA_THETA)
-    res_theta_norm = (dtheta + R - (bin_theta + 0.5) * DELTA_THETA) / DELTA_THETA
+    res_theta_norm = (dtheta + R - (bin_theta + 0.5) * DELTA_THETA) / (0.5 * DELTA_THETA)
     
     res_y = dy
     res_size = dsize

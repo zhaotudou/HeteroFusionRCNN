@@ -2,26 +2,50 @@
 #include <curand_kernel.h>
 #include <stdio.h>
 
-__device__ bool pts_in_box(float px, float py, float pz, 
-                           float cx, float cy, float cz,
-                           float dx, float dy, float dz) {
-  float min_x = cx - 0.5 * dx;
-  float max_x = cx + 0.5 * dx;
-  float min_y = cy - dy;
-  float max_y = cy;
-  float min_z = cz - 0.5 * dz;
-  float max_z = cz + 0.5 * dz;
-  if (px >= min_x && px <= max_x &&
-      py >= min_y && py <= max_y &&
-      pz >= min_z && pz <= max_z)
+__device__ float dot(float x1, float y1, float z1, float x2, float y2, float z2) {
+    return (x1 * x2 + y1 * y2 + z1 * z2);
+}
+
+__device__ bool is_point_inside(float px, float py, float pz, 
+                                float p1x, float p1y, float p1z,
+                                float p2x, float p2y, float p2z,
+                                float p4x, float p4y, float p4z,
+                                float p5x, float p5y, float p5z) {
+  float ux = p2x - p1x;
+  float uy = p2y - p1y;
+  float uz = p2z - p1z;
+  
+  float vx = p4x - p1x;
+  float vy = p4y - p1y;
+  float vz = p4z - p1z;
+  
+  float wx = p5x - p1x;
+  float wy = p5y - p1y;
+  float wz = p5z - p1z;
+
+  float u_dot_x = dot(ux, uy, uz, px, py, pz);
+  float u_dot_p1 = dot(ux, uy, uz, p1x, p1y, p1z);
+  float u_dot_p2 = dot(ux, uy, uz, p2x, p2y, p2z);
+
+  float v_dot_x = dot(vx, vy, vz, px, py, pz);
+  float v_dot_p1 = dot(vx, vy, vz, p1x, p1y, p1z);
+  float v_dot_p4 = dot(vx, vy, vz, p4x, p4y, p4z);
+  
+  float w_dot_x = dot(wx, wy, wz, px, py, pz);
+  float w_dot_p1 = dot(wx, wy, wz, p1x, p1y, p1z);
+  float w_dot_p5 = dot(wx, wy, wz, p5x, p5y, p5z);
+
+  if (u_dot_p1 < u_dot_x && u_dot_x < u_dot_p2 &&
+      v_dot_p1 < v_dot_x && v_dot_x < v_dot_p4 &&
+      w_dot_p1 < w_dot_x && w_dot_x < w_dot_p5)
     return true;
   return false;
 }
 
 __global__ void pccropandsampleKernel(
-    const float* pts_data, const float* fts_data, const float* boxes_data, const int* box_ind_data,
+    const float* pts_data, const float* fts_data, const bool* mask_data, const float* boxes_data, const int* box_ind_data,
     int num_boxes, int batch, int npts, int resize, int channel,
-    float* crop_pts_data, float* crop_fts_data, int* crop_ind_data, bool* non_empty_box_data) {
+    float* crop_pts_data, float* crop_fts_data, bool* crop_mask_data, int* crop_ind_data, bool* non_empty_box_data) {
   
   __shared__ unsigned int box_pts_num;
   for (int b=blockIdx.x; b<num_boxes; b+=gridDim.x) {
@@ -29,23 +53,35 @@ __global__ void pccropandsampleKernel(
       box_pts_num = 0;
     __syncthreads();
 
-    float cx = boxes_data[b*6];
-    float cy = boxes_data[b*6+1];
-    float cz = boxes_data[b*6+2];
-    float dx = boxes_data[b*6+3];
-    float dy = boxes_data[b*6+4];
-    float dz = boxes_data[b*6+5];
+    float p1x = boxes_data[b*24];
+    float p1y = boxes_data[b*24 + 8];
+    float p1z = boxes_data[b*24 + 16];
+    
+    float p2x = boxes_data[b*24 + 1];
+    float p2y = boxes_data[b*24 + 8  + 1];
+    float p2z = boxes_data[b*24 + 16 + 1];
+    
+    float p4x = boxes_data[b*24 + 3];
+    float p4y = boxes_data[b*24 + 8  + 3];
+    float p4z = boxes_data[b*24 + 16 + 3];
+    
+    float p5x = boxes_data[b*24 + 4];
+    float p5y = boxes_data[b*24 + 8  + 4];
+    float p5z = boxes_data[b*24 + 16 + 4];
+    
     int bch = box_ind_data[b];
     const float *pts = pts_data + bch * npts * 3;
     const float *fts = fts_data + bch * npts * channel;
+    const bool *mask = mask_data + bch * npts;
     float *crop_pts = crop_pts_data + b * resize * 3;
     float *crop_fts = crop_fts_data + b * resize * channel;
+    bool *crop_mask = crop_mask_data + b * resize;
     int *crop_ind = crop_ind_data + b * resize;
     for (int p=threadIdx.x; p<npts; p+=blockDim.x) {
       float px = pts[p*3]; 
       float py = pts[p*3+1]; 
       float pz = pts[p*3+2];
-      if (pts_in_box(px, py, pz, cx, cy, cz, dx, dy, dz)) {
+      if (is_point_inside(px, py, pz, p1x, p1y, p1z, p2x, p2y, p2z, p4x, p4y, p4z, p5x, p5y, p5z)) {
         int pos = atomicInc(&box_pts_num, UINT_MAX);
         if (pos < resize) {
           crop_pts[pos*3] = px;  
@@ -54,6 +90,7 @@ __global__ void pccropandsampleKernel(
           for (int c=0; c < channel; c++) {
             crop_fts[pos * channel + c] = fts[p * channel + c];
           }
+          crop_mask[pos] = mask[p];
           crop_ind[pos] = p;
         } else {
           break;
@@ -80,6 +117,7 @@ __global__ void pccropandsampleKernel(
           for(int c=0; c < channel; c++) {
             crop_fts[box_pts_num * channel + c] = crop_fts[idx * channel + c];
           }
+          crop_mask[box_pts_num] = crop_mask[idx];
           crop_ind[box_pts_num] = crop_ind[idx];
           box_pts_num++;
         }
@@ -109,12 +147,12 @@ __global__ void pccropandsamplegradftsKernel(
 }
 
 void pccropandsample_gpu(
-    const float* pts_data, const float* fts_data, const float* boxes_data, const int* box_ind_data,
+    const float* pts_data, const float* fts_data, const bool* mask_data, const float* boxes_data, const int* box_ind_data,
     int num_boxes, int batch, int npts, int resize, int channel,
-    float* crop_pts_data, float* crop_fts_data, int* crop_ind_data, bool* non_empty_box_data) {
-  pccropandsampleKernel<<<32, 512>>>(pts_data, fts_data, boxes_data, box_ind_data, 
+    float* crop_pts_data, float* crop_fts_data, bool* crop_mask_data, int* crop_ind_data, bool* non_empty_box_data) {
+  pccropandsampleKernel<<<32, 512>>>(pts_data, fts_data, mask_data, boxes_data, box_ind_data, 
                                    num_boxes, batch, npts, resize, channel,
-                                   crop_pts_data, crop_fts_data, crop_ind_data, non_empty_box_data);
+                                   crop_pts_data, crop_fts_data, crop_mask_data, crop_ind_data, non_empty_box_data);
 }
 
 void pccropandsamplegradfts_gpu(

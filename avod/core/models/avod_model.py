@@ -106,6 +106,21 @@ class AvodModel(model.DetectionModel):
         self._path_drop_probabilities = self._config.path_drop_probabilities
         self._box_rep = avod_config.avod_box_representation
 
+        self.S = avod_config.avod_xz_search_range
+        self.DELTA = avod_config.avod_xz_bin_len
+        self.NUM_BIN_X = int(2 * self.S / self.DELTA)
+        self.NUM_BIN_Z = self.NUM_BIN_X
+        
+        self.R = avod_config.avod_theta_search_range * np.pi
+        self.DELTA_THETA = avod_config.avod_theta_bin_len * np.pi / 180
+        self.NUM_BIN_THETA = int(2 * self.R / self.DELTA_THETA)
+
+        self._pooling_context_length = avod_config.avod_pooling_context_length
+
+        # Feature Extractor Nets
+        self._pc_feature_extractor = \
+            feature_extractor_builder.get_extractor(
+                self._config.layers_config.avod_config.pc_feature_extractor)
         if self._box_rep not in ['box_3d', 'box_8c', 'box_8co',
                                  'box_4c', 'box_4ca']:
             raise ValueError('Invalid box representation', self._box_rep)
@@ -140,6 +155,37 @@ class AvodModel(model.DetectionModel):
         with tf.variable_scope('pl_proposals'):
              self._proposals_pl = self._add_placeholder(tf.float32, [None, 6], self.PL_PROPOSALS)
     
+    def _canonical_transform(self, pts, boxes_3d):
+        '''
+        Canonical Coordinate Transform
+        Input:
+            pts: (N,R,3) [x,y,z] float32
+            boxes_3d:(N,7)  [cx,cy,cz,l,w,h,ry] float 32
+        Output:
+            pts_ct: (N,R,3) [x',y',z'] float32
+        '''
+        all_rys = boxes_3d[:, 6] * -1
+        ry_sin = tf.sin(all_rys)
+        ry_cos = tf.cos(all_rys)
+
+        zeros = tf.zeros_like(all_rys, dtype=tf.float32)
+        ones = tf.ones_like(all_rys, dtype=tf.float32)
+
+        # Rotation matrix
+        rot_mats = tf.stack([tf.stack([ry_cos, zeros, ry_sin], axis=1),
+                             tf.stack([zeros, ones, zeros], axis=1),
+                             tf.stack([-ry_sin, zeros, ry_cos], axis=1)],
+                            axis=2)
+        pts_rot = tf.matmul(rot_mats, pts, transpose_a=True, transpose_b=True)
+        
+        pts_ct_x = pts_rot[:,0] - tf.reshape(boxes_3d[:,0], (-1,1))
+        pts_ct_y = pts_rot[:,1] - tf.reshape(boxes_3d[:,1], (-1,1))
+        pts_ct_z = pts_rot[:,2] - tf.reshape(boxes_3d[:,2], (-1,1))
+
+        pts_ct = tf.stack([pts_ct_x, pts_ct_y, pts_ct_z], axis=1)
+
+        return tf.matrix_transpose(pts_ct)
+
     def build(self):
         rpn_model = self._rpn_model
 
@@ -148,40 +194,27 @@ class AvodModel(model.DetectionModel):
         
         if self.model_config.alternating_training_step == 2:
             self._set_up_input_pls()
-            top_anchors = self.placeholders[AvodModel.PL_PROPOSALS]
+            top_proposals = self.placeholders[AvodModel.PL_PROPOSALS]   #(B,n,7)
         else:
-            top_anchors = prediction_dict[RpnModel.PRED_TOP_ANCHORS]
-        ground_plane = rpn_model.placeholders[RpnModel.PL_GROUND_PLANE]
+            top_proposals = prediction_dict[RpnModel.PRED_TOP_PROPOSALS]
 
-        class_labels = rpn_model.placeholders[RpnModel.PL_LABEL_CLASSES]
-
-        with tf.variable_scope('avod_projection'):
-
-            if self._config.expand_proposals_xz > 0.0:
-
-                expand_length = self._config.expand_proposals_xz
-
-                # Expand anchors along x and z
-                with tf.variable_scope('expand_xz'):
-                    expanded_dim_x = top_anchors[:, 3] + expand_length
-                    expanded_dim_z = top_anchors[:, 5] + expand_length
-
-                    expanded_anchors = tf.stack([
-                        top_anchors[:, 0],
-                        top_anchors[:, 1],
-                        top_anchors[:, 2],
-                        expanded_dim_x,
-                        top_anchors[:, 4],
-                        expanded_dim_z
-                    ], axis=1)
-
-                avod_projection_in = expanded_anchors
-
-            else:
-                avod_projection_in = top_anchors
+        # Expand proposals' size
+        with tf.variable_scope('expand_proposal'):
+            expand_length = self._pooling_context_length
+            expanded_size = top_proposals[:,:,3:6] + expand_length
+            expanded_proposals = tf.stack([
+                top_proposals[:,:,0],
+                top_proposals[:,:,1],
+                top_proposals[:,:,2],
+                expanded_size[:,:,0],
+                expanded_size[:,:,1],
+                expanded_size[:,:,2],
+                top_proposals[:,:,6],
+            ], axis=2)  #(B,n,7)
             
-        pc_pts = rpn_model.pc_pts
-        pc_fts = rpn_model.pc_fts
+        pc_pts = rpn_model._pc_pts  #(B,P,3)
+        pc_fts = rpn_model._pc_fts  #(B,P,C)
+        foreground_mask = prediction_dict[RpnModel.PRED_FG_MASK] #(B,P)
         #img_feature_maps = rpn_model.img_feature_maps
         '''
         if not (self._path_drop_probabilities[0] ==
@@ -201,8 +234,6 @@ class AvodModel(model.DetectionModel):
             bev_mask = tf.constant(1.0)
             img_mask = tf.constant(1.0)
         '''
-        pc_mask = tf.constant(1.0)
-
         # ROI Pooling
         with tf.variable_scope('avod_roi_pooling'):
             def get_box_indices(boxes):
@@ -214,23 +245,22 @@ class AvodModel(model.DetectionModel):
                     tf.range(start=0, limit=proposals_shape[0]), 1)
                 return tf.reshape(ones_mat * multiplier, [-1])
 
-            boxes_batches = tf.expand_dims(avod_projection_in, axis=0)
-
             # These should be all 0's since there is only 1 image
-            tf_box_indices = get_box_indices(boxes_batches)
+            tf_box_indices = get_box_indices(expanded_proposals)
 
             # Do ROI Pooling on PC
             from cropping import tf_cropping
-            _, pc_rois, _, non_empty_box = tf_cropping.pc_crop_and_sample(
+            expanded_proposals = tf.reshape(expanded_proposals, (-1,7)) #(N=Bn,7)
+            crop_pts, crop_fts, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
                 pc_pts,
                 pc_fts,
-                avod_projection_in,
+                foreground_mask,
+                box_8c_encoder.tf_box_3d_to_box_8co(expanded_proposals),
                 tf_box_indices,
-                self._proposal_roi_crop_size)
-            
-            non_empty_pc_rois = tf.boolean_mask(pc_rois, non_empty_box)
+                self._proposal_roi_crop_size)   #(N,R,3), (N,R,C), (N,R), _, (N)
+
+            non_empty_crop_pts = tf.boolean_mask(crop_pts, non_empty_box_mask)
             tf.summary.histogram('non_empty_box', tf.cast(non_empty_box, tf.int8))
-            tf.summary.histogram('non_empty_pc_rois', non_empty_pc_rois)
 
             '''
             # Do ROI Pooling on image
@@ -241,32 +271,190 @@ class AvodModel(model.DetectionModel):
                 self._proposal_roi_crop_size,
                 name='img_rois')
             '''
+        with tf.variable_scope('local_spatial_feature'):
+            with tf.variable_scope('canonical_transform'):
+                crop_pts_ct = self._canonical_transform(crop_pts, expanded_proposals)
 
-        # Fully connected layers (Box Predictor)
-        avod_layers_config = self.model_config.layers_config.avod_config
+            with tf.variable_scope('distance_to_sensor'):
+                crop_distance = tf.sqrt(
+                                    tf.square(crop_pts[:,:,0]) + \
+                                    tf.square(crop_pts[:,:,1]) + \
+                                    tf.square(crop_pts[:,:,2])
+                                )
 
-        fc_output_layers = \
-            avod_fc_layers_builder.build(
-                layers_config=avod_layers_config,
-                input_rois=[non_empty_pc_rois],
-                input_weights=[pc_mask],
-                num_final_classes=self._num_final_classes,
-                box_rep=self._box_rep,
-                ground_plane=ground_plane,
-                is_training=self._is_training)
+            local_feature_input = tf.stack([crop_pts_ct, 
+                                            tf.expand_dims(crop_mask, -1), 
+                                            tf.expand_dims(crop_distance, -1)], 
+                                           axis=2)
+            
+            with tf.variable_scope('mlp'):
+                fc_layers = [local_feature_input]
+                layers_config = self._config.layers_config.avod_config.mlp
+                for layer_idx, layer_param in enumerate(layers_config):
+                    print(layer_param)
+                    C = layer_param.C
+                    dropout_rate = layer_param.dropout_rate
+                    fc = pf.dense(fc_layers[-1], C, 'fc{:d}'.format(layer_idx), self._is_training)
+                    fc_drop = tf.layers.dropout(fc, dropout_rate, training=self._is_training, 
+                                                name='fc{:d}_drop'.format(layer_idx))
+                    fc_layers.append(fc_drop)
+                
+                fc_output = pf.dense(fc_layers[-1], crop_fts.shape[2].value, 
+                                     'fc_output', self._is_training, activation=None) #(N,R,C)
 
-        all_cls_logits = \
-            fc_output_layers[avod_fc_layers_builder.KEY_CLS_LOGITS]
-        all_offsets = fc_output_layers[avod_fc_layers_builder.KEY_OFFSETS]
+        with tf.variable_scope('pc_encoder'):
+            merged_fts = tf.stack([crop_fts, fc_output], axis=-1)   #(N,R,2C)
+            encode_pts, encode_fts = self._pc_feature_extractor.build(
+                                        crop_pts, merged_fts, self._is_training) # (N,r,3), (N,r,C')
+        
+        #branch-1: Box classification 
+        #########################################
+        with tf.variable_scope('classification_confidence'):
+            cls_logits = pf.dense(encode_fts, self.num_classes + 1, 'cls_logits', 
+                                  self._is_training, with_bn=False, activation=None) #(N,r,K)
+            cls_mean_logits = tf.reduce_mean(cls_logits, axis=1)    #(N,K)
+            cls_softmax = tf.nn.softmax(cls_mean_logits, name='cls_softmax') 
+            #cls_preds = tf.argmax(cls_softmax, axis=-1, name='cls_predictions')
+            cls_scores = tf.reduce_max(cls_softmax, axis=-1, name='cls_scores')
 
-        # This may be None
-        all_angle_vectors = \
-            fc_output_layers.get(avod_fc_layers_builder.KEY_ANGLE_VECTORS)
 
-        with tf.variable_scope('softmax'):
-            all_cls_softmax = tf.nn.softmax(
-                all_cls_logits)
+        #branch-2: bin-based 3D box refinement
+        #########################################
+        with tf.variable_scope('bin_based_box_refinement'):
+            # Parse brn layers config
+            encode_mean_fts = tf.reduce_mean(encode_fts, axis=1)   #(N,C')
+            fc_layers = [encode_mean_fts]
+            layers_config = self._config.layers_config.avod_config.fc_layer
+            for layer_idx, layer_param in enumerate(layers_config):
+                print(layer_param)
+                C = layer_param.C
+                dropout_rate = layer_param.dropout_rate
+                fc = pf.dense(fc_layers[-1], C, 'fc{:d}'.format(layer_idx), self._is_training)
+                fc_drop = tf.layers.dropout(fc, dropout_rate, training=self._is_training, 
+                                            name='fc{:d}_drop'.format(layer_idx))
+                fc_layers.append(fc_drop)
+            
+            fc_output = pf.dense(fc_layers[-1], 
+                                 self.NUM_BIN_X*2 + self.NUM_BIN_Z*2 + self.NUM_BIN_THETA*2 + 4, 
+                                 'fc_output', self._is_training, activation=None)
+            bin_x_logits, res_x_norms, \
+            bin_z_logits, res_z_norms, \
+            bin_theta_logits, res_theta_norms, \
+            res_y, res_size = self._parse_brn_output(fc_output)
+            res_y = tf.squeeze(res_y, [-1])
 
+        # Return final Boxes
+        with tf.variable_scope('boxes'):
+            #TODO
+            # Decode bin-based 3D Box 
+            bin_x = tf.argmax(bin_x_logits, axis=-1) #(B,p)
+            bin_z = tf.argmax(bin_z_logits, axis=-1) #(B,p)
+            bin_theta = tf.argmax(bin_theta_logits, axis=-1) #(B,p)
+            
+            res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
+                self._gather_residuals,
+                [res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta], 
+                (tf.float32, tf.float32, tf.float32))
+            
+            mean_sizes = tf.py_func(
+                self._gather_mean_sizes,
+                [tf.convert_to_tensor(np.asarray(self._cluster_sizes)), foreground_preds],
+                tf.float32)
+
+            with tf.variable_scope('decoding'):
+                proposals = bin_based_box3d_encoder.tf_decode(
+                        foreground_pts,
+                        bin_x, res_x_norm,
+                        bin_z, res_z_norm,
+                        bin_theta, res_theta_norm,
+                        res_y, res_size, mean_sizes,
+                        self.S, self.DELTA, self.R, self.DELTA_THETA) # (B,p,7)
+            
+            oriented_NMS = False
+            print("oriented_NMS = " + str(oriented_NMS))
+            # BEV projection
+            with tf.variable_scope('bev_projection'):
+                if oriented_NMS: 
+                    def single_batch_project_to_bev_fn(single_batch_proposals):
+                        single_batch_bev_proposal_boxes, _ = tf.py_func(
+                            box_3d_projector.project_to_bev,
+                            [single_batch_proposals, tf.constant(self._bev_extents)],
+                            (tf.float32, tf.float32))
+                        return single_batch_bev_proposal_boxes
+            
+                    bev_proposal_boxes = tf.map_fn(
+                        single_batch_project_to_bev_fn,
+                        elems=proposals,
+                        dtype=tf.float32)
+                    bev_proposal_boxes = tf.reshape(bev_proposal_boxes, 
+                                                    [self._batch_size, -1, 4, 2])
+                else:
+                    def single_batch_project_to_bev_fn(single_batch_proposals):
+                        # ortho rotating
+                        single_batch_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
+                                                        single_batch_proposals)
+                        single_batch_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
+                                                                single_batch_proposal_anchors, 
+                                                                self._bev_extents)
+                        single_batch_bev_proposal_boxes_tf_order = anchor_projector.reorder_projected_boxes(
+                                single_batch_bev_proposal_boxes)
+
+                        return single_batch_bev_proposal_boxes_tf_order
+
+                    bev_proposal_boxes_tf_order = tf.map_fn(
+                        single_batch_project_to_bev_fn,
+                        elems=proposals,
+                        dtype=tf.float32)
+            
+            # bev-NMS and ignore multiclass
+            with tf.variable_scope('bev_nms'):
+                if oriented_NMS: 
+                    def single_batch_oriented_nms_fn(args):
+                        (single_batch_boxes, single_batch_scores) = args
+                        single_batch_nms_mask = tf.py_func(
+                            oriented_nms.nms,
+                            [single_batch_boxes, single_batch_scores, 
+                            tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
+                            tf.bool)
+                        return single_batch_nms_mask
+
+                    nms_masks = tf.map_fn(
+                        single_batch_oriented_nms_fn,
+                        elems=[bev_proposal_boxes, foreground_scores],
+                        dtype=tf.bool)
+                    nms_masks = tf.reshape(nms_masks, [self._batch_size, -1])
+                
+                    top_proposals = tf.reshape(
+                                        tf.boolean_mask(proposals, nms_masks),
+                                        [self._batch_size, -1, 7])
+                    top_objectness_scores = tf.reshape(
+                                            tf.boolean_mask(foreground_scores, nms_masks),
+                                            [self._batch_size, -1])
+                else:
+                    def single_batch_nms_fn(args):
+                        (single_batch_boxes_tf_order, single_batch_scores, single_batch_proposals) = args
+                        
+                        single_batch_nms_indices = tf.image.non_max_suppression(
+                            single_batch_boxes_tf_order,
+                            single_batch_scores,
+                            max_output_size=self._nms_size,
+                            iou_threshold=self._nms_iou_thresh)
+                        
+                        single_batch_top_proposals = tf.gather(single_batch_proposals,
+                                                               single_batch_nms_indices)
+                        single_batch_top_scores = tf.gather(single_batch_scores,
+                                                            single_batch_nms_indices)
+                        return [single_batch_top_proposals, 
+                                single_batch_top_scores,
+                                single_batch_nms_indices]
+
+                    (top_proposals, top_objectness_scores, nms_indices) = tf.map_fn(
+                        single_batch_nms_fn,
+                        elems=[bev_proposal_boxes_tf_order, foreground_scores, proposals],
+                        dtype=[tf.float32, tf.float32, tf.int32])
+                
+                tf.summary.histogram('top_objectness_scores', top_objectness_scores)
+        
         top_anchors = tf.boolean_mask(top_anchors, non_empty_box)
         avod_projection_in = tf.boolean_mask(avod_projection_in, non_empty_box)
         ######################################################
@@ -668,6 +856,40 @@ class AvodModel(model.DetectionModel):
 
         return prediction_dict
 
+    def _parse_brn_output(self, brn_output):
+        '''
+        Input:
+            brn_output: (N, NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4
+        Output:
+            bin_x_logits
+            res_x_norms
+            
+            bin_z_logits
+            res_z_norms
+            
+            bin_theta_logits
+            res_theta_norms
+            
+            res_y
+
+            res_size: (l,w,h)
+        '''
+        bin_x_logits = tf.slice(brn_output, [0, 0], [-1, self.NUM_BIN_X])
+        res_x_norms = tf.slice(brn_output,  [0, self.NUM_BIN_X], [-1, self.NUM_BIN_X])
+        
+        bin_z_logits = tf.slice(brn_output, [0, self.NUM_BIN_X*2], [-1, self.NUM_BIN_Z])
+        res_z_norms = tf.slice(brn_output, [0, self.NUM_BIN_X*2+self.NUM_BIN_Z], [-1, self.NUM_BIN_Z])
+
+        bin_theta_logits = tf.slice(brn_output, [0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2], [-1, self.NUM_BIN_THETA])
+        res_theta_norms = tf.slice(brn_output, [0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA], 
+                                               [-1, self.NUM_BIN_THETA])
+
+        res_y = tf.slice(brn_output, [0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA*2], [-1, 1])
+        
+        res_size = tf.slice(brn_output, [0, self.NUM_BIN_X*2+self.NUM_BIN_Z*2+self.NUM_BIN_THETA*2+1], [-1, 3])
+
+        return bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size
+    
     def sample_mini_batch(self, anchor_box_list_gt, anchor_box_list,
                           class_labels):
 

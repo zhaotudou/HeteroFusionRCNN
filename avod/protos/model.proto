@@ -22,10 +22,6 @@ message ModelConfig {
     // Label smoothing epsilon
     required float label_smoothing_epsilon = 7;
 
-    // Expand proposals lengths along x and z for larger context region (in m)
-    // (0.0 - 1.0 recommended)
-    required float expand_proposals_xz = 8;
-
     // Global path drop (p_keep_img, p_keep_bev)
     // To disable path drop, set both to 1.0
     repeated float path_drop_probabilities = 9;
