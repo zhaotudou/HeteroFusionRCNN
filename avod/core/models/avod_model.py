@@ -2,6 +2,7 @@ import numpy as np
 
 import tensorflow as tf
 
+from avod.builders import feature_extractor_builder
 from avod.builders import avod_fc_layers_builder
 from avod.builders import avod_loss_builder
 from avod.core import anchor_projector
@@ -9,6 +10,7 @@ from avod.core import anchor_encoder
 from avod.core import box_3d_encoder
 from avod.core import box_8c_encoder
 from avod.core import box_4c_encoder
+from avod.core import pointfly as pf
 
 from avod.core import box_list
 from avod.core import box_list_ops
@@ -27,42 +29,25 @@ class AvodModel(model.DetectionModel):
     ##############################
     # Keys for Predictions
     ##############################
-    # Mini batch (mb) ground truth
-    PRED_MB_CLASSIFICATIONS_GT = 'avod_mb_classifications_gt'
-    PRED_MB_OFFSETS_GT = 'avod_mb_offsets_gt'
-    PRED_MB_ORIENTATIONS_GT = 'avod_mb_orientations_gt'
-
-    # Mini batch (mb) predictions
+    # Mini batch (mb) cls
     PRED_MB_CLASSIFICATION_LOGITS = 'avod_mb_classification_logits'
-    PRED_MB_CLASSIFICATION_SOFTMAX = 'avod_mb_classification_softmax'
-    PRED_MB_OFFSETS = 'avod_mb_offsets'
-    PRED_MB_ANGLE_VECTORS = 'avod_mb_angle_vectors'
+    PRED_MB_CLASSIFICATIONS_GT = 'avod_mb_classifications_gt'
+    PRED_MB_CLASSIFICATION_NUM = 'avod_mb_classification_num_boxes'
 
+    # Mini batch (mb) cls-reg
+    PRED_MB_CLS = 'avod_mb_cls'
+    PRED_MB_REG = 'avod_mb_reg'
+    PRED_MB_CLS_GT = 'avod_mb_cls_gt'
+    PRED_MB_REG_GT = 'avod_mb_reg_gt'
+    PRED_MB_POS_REG_MASK = 'avod_mb_pos_reg_mask'
+    
     # Top predictions after BEV NMS
     PRED_TOP_CLASSIFICATION_LOGITS = 'avod_top_classification_logits'
     PRED_TOP_CLASSIFICATION_SOFTMAX = 'avod_top_classification_softmax'
-
-    PRED_TOP_PREDICTION_ANCHORS = 'avod_top_prediction_anchors'
     PRED_TOP_PREDICTION_BOXES_3D = 'avod_top_prediction_boxes_3d'
-    PRED_TOP_ORIENTATIONS = 'avod_top_orientations'
-
-    # Other box representations
-    PRED_TOP_BOXES_8C = 'avod_top_regressed_boxes_8c'
-    PRED_TOP_BOXES_4C = 'avod_top_prediction_boxes_4c'
-
-    # Mini batch (mb) predictions (for debugging)
-    PRED_MB_MASK = 'avod_mb_mask'
-    PRED_MB_POS_MASK = 'avod_mb_pos_mask'
-    PRED_MB_ANCHORS_GT = 'avod_mb_anchors_gt'
-    PRED_MB_CLASS_INDICES_GT = 'avod_mb_gt_classes'
-
-    # All predictions (for debugging)
-    PRED_ALL_CLASSIFICATIONS = 'avod_classifications'
-    PRED_ALL_OFFSETS = 'avod_offsets'
-    PRED_ALL_ANGLE_VECTORS = 'avod_angle_vectors'
 
     PRED_MAX_IOUS = 'avod_max_ious'
-    PRED_ALL_IOUS = 'avod_anchor_ious'
+    PRED_ALL_IOUS = 'avod_proposal_ious'
 
     ##############################
     # Keys for Loss
@@ -74,7 +59,7 @@ class AvodModel(model.DetectionModel):
     LOSS_FINAL_ORIENTATION = 'avod_orientation_loss'
     LOSS_FINAL_LOCALIZATION = 'avod_localization_loss'
 
-    def __init__(self, model_config, train_val_test, dataset):
+    def __init__(self, model_config, train_val_test, dataset, batch_size=1):
         """
         Args:
             model_config: configuration for the model
@@ -85,10 +70,14 @@ class AvodModel(model.DetectionModel):
         # Sets model configs (_config)
         super(AvodModel, self).__init__(model_config)
 
+        self._batch_size = batch_size
+        # TODO: batch_size must be 1 
+        if self._batch_size != 1:
+            raise ValueError('Invalid batch_size, should be 1')
         self.dataset = dataset
 
         # Dataset config
-        self._num_final_classes = self.dataset.num_classes + 1
+        self.num_classes = dataset.num_classes
 
         # Input config
         input_config = self._config.input_config
@@ -117,6 +106,18 @@ class AvodModel(model.DetectionModel):
 
         self._pooling_context_length = avod_config.avod_pooling_context_length
 
+        mini_batch_config = avod_config.mini_batch_config
+        cls_iou_thresholds = mini_batch_config.cls_iou_3d_thresholds
+        reg_iou_thresholds = mini_batch_config.reg_iou_3d_thresholds
+        self.cls_neg_iou_range = [cls_iou_thresholds.neg_iou_lo, 
+                                  cls_iou_thresholds.neg_iou_hi]
+        self.cls_pos_iou_range = [cls_iou_thresholds.pos_iou_lo, 
+                                  cls_iou_thresholds.pos_iou_hi]
+        self.reg_neg_iou_range = [reg_iou_thresholds.neg_iou_lo, 
+                                  reg_iou_thresholds.neg_iou_hi]
+        self.reg_pos_iou_range = [reg_iou_thresholds.pos_iou_lo, 
+                                  reg_iou_thresholds.pos_iou_hi]
+
         # Feature Extractor Nets
         self._pc_feature_extractor = \
             feature_extractor_builder.get_extractor(
@@ -126,7 +127,7 @@ class AvodModel(model.DetectionModel):
             raise ValueError('Invalid box representation', self._box_rep)
 
         # Create the RpnModel
-        self._rpn_model = RpnModel(model_config, train_val_test, dataset)
+        self._rpn_model = RpnModel(model_config, train_val_test, dataset, batch_size)
 
         if train_val_test not in ["train", "val", "test"]:
             raise ValueError('Invalid train_val_test value,'
@@ -135,8 +136,6 @@ class AvodModel(model.DetectionModel):
         self._is_training = (self._train_val_test == 'train')
         self.dataset.train_val_test = self._train_val_test
 
-        self.sample_info = {}
-        
         # Network input placeholders
         self.placeholders = dict()
 
@@ -153,7 +152,7 @@ class AvodModel(model.DetectionModel):
         Keys are defined as self.PL_*.
         """
         with tf.variable_scope('pl_proposals'):
-             self._proposals_pl = self._add_placeholder(tf.float32, [None, 6], self.PL_PROPOSALS)
+             self._proposals_pl = self._add_placeholder(tf.float32, [None, None, 7], self.PL_PROPOSALS)
     
     def _canonical_transform(self, pts, boxes_3d):
         '''
@@ -186,6 +185,80 @@ class AvodModel(model.DetectionModel):
 
         return tf.matrix_transpose(pts_ct)
 
+    def _gather_residuals(self, res_x_norms, res_z_norms, res_theta_norms,
+                                bin_x, bin_z, bin_theta):
+        
+        '''
+        Input:
+            res_x_norms: (N,K)
+            bin_x:(N)
+        return:
+            res_x_norm: (N)
+        '''
+
+        #TF version: (if N is not None)
+        ##########
+        N = bin_x.shape[0].value
+        Ns = tf.reshape(tf.range(N), (N,1))
+
+        NK_x = tf.concat([Ns, tf.reshape(bin_x, (N,1))], axis=1) # (N,2)
+        res_x_norm = tf.gather_nd(res_x_norms, NK_x) #(N)
+        
+        NK_z = tf.concat([Ns, tf.reshape(bin_z, (N,1))], axis=1) # (N,2)
+        res_z_norm = tf.gather_nd(res_z_norms, NK_z) #(N)
+        
+        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, (N,1))], axis=1) # (N,2)
+        res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta) #(N)
+    
+        '''
+        NumPy version: if N is None, by using tf.py_func, p should be determined
+        #############
+        res_x_norm = np.take_along_axis(res_x_norms, np.expand_dims(bin_x, -1), axis=-1) #(B,p,1)
+        res_x_norm = np.squeeze(res_x_norm, -1)
+         
+        res_z_norm = np.take_along_axis(res_z_norms, np.expand_dims(bin_z, -1), axis=-1) #(B,p,1)
+        res_z_norm = np.squeeze(res_z_norm, -1)
+        
+        res_theta_norm = np.take_along_axis(res_theta_norms, np.expand_dims(bin_theta, -1), axis=-1) #(B,p,1)
+        res_theta_norm = np.squeeze(res_theta_norm, -1)
+        '''
+
+        return res_x_norm, res_z_norm, res_theta_norm
+    
+    def _gather_mean_sizes(self, cluster_sizes, cls_preds):
+        '''
+        Input:
+            cluster_sizes: (Klass, Cluster=1, 3) [l,w,h], Klass is 0-based
+            cls_preds: (N), [klass], kclass is 1-based, 0-background
+        Output
+            mean_sizes: (N,3) [l,w,h]
+        '''
+
+        #TF version: (if p is not None)
+        ##########
+        N = cls_preds.shape[0].value
+        
+        Ns = tf.reshape(tf.range(N), (N,1))
+
+        K_mean_sizes = tf.reshape(cluster_sizes, (-1,3))
+        NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N,1,1])
+
+        NK = tf.concat([Ns, tf.reshape(cls_preds, (N,1))], axis=1) # (N,2)
+        
+        mean_sizes = tf.gather_nd(NK_mean_sizes, NK)
+
+        '''
+        NumPy version: if p is None, by using tf.py_func, p should be determined
+        #############
+        K_mean_sizes = np.reshape(cluster_sizes, (-1,3))
+        K_mean_sizes = np.vstack([np.asarray([0.0, 0.0, 0.0]), K_mean_sizes]) # insert 0-background
+        mean_sizes = K_mean_sizes[cls_preds]
+        
+        return mean_sizes.astype(np.float32)
+        '''
+        
+        return mean_sizes
+    
     def build(self):
         rpn_model = self._rpn_model
 
@@ -196,7 +269,7 @@ class AvodModel(model.DetectionModel):
             self._set_up_input_pls()
             top_proposals = self.placeholders[AvodModel.PL_PROPOSALS]   #(B,n,7)
         else:
-            top_proposals = prediction_dict[RpnModel.PRED_TOP_PROPOSALS]
+            top_proposals = prediction_dict[RpnModel.PRED_TOP_PROPOSALS]#(B,n,7)
 
         # Expand proposals' size
         with tf.variable_scope('expand_proposal'):
@@ -215,7 +288,6 @@ class AvodModel(model.DetectionModel):
         pc_pts = rpn_model._pc_pts  #(B,P,3)
         pc_fts = rpn_model._pc_fts  #(B,P,C)
         foreground_mask = prediction_dict[RpnModel.PRED_FG_MASK] #(B,P)
-        #img_feature_maps = rpn_model.img_feature_maps
         '''
         if not (self._path_drop_probabilities[0] ==
                 self._path_drop_probabilities[1] == 1.0):
@@ -250,6 +322,7 @@ class AvodModel(model.DetectionModel):
 
             # Do ROI Pooling on PC
             from cropping import tf_cropping
+            top_proposals = tf.reshape(top_proposals, (-1,7)) #(N=Bn,7)
             expanded_proposals = tf.reshape(expanded_proposals, (-1,7)) #(N=Bn,7)
             crop_pts, crop_fts, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
                 pc_pts,
@@ -259,8 +332,12 @@ class AvodModel(model.DetectionModel):
                 tf_box_indices,
                 self._proposal_roi_crop_size)   #(N,R,3), (N,R,C), (N,R), _, (N)
 
-            non_empty_crop_pts = tf.boolean_mask(crop_pts, non_empty_box_mask)
-            tf.summary.histogram('non_empty_box', tf.cast(non_empty_box, tf.int8))
+            crop_pts = tf.boolean_mask(crop_pts, non_empty_box_mask)    #(N',R,3)
+            crop_fts = tf.boolean_mask(crop_fts, non_empty_box_mask)
+            crop_mask = tf.boolean_mask(crop_mask, non_empty_box_mask)
+            top_proposals = tf.boolean_mask(top_proposals, non_empty_box_mask)
+            expanded_proposals = tf.boolean_mask(expanded_proposals, non_empty_box_mask)
+            tf.summary.histogram('non_empty_box_mask', tf.cast(non_empty_box_mask, tf.int8))
 
             '''
             # Do ROI Pooling on image
@@ -282,10 +359,10 @@ class AvodModel(model.DetectionModel):
                                     tf.square(crop_pts[:,:,2])
                                 )
 
-            local_feature_input = tf.stack([crop_pts_ct, 
-                                            tf.expand_dims(crop_mask, -1), 
+            local_feature_input = tf.concat([crop_pts_ct, 
+                                            tf.expand_dims(tf.to_float(crop_mask), -1), 
                                             tf.expand_dims(crop_distance, -1)], 
-                                           axis=2)
+                                           axis=-1)
             
             with tf.variable_scope('mlp'):
                 fc_layers = [local_feature_input]
@@ -300,21 +377,21 @@ class AvodModel(model.DetectionModel):
                     fc_layers.append(fc_drop)
                 
                 fc_output = pf.dense(fc_layers[-1], crop_fts.shape[2].value, 
-                                     'fc_output', self._is_training, activation=None) #(N,R,C)
+                                     'fc_output', self._is_training, activation=None) #(N',R,C)
 
         with tf.variable_scope('pc_encoder'):
-            merged_fts = tf.stack([crop_fts, fc_output], axis=-1)   #(N,R,2C)
+            merged_fts = tf.concat([crop_fts, fc_output], axis=-1)   #(N',R,2C)
             encode_pts, encode_fts = self._pc_feature_extractor.build(
-                                        crop_pts, merged_fts, self._is_training) # (N,r,3), (N,r,C')
+                                        crop_pts, merged_fts, self._is_training) # (N',r,3), (N',r,C')
         
         #branch-1: Box classification 
         #########################################
         with tf.variable_scope('classification_confidence'):
             cls_logits = pf.dense(encode_fts, self.num_classes + 1, 'cls_logits', 
-                                  self._is_training, with_bn=False, activation=None) #(N,r,K)
-            cls_mean_logits = tf.reduce_mean(cls_logits, axis=1)    #(N,K)
+                                  self._is_training, with_bn=False, activation=None) #(N',r,K)
+            cls_mean_logits = tf.reduce_mean(cls_logits, axis=1)    #(N',K)
             cls_softmax = tf.nn.softmax(cls_mean_logits, name='cls_softmax') 
-            #cls_preds = tf.argmax(cls_softmax, axis=-1, name='cls_predictions')
+            cls_preds = tf.argmax(cls_softmax, axis=-1, name='cls_predictions')
             cls_scores = tf.reduce_max(cls_softmax, axis=-1, name='cls_scores')
 
 
@@ -322,7 +399,7 @@ class AvodModel(model.DetectionModel):
         #########################################
         with tf.variable_scope('bin_based_box_refinement'):
             # Parse brn layers config
-            encode_mean_fts = tf.reduce_mean(encode_fts, axis=1)   #(N,C')
+            encode_mean_fts = tf.reduce_mean(encode_fts, axis=1)   #(N',C')
             fc_layers = [encode_mean_fts]
             layers_config = self._config.layers_config.avod_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
@@ -343,513 +420,171 @@ class AvodModel(model.DetectionModel):
             res_y, res_size = self._parse_brn_output(fc_output)
             res_y = tf.squeeze(res_y, [-1])
 
-        # Return final Boxes
+        # Final Predictions
+        ######################################################
         with tf.variable_scope('boxes'):
-            #TODO
             # Decode bin-based 3D Box 
-            bin_x = tf.argmax(bin_x_logits, axis=-1) #(B,p)
-            bin_z = tf.argmax(bin_z_logits, axis=-1) #(B,p)
-            bin_theta = tf.argmax(bin_theta_logits, axis=-1) #(B,p)
+            bin_x = tf.argmax(bin_x_logits, axis=-1) #(N')
+            bin_z = tf.argmax(bin_z_logits, axis=-1) #(N')
+            bin_theta = tf.argmax(bin_theta_logits, axis=-1) #(N')
             
-            res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
-                self._gather_residuals,
-                [res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta], 
-                (tf.float32, tf.float32, tf.float32))
+            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta)
             
-            mean_sizes = tf.py_func(
-                self._gather_mean_sizes,
-                [tf.convert_to_tensor(np.asarray(self._cluster_sizes)), foreground_preds],
-                tf.float32)
+            mean_sizes = self._gather_mean_sizes(
+                tf.convert_to_tensor(np.asarray(self._cluster_sizes)), cls_preds)
 
             with tf.variable_scope('decoding'):
-                proposals = bin_based_box3d_encoder.tf_decode(
-                        foreground_pts,
+                reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
+                        expanded_proposals[:,:3], expanded_proposals[:,6],
                         bin_x, res_x_norm,
                         bin_z, res_z_norm,
                         bin_theta, res_theta_norm,
                         res_y, res_size, mean_sizes,
-                        self.S, self.DELTA, self.R, self.DELTA_THETA) # (B,p,7)
+                        self.S, self.DELTA, self.R, self.DELTA_THETA) # (N',7)
             
             oriented_NMS = False
             print("oriented_NMS = " + str(oriented_NMS))
             # BEV projection
             with tf.variable_scope('bev_projection'):
                 if oriented_NMS: 
-                    def single_batch_project_to_bev_fn(single_batch_proposals):
-                        single_batch_bev_proposal_boxes, _ = tf.py_func(
-                            box_3d_projector.project_to_bev,
-                            [single_batch_proposals, tf.constant(self._bev_extents)],
-                            (tf.float32, tf.float32))
-                        return single_batch_bev_proposal_boxes
+                    bev_boxes, _ = tf.py_func(
+                        box_3d_projector.project_to_bev,
+                        [reg_boxes_3d, tf.constant(self._bev_extents)],
+                        (tf.float32, tf.float32))
             
-                    bev_proposal_boxes = tf.map_fn(
-                        single_batch_project_to_bev_fn,
-                        elems=proposals,
-                        dtype=tf.float32)
-                    bev_proposal_boxes = tf.reshape(bev_proposal_boxes, 
-                                                    [self._batch_size, -1, 4, 2])
                 else:
-                    def single_batch_project_to_bev_fn(single_batch_proposals):
-                        # ortho rotating
-                        single_batch_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
-                                                        single_batch_proposals)
-                        single_batch_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
-                                                                single_batch_proposal_anchors, 
-                                                                self._bev_extents)
-                        single_batch_bev_proposal_boxes_tf_order = anchor_projector.reorder_projected_boxes(
-                                single_batch_bev_proposal_boxes)
+                    # ortho rotating
+                    box_anchors = box_3d_encoder.tf_box_3d_to_anchor(reg_boxes_3d)
+                    bev_boxes, _ = anchor_projector.project_to_bev(box_anchors, self._bev_extents)
+                    bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(bev_boxes)
 
-                        return single_batch_bev_proposal_boxes_tf_order
-
-                    bev_proposal_boxes_tf_order = tf.map_fn(
-                        single_batch_project_to_bev_fn,
-                        elems=proposals,
-                        dtype=tf.float32)
-            
             # bev-NMS and ignore multiclass
             with tf.variable_scope('bev_nms'):
                 if oriented_NMS: 
-                    def single_batch_oriented_nms_fn(args):
-                        (single_batch_boxes, single_batch_scores) = args
-                        single_batch_nms_mask = tf.py_func(
-                            oriented_nms.nms,
-                            [single_batch_boxes, single_batch_scores, 
-                            tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
-                            tf.bool)
-                        return single_batch_nms_mask
-
-                    nms_masks = tf.map_fn(
-                        single_batch_oriented_nms_fn,
-                        elems=[bev_proposal_boxes, foreground_scores],
-                        dtype=tf.bool)
-                    nms_masks = tf.reshape(nms_masks, [self._batch_size, -1])
+                    nms_masks = tf.py_func(
+                        oriented_nms.nms,
+                        [bev_boxes, cls_scores, 
+                        tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
+                        tf.bool)
                 
-                    top_proposals = tf.reshape(
-                                        tf.boolean_mask(proposals, nms_masks),
-                                        [self._batch_size, -1, 7])
-                    top_objectness_scores = tf.reshape(
-                                            tf.boolean_mask(foreground_scores, nms_masks),
-                                            [self._batch_size, -1])
+                    top_boxes_3d = tf.reshape(
+                                        tf.boolean_mask(reg_boxes_3d, nms_masks),
+                                        [-1, 7])
+                    top_cls_logits = tf.boolean_mask(cls_mean_logits, nms_masks)
+                    top_cls_softmax = tf.boolean_mask(cls_softmax, nms_masks)
+                    top_cls_scores = tf.boolean_mask(cls_scores, nms_masks)
                 else:
-                    def single_batch_nms_fn(args):
-                        (single_batch_boxes_tf_order, single_batch_scores, single_batch_proposals) = args
-                        
-                        single_batch_nms_indices = tf.image.non_max_suppression(
-                            single_batch_boxes_tf_order,
-                            single_batch_scores,
-                            max_output_size=self._nms_size,
-                            iou_threshold=self._nms_iou_thresh)
-                        
-                        single_batch_top_proposals = tf.gather(single_batch_proposals,
-                                                               single_batch_nms_indices)
-                        single_batch_top_scores = tf.gather(single_batch_scores,
-                                                            single_batch_nms_indices)
-                        return [single_batch_top_proposals, 
-                                single_batch_top_scores,
-                                single_batch_nms_indices]
-
-                    (top_proposals, top_objectness_scores, nms_indices) = tf.map_fn(
-                        single_batch_nms_fn,
-                        elems=[bev_proposal_boxes_tf_order, foreground_scores, proposals],
-                        dtype=[tf.float32, tf.float32, tf.int32])
+                    nms_indices = tf.image.non_max_suppression(
+                        bev_boxes_tf_order,
+                        cls_scores,
+                        max_output_size=self._nms_size,
+                        iou_threshold=self._nms_iou_thresh)
+                    
+                    top_boxes_3d = tf.gather(reg_boxes_3d, nms_indices)
+                    top_cls_logits = tf.gather(cls_mean_logits, nms_indices)
+                    top_cls_softmax = tf.gather(cls_softmax, nms_indices)
+                    top_cls_scores = tf.gather(cls_scores, nms_indices)
                 
-                tf.summary.histogram('top_objectness_scores', top_objectness_scores)
+                tf.summary.histogram('top_cls_scores', top_objectness_scores)
         
-        top_anchors = tf.boolean_mask(top_anchors, non_empty_box)
-        avod_projection_in = tf.boolean_mask(avod_projection_in, non_empty_box)
         ######################################################
-        # Subsample mini_batch for the loss function
+        # Determine Positive/Negative GTs for the loss function & metrics
         ######################################################
-        with tf.variable_scope('bev'):
-            # Project top anchors into bev and image spaces
-            bev_proposal_boxes, bev_proposal_boxes_norm = \
-                anchor_projector.project_to_bev(
-                    avod_projection_in,
-                    self.dataset.kitti_utils.bev_extents)
+        top_proposal_iou3ds = tf.boolean_mask(
+                                tf.reshape(prediction_dict[RpnModel.PRED_TOP_PROPOSAL_IOU3DS], [-1]),
+                                non_empty_box_mask) #(N') 
+        top_proposal_gt_cls = tf.boolean_mask(
+                                tf.reshape(prediction_dict[RpnModel.PRED_TOP_PROPOSAL_GT_CLS], [-1]),
+                                non_empty_box_mask) #(N')
+        top_proposal_gt_boxes = tf.boolean_mask(
+                                tf.reshape(prediction_dict[RpnModel.PRED_TOP_PROPOSAL_GT_BOXES], [-1,7]),
+                                non_empty_box_mask) #(N',7)
+        
+        # for box cls loss
+        with tf.variable_scope('box_cls_gt'):
+            neg_cls_mask = tf.less(proposal_iou3ds, self.cls_neg_iou_range[1])
+            pos_cls_mask = tf.greater(proposal_iou3ds, self.cls_pos_iou_range[0])
+            mb_cls_mask = tf.logical_or(neg_cls_mask, pos_cls_mask)
+            mb_cls_num_boxes = tf.reduce_sum(tf.cast(mb_cls_mask, tf.float32))
+            
+            # cls preds
+            print('cls_logits shape')
+            neg_cls_logits = tf.boolean_mask(cls_mean_logits, neg_cls_mask)
+            print(neg_cls_logits.shape)
+            pos_cls_logits = tf.boolean_mask(cls_mean_logits, pos_cls_mask)
+            print(pos_cls_logits.shape)
+            mb_cls_logits = tf.concat([neg_cls_logits, pos_cls_logits], axis=0)
+            print(mb_cls_logits.shape)
+            
+            # cls gt
+            neg_cls_gt = tf.boolean_mask(top_proposal_gt_cls, neg_cls_mask)
+            neg_cls_gt = tf.zeros_like(neg_cls_gt)
+            pos_cls_gt = tf.boolean_mask(top_proposal_gt_cls, pos_cls_mask)
+            mb_cls_gt = tf.concat([neg_cls_gt, pos_cls_gt], axis=0)
+            mb_cls_gt_one_hot = tf.one_hot(
+                            tf.to_int64(all_cls_gt), depth=self.num_classes + 1,
+                            on_value=1.0,
+                            off_value=0.0)
+           
+        # for box refinement loss
+        with tf.variable_scope('box_cls_reg_gt'):
+            pos_reg_mask = tf.greater(proposal_iou3ds, self.reg_pos_iou_range[0])
+            #pos_reg_num_boxes = tf.reduce_sum(tf.cast(pos_reg_mask, tf.float32))
 
-            # Reorder projected boxes into [y1, x1, y2, x2]
-            bev_proposal_boxes_tf_order = \
-                anchor_projector.reorder_projected_boxes(
-                    bev_proposal_boxes)
-            bev_proposal_boxes_norm_tf_order = \
-                anchor_projector.reorder_projected_boxes(
-                    bev_proposal_boxes_norm)
-        '''
-        with tf.variable_scope('img'):
-            image_shape = tf.cast(tf.shape(
-                rpn_model.placeholders[RpnModel.PL_IMG_INPUT])[0:2],
-                tf.float32)
-            img_proposal_boxes, img_proposal_boxes_norm = \
-                anchor_projector.tf_project_to_image_space(
-                    avod_projection_in,
-                    rpn_model.placeholders[RpnModel.PL_CALIB_P2],
-                    image_shape)
-            # Only reorder the normalized img
-            img_proposal_boxes_norm_tf_order = \
-                anchor_projector.reorder_projected_boxes(
-                    img_proposal_boxes_norm)
-        '''
-        # Get the ground truth tensors
-        anchors_gt = rpn_model.placeholders[RpnModel.PL_LABEL_ANCHORS]
-        if self._box_rep in ['box_3d', 'box_4ca']:
-            boxes_3d_gt = rpn_model.placeholders[RpnModel.PL_LABEL_BOXES_3D]
-            orientations_gt = boxes_3d_gt[:, 6]
-        elif self._box_rep in ['box_8c', 'box_8co', 'box_4c']:
-            boxes_3d_gt = rpn_model.placeholders[RpnModel.PL_LABEL_BOXES_3D]
-        else:
-            raise NotImplementedError('Ground truth tensors not implemented')
+            # reg gt
+            (bin_x_gt, res_x_gt, bin_z_gt, res_z_gt, 
+             bin_theta_gt, res_theta_gt, res_y_gt, res_size_gt) = bin_based_box3d_encoder.tf_encode(
+                top_proposals[:,:3], top_proposals[:,6], 
+                top_proposal_gt_boxes, mean_sizes,
+                self.S, self.DELTA, self.R, self.DELTA_THETA)
+            
+            bin_x_gt_one_hot = tf.one_hot(
+                tf.to_int64(bin_x_gt), depth=int(2 * self.S / self.DELTA),
+                on_value=1.0,
+                off_value=0.0)
+            
+            bin_z_gt_one_hot = tf.one_hot(
+                tf.to_int64(bin_z_gt), depth=int(2 * self.S / self.DELTA),
+                on_value=1.0,
+                off_value=0.0)
+            
+            bin_theta_gt_one_hot = tf.one_hot(
+                tf.to_int64(bin_theta_gt), depth=int(2 * self.R / self.DELTA_THETA),
+                on_value=1.0,
+                off_value=0.0)
 
-        # Project anchor_gts to 2D bev
-        with tf.variable_scope('avod_gt_projection'):
-            bev_anchor_boxes_gt, _ = anchor_projector.project_to_bev(
-                anchors_gt, self.dataset.kitti_utils.bev_extents)
-
-            bev_anchor_boxes_gt_tf_order = \
-                anchor_projector.reorder_projected_boxes(bev_anchor_boxes_gt)
-
-        with tf.variable_scope('avod_box_list'):
-            # Convert to box_list format
-            anchor_box_list_gt = box_list.BoxList(bev_anchor_boxes_gt_tf_order)
-            anchor_box_list = box_list.BoxList(bev_proposal_boxes_tf_order)
-
-        mb_mask, mb_class_label_indices, mb_gt_indices = \
-            self.sample_mini_batch(
-                anchor_box_list_gt=anchor_box_list_gt,
-                anchor_box_list=anchor_box_list,
-                class_labels=class_labels)
-
-        # Create classification one_hot vector
-        with tf.variable_scope('avod_one_hot_classes'):
-            mb_classification_gt = tf.one_hot(
-                mb_class_label_indices,
-                depth=self._num_final_classes,
-                on_value=1.0 - self._config.label_smoothing_epsilon,
-                off_value=(self._config.label_smoothing_epsilon /
-                           self.dataset.num_classes))
-
-        # TODO: Don't create a mini batch in test mode
-        # Mask predictions
-        with tf.variable_scope('avod_apply_mb_mask'):
-            # Classification
-            mb_classifications_logits = tf.boolean_mask(
-                all_cls_logits, mb_mask)
-            mb_classifications_softmax = tf.boolean_mask(
-                all_cls_softmax, mb_mask)
-
-            # Offsets
-            mb_offsets = tf.boolean_mask(all_offsets, mb_mask)
-
-            # Angle Vectors
-            if all_angle_vectors is not None:
-                mb_angle_vectors = tf.boolean_mask(all_angle_vectors, mb_mask)
-            else:
-                mb_angle_vectors = None
-
-        # Encode anchor offsets
-        with tf.variable_scope('avod_encode_mb_anchors'):
-            mb_anchors = tf.boolean_mask(top_anchors, mb_mask)
-
-            if self._box_rep == 'box_3d':
-                # Gather corresponding ground truth anchors for each mb sample
-                mb_anchors_gt = tf.gather(anchors_gt, mb_gt_indices)
-                mb_offsets_gt = anchor_encoder.tf_anchor_to_offset(
-                    mb_anchors, mb_anchors_gt)
-
-                # Gather corresponding ground truth orientation for each
-                # mb sample
-                mb_orientations_gt = tf.gather(orientations_gt,
-                                               mb_gt_indices)
-            elif self._box_rep in ['box_8c', 'box_8co']:
-
-                # Get boxes_3d ground truth mini-batch and convert to box_8c
-                mb_boxes_3d_gt = tf.gather(boxes_3d_gt, mb_gt_indices)
-                if self._box_rep == 'box_8c':
-                    mb_boxes_8c_gt = \
-                        box_8c_encoder.tf_box_3d_to_box_8c(mb_boxes_3d_gt)
-                elif self._box_rep == 'box_8co':
-                    mb_boxes_8c_gt = \
-                        box_8c_encoder.tf_box_3d_to_box_8co(mb_boxes_3d_gt)
-
-                # Convert proposals: anchors -> box_3d -> box8c
-                proposal_boxes_3d = \
-                    box_3d_encoder.anchors_to_box_3d(top_anchors, fix_lw=True)
-                proposal_boxes_8c = \
-                    box_8c_encoder.tf_box_3d_to_box_8c(proposal_boxes_3d)
-
-                # Get mini batch offsets
-                mb_boxes_8c = tf.boolean_mask(proposal_boxes_8c, mb_mask)
-                mb_offsets_gt = box_8c_encoder.tf_box_8c_to_offsets(
-                    mb_boxes_8c, mb_boxes_8c_gt)
-
-                # Flatten the offsets to a (N x 24) vector
-                mb_offsets_gt = tf.reshape(mb_offsets_gt, [-1, 24])
-
-            elif self._box_rep in ['box_4c', 'box_4ca']:
-
-                # Get ground plane for box_4c conversion
-                ground_plane = self._rpn_model.placeholders[
-                    self._rpn_model.PL_GROUND_PLANE]
-
-                # Convert gt boxes_3d -> box_4c
-                mb_boxes_3d_gt = tf.gather(boxes_3d_gt, mb_gt_indices)
-                mb_boxes_4c_gt = box_4c_encoder.tf_box_3d_to_box_4c(
-                    mb_boxes_3d_gt, ground_plane)
-
-                # Convert proposals: anchors -> box_3d -> box_4c
-                proposal_boxes_3d = \
-                    box_3d_encoder.anchors_to_box_3d(top_anchors, fix_lw=True)
-                proposal_boxes_4c = \
-                    box_4c_encoder.tf_box_3d_to_box_4c(proposal_boxes_3d,
-                                                       ground_plane)
-
-                # Get mini batch
-                mb_boxes_4c = tf.boolean_mask(proposal_boxes_4c, mb_mask)
-                mb_offsets_gt = box_4c_encoder.tf_box_4c_to_offsets(
-                    mb_boxes_4c, mb_boxes_4c_gt)
-
-                if self._box_rep == 'box_4ca':
-                    # Gather corresponding ground truth orientation for each
-                    # mb sample
-                    mb_orientations_gt = tf.gather(orientations_gt,
-                                                   mb_gt_indices)
-
-            else:
-                raise NotImplementedError(
-                    'Anchor encoding not implemented for', self._box_rep)
 
         ######################################################
-        # ROI summary images
+        # Prediction Dict
         ######################################################
-        ''' 
-        avod_mini_batch_size = \
-            self.dataset.kitti_utils.mini_batch_utils.avod_mini_batch_size
-        with tf.variable_scope('bev_avod_rois'):
-            mb_bev_anchors_norm = tf.boolean_mask(
-                bev_proposal_boxes_norm_tf_order, mb_mask)
-            mb_bev_box_indices = tf.zeros_like(mb_gt_indices, dtype=tf.int32)
-
-            # Show the ROIs of the BEV input density map
-            # for the mini batch anchors
-            bev_input_rois = tf.image.crop_and_resize(
-                self._rpn_model._bev_preprocessed,
-                mb_bev_anchors_norm,
-                mb_bev_box_indices,
-                (32, 32))
-
-            bev_input_roi_summary_images = tf.split(
-                bev_input_rois, self._bev_depth, axis=3)
-            tf.summary.image('bev_avod_rois',
-                             bev_input_roi_summary_images[-1],
-                             max_outputs=avod_mini_batch_size)
-
-        with tf.variable_scope('img_avod_rois'):
-            # ROIs on image input
-            mb_img_anchors_norm = tf.boolean_mask(
-                img_proposal_boxes_norm_tf_order, mb_mask)
-            mb_img_box_indices = tf.zeros_like(mb_gt_indices, dtype=tf.int32)
-
-            # Do test ROI pooling on mini batch
-            img_input_rois = tf.image.crop_and_resize(
-                self._rpn_model._img_preprocessed,
-                mb_img_anchors_norm,
-                mb_img_box_indices,
-                (32, 32))
-
-            tf.summary.image('img_avod_rois',
-                             img_input_rois,
-                             max_outputs=avod_mini_batch_size)
-        '''
-        ######################################################
-        # Final Predictions
-        ######################################################
-        # Get orientations from angle vectors
-        if all_angle_vectors is not None:
-            with tf.variable_scope('avod_orientation'):
-                all_orientations = \
-                    orientation_encoder.tf_angle_vector_to_orientation(
-                        all_angle_vectors)
-
-        # Apply offsets to regress proposals
-        with tf.variable_scope('avod_regression'):
-            if self._box_rep == 'box_3d':
-                prediction_anchors = \
-                    anchor_encoder.offset_to_anchor(top_anchors,
-                                                    all_offsets)
-
-            elif self._box_rep in ['box_8c', 'box_8co']:
-                # Reshape the 24-dim regressed offsets to (N x 3 x 8)
-                reshaped_offsets = tf.reshape(all_offsets,
-                                              [-1, 3, 8])
-                # Given the offsets, get the boxes_8c
-                prediction_boxes_8c = \
-                    box_8c_encoder.tf_offsets_to_box_8c(proposal_boxes_8c,
-                                                        reshaped_offsets)
-                # Convert corners back to box3D
-                prediction_boxes_3d = \
-                    box_8c_encoder.box_8c_to_box_3d(prediction_boxes_8c)
-
-                # Convert the box_3d to anchor format for nms
-                prediction_anchors = \
-                    box_3d_encoder.tf_box_3d_to_anchor(prediction_boxes_3d)
-
-            elif self._box_rep in ['box_4c', 'box_4ca']:
-                # Convert predictions box_4c -> box_3d
-                prediction_boxes_4c = \
-                    box_4c_encoder.tf_offsets_to_box_4c(proposal_boxes_4c,
-                                                        all_offsets)
-
-                prediction_boxes_3d = \
-                    box_4c_encoder.tf_box_4c_to_box_3d(prediction_boxes_4c,
-                                                       ground_plane)
-
-                # Convert to anchor format for nms
-                prediction_anchors = \
-                    box_3d_encoder.tf_box_3d_to_anchor(prediction_boxes_3d)
-
-            else:
-                raise NotImplementedError('Regression not implemented for',
-                                          self._box_rep)
-
-        # Apply Non-oriented NMS in BEV
-        with tf.variable_scope('avod_nms'):
-            bev_extents = self.dataset.kitti_utils.bev_extents
-
-            with tf.variable_scope('bev_projection'):
-                # Project predictions into BEV
-                avod_bev_boxes, _ = anchor_projector.project_to_bev(
-                    prediction_anchors, bev_extents)
-                avod_bev_boxes_tf_order = \
-                    anchor_projector.reorder_projected_boxes(
-                        avod_bev_boxes)
-
-            # Get top score from second column onward
-            all_top_scores = tf.reduce_max(all_cls_logits[:, 1:], axis=1)
-
-            # Apply NMS in BEV
-            nms_indices = tf.image.non_max_suppression(
-                avod_bev_boxes_tf_order,
-                all_top_scores,
-                max_output_size=self._nms_size,
-                iou_threshold=self._nms_iou_threshold)
-
-            # Gather predictions from NMS indices
-            top_classification_logits = tf.gather(all_cls_logits,
-                                                  nms_indices)
-            top_classification_softmax = tf.gather(all_cls_softmax,
-                                                   nms_indices)
-            tf.summary.histogram('top_classification_scores', top_classification_softmax[:, 1])
-            top_prediction_anchors = tf.gather(prediction_anchors,
-                                               nms_indices)
-
-            if self._box_rep == 'box_3d':
-                top_orientations = tf.gather(
-                    all_orientations, nms_indices)
-
-            elif self._box_rep in ['box_8c', 'box_8co']:
-                top_prediction_boxes_3d = tf.gather(
-                    prediction_boxes_3d, nms_indices)
-                top_prediction_boxes_8c = tf.gather(
-                    prediction_boxes_8c, nms_indices)
-
-            elif self._box_rep == 'box_4c':
-                top_prediction_boxes_3d = tf.gather(
-                    prediction_boxes_3d, nms_indices)
-                top_prediction_boxes_4c = tf.gather(
-                    prediction_boxes_4c, nms_indices)
-
-            elif self._box_rep == 'box_4ca':
-                top_prediction_boxes_3d = tf.gather(
-                    prediction_boxes_3d, nms_indices)
-                top_prediction_boxes_4c = tf.gather(
-                    prediction_boxes_4c, nms_indices)
-                top_orientations = tf.gather(
-                    all_orientations, nms_indices)
-
-            else:
-                raise NotImplementedError('NMS gather not implemented for',
-                                          self._box_rep)
-
         if self._train_val_test in ['train', 'val']:
-            # Additional entries are added to the shared prediction_dict
-            # Mini batch predictions
-            prediction_dict[self.PRED_MB_CLASSIFICATION_LOGITS] = \
-                mb_classifications_logits
-            prediction_dict[self.PRED_MB_CLASSIFICATION_SOFTMAX] = \
-                mb_classifications_softmax
-            prediction_dict[self.PRED_MB_OFFSETS] = mb_offsets
+            # cls Mini batch preds & gt
+            prediction_dict[self.PRED_MB_CLASSIFICATION_LOGITS] = mb_cls_logits
+            prediction_dict[self.PRED_MB_CLASSIFICATIONS_GT] = mb_cls_gt_one_hot
+            prediction_dict[self.PRED_MB_CLASSIFICATIONS_NUM] = mb_cls_num_boxes
 
-            # Mini batch ground truth
-            prediction_dict[self.PRED_MB_CLASSIFICATIONS_GT] = \
-                mb_classification_gt
-            prediction_dict[self.PRED_MB_OFFSETS_GT] = mb_offsets_gt
+            # reg Mini batch preds
+            prediction_dict[self.PRED_MB_CLS] = (bin_x_loigts, bin_z_logits, bin_theta_logits)
+            prediction_dict[self.PRED_MB_REG] = (res_x_norm, res_z_norm, res_theta_norm, res_y, res_size)
 
+            # reg Mini batch gt
+            prediction_dict[self.PRED_MB_CLS_GT] = (bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot)
+            prediction_dict[self.PRED_MB_REG_GT] = (res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_gt)
+
+            # reg Mini batch pos mask
+            prediction_dict[self.PRED_MB_POS_REG_MASK] = pos_reg_mask
+            
             # Top NMS predictions
-            prediction_dict[self.PRED_TOP_CLASSIFICATION_LOGITS] = \
-                top_classification_logits
-            prediction_dict[self.PRED_TOP_CLASSIFICATION_SOFTMAX] = \
-                top_classification_softmax
+            prediction_dict[self.PRED_TOP_CLASSIFICATION_LOGITS] = top_cls_logits
+            prediction_dict[self.PRED_TOP_CLASSIFICATION_SOFTMAX] = top_cls_softmax
+            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = top_boxes_3d
 
-            prediction_dict[self.PRED_TOP_PREDICTION_ANCHORS] = \
-                top_prediction_anchors
-
-            # Mini batch predictions (for debugging)
-            prediction_dict[self.PRED_MB_MASK] = mb_mask
-            # prediction_dict[self.PRED_MB_POS_MASK] = mb_pos_mask
-            prediction_dict[self.PRED_MB_CLASS_INDICES_GT] = \
-                mb_class_label_indices
-
-            # All predictions (for debugging)
-            prediction_dict[self.PRED_ALL_CLASSIFICATIONS] = \
-                all_cls_logits
-            prediction_dict[self.PRED_ALL_OFFSETS] = all_offsets
-
-            # Path drop masks (for debugging)
-            # prediction_dict['bev_mask'] = bev_mask
-            # prediction_dict['img_mask'] = img_mask
 
         else:
-            # self._train_val_test == 'test'
-            prediction_dict[self.PRED_TOP_CLASSIFICATION_SOFTMAX] = \
-                top_classification_softmax
-            prediction_dict[self.PRED_TOP_PREDICTION_ANCHORS] = \
-                top_prediction_anchors
-
-        if self._box_rep == 'box_3d':
-            prediction_dict[self.PRED_MB_ANCHORS_GT] = mb_anchors_gt
-            prediction_dict[self.PRED_MB_ORIENTATIONS_GT] = mb_orientations_gt
-            prediction_dict[self.PRED_MB_ANGLE_VECTORS] = mb_angle_vectors
-
-            prediction_dict[self.PRED_TOP_ORIENTATIONS] = top_orientations
-
-            # For debugging
-            prediction_dict[self.PRED_ALL_ANGLE_VECTORS] = all_angle_vectors
-
-        elif self._box_rep in ['box_8c', 'box_8co']:
-            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = \
-                top_prediction_boxes_3d
-
-            # Store the corners before converting for visualization purposes
-            prediction_dict[self.PRED_TOP_BOXES_8C] = top_prediction_boxes_8c
-
-        elif self._box_rep == 'box_4c':
-            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = \
-                top_prediction_boxes_3d
-            prediction_dict[self.PRED_TOP_BOXES_4C] = top_prediction_boxes_4c
-
-        elif self._box_rep == 'box_4ca':
-            if self._train_val_test in ['train', 'val']:
-                prediction_dict[self.PRED_MB_ORIENTATIONS_GT] = \
-                    mb_orientations_gt
-                prediction_dict[self.PRED_MB_ANGLE_VECTORS] = mb_angle_vectors
-
-            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = \
-                top_prediction_boxes_3d
-            prediction_dict[self.PRED_TOP_BOXES_4C] = top_prediction_boxes_4c
-            prediction_dict[self.PRED_TOP_ORIENTATIONS] = top_orientations
-
-        else:
-            raise NotImplementedError('Prediction dict not implemented for',
-                                      self._box_rep)
+            prediction_dict[self.PRED_TOP_CLASSIFICATION_LOGITS] = top_cls_logits
+            prediction_dict[self.PRED_TOP_CLASSIFICATION_SOFTMAX] = top_cls_softmax
+            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = top_boxes_3d
 
         # prediction_dict[self.PRED_MAX_IOUS] = max_ious
         # prediction_dict[self.PRED_ALL_IOUS] = all_ious
@@ -890,68 +625,90 @@ class AvodModel(model.DetectionModel):
 
         return bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size
     
-    def sample_mini_batch(self, anchor_box_list_gt, anchor_box_list,
-                          class_labels):
-
-        with tf.variable_scope('avod_create_mb_mask'):
-            # Get IoU for every anchor
-            all_ious = box_list_ops.iou(anchor_box_list_gt, anchor_box_list)
-            max_ious = tf.reduce_max(all_ious, axis=0)
-            max_iou_indices = tf.argmax(all_ious, axis=0)
-
-            # Sample a pos/neg mini-batch from anchors with highest IoU match
-            mini_batch_utils = self.dataset.kitti_utils.mini_batch_utils
-            mb_mask, mb_pos_mask = mini_batch_utils.sample_avod_mini_batch(
-                max_ious)
-            mb_class_label_indices = mini_batch_utils.mask_class_label_indices(
-                mb_pos_mask, mb_mask, max_iou_indices, class_labels)
-
-            mb_gt_indices = tf.boolean_mask(max_iou_indices, mb_mask)
-
-        return mb_mask, mb_class_label_indices, mb_gt_indices
-
     def create_feed_dict(self, batch_size=1):
         feed_dict = self._rpn_model.create_feed_dict(batch_size)
-        self.sample_info = self._rpn_model.sample_info
         if self.model_config.alternating_training_step == 2:
-            self._placeholder_inputs[self.PL_PROPOSALS] = self.dataset.load_proposals(self.sample_info['sample_name'])
-        
+            batch_proposals = []
+            for sample_name in self._rpn_model.samples_info:
+                proposal = self.dataset.load_proposals(sample_name)
+                batch_proposals.append(proposal)
+            self._placeholder_inputs[self.PL_PROPOSALS] = np.asarray(batch_proposals)
+            
             for key, value in self.placeholders.items():
                 feed_dict[value] = self._placeholder_inputs[key]
         return feed_dict
 
     def loss(self, prediction_dict):
-        # Note: The loss should be using mini-batch values only
         if self.model_config.alternating_training_step == 2:
             loss_dict = {}
             rpn_loss = tf.constant(0.0)
         else:
             loss_dict, rpn_loss = self._rpn_model.loss(prediction_dict)
         
-        losses_output = avod_loss_builder.build(self, prediction_dict)
+        # cls Mini batch preds & gt
+        mb_cls_logits = prediction_dict[self.PRED_MB_CLASSIFICATION_LOGITS]
+        mb_cls_gt_one_hot = prediction_dict[self.PRED_MB_CLASSIFICATIONS_GT]
 
-        classification_loss = \
-            losses_output[avod_loss_builder.KEY_CLASSIFICATION_LOSS]
+        
+        with tf.variable_scope('brn_losses'):
+            with tf.variable_scope('box_classification'):
+                cls_loss = losses.WeightedSoftmaxLoss()
+                cls_loss_weight = self._config.loss_config.cls_loss_weight
+                box_classification_loss = cls_loss(mb_cls_logits, mb_cls_gt_one_hot, cls_loss_weight)
+                
+                with tf.variable_scope('cls_norm'):
+                    # normalize by the number of boxes
+                    mb_cls_num_boxes = prediction_dict[self.PRED_MB_CLASSIFICATIONS_NUM]
+                    with tf.control_dependencies(
+                        [tf.assert_positive(mb_cls_num_boxes)]):
+                        box_classification_loss /= mb_cls_num_boxes
+                    tf.summary.scalar('box_classification', box_classification_loss)
 
-        final_reg_loss = losses_output[avod_loss_builder.KEY_REGRESSION_LOSS]
-
-        avod_loss = losses_output[avod_loss_builder.KEY_AVOD_LOSS]
-
-        offset_loss_norm = \
-            losses_output[avod_loss_builder.KEY_OFFSET_LOSS_NORM]
-
-        loss_dict.update({self.LOSS_FINAL_CLASSIFICATION: classification_loss})
-        loss_dict.update({self.LOSS_FINAL_REGRESSION: final_reg_loss})
-
-        # Add localization and orientation losses to loss dict for plotting
-        loss_dict.update({self.LOSS_FINAL_LOCALIZATION: offset_loss_norm})
-
-        ang_loss_norm = losses_output.get(
-            avod_loss_builder.KEY_ANG_LOSS_NORM)
-        if ang_loss_norm is not None:
-            loss_dict.update({self.LOSS_FINAL_ORIENTATION: ang_loss_norm})
+            # these should include positive boxes only
+            with tf.variable_scope('bin_classification'):
+                # reg Mini batch pos mask
+                pos_reg_mask = prediction_dict[self.PRED_MB_POS_REG_MASK]
+                bin_classification_loss = 0.0
+                #bin_x_logits, bin_z_logits, bin_theta_logits = prediction_dict[self.PRED_MB_CLS]
+                #bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = prediction_dict[self.PRED_MB_CLS_GT]
+                for elem in zip(prediction_dict[self.PRED_MB_CLS], prediction_dict[self.PRED_MB_CLS_GT]):
+                    bin_classification_loss += cls_loss(elem[0], elem[1],
+                                                    weight=cls_loss_weight,
+                                                    mask=pos_reg_mask)
+                with tf.variable_scope('cls_norm'):
+                    # normalize by the number of positive boxes
+                    num_pos_boxes = tf.reduce_sum(tf.cast(pos_reg_mask, tf.float32))
+                    with tf.control_dependencies(
+                        [tf.assert_positive(num_pos_boxes)]):
+                        bin_classification_loss /= num_pos_boxes
+                    tf.summary.scalar('bin_classification', bin_classification_loss)
+            
+            # these should include positive boxes only
+            with tf.variable_scope('regression'):
+                reg_loss = losses.WeightedSmoothL1Loss()
+                reg_loss_weight = self._config.loss_config.reg_loss_weight
+                regression_loss = 0.0
+                #res_x_norm, res_z_norm, res_theta_norm, res_y, res_size = prediction_dict[self.PRED_MB_REG]
+                #res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_gt = prediction_dict[self.PRED_MB_REG_GT]
+                for elem in zip(prediction_dict[self.PRED_FG_REG], prediction_dict[self.PRED_FG_REG_GT]):
+                    regression_loss += reg_loss(elem[0], elem[1], 
+                                                weight=reg_loss_weight,
+                                                mask=pos_reg_mask)
+                with tf.variable_scope('reg_norm'):
+                    # normalize by the number of positive boxes
+                    with tf.control_dependencies(
+                        [tf.assert_positive(num_pos_boxes)]):
+                        regression_loss /= num_pos_boxes
+                    tf.summary.scalar('regression', regression_loss)
+            
+            with tf.variable_scope('brn_loss'):
+                brn_loss = box_classification_loss + bin_classification_loss + regression_loss
+        
+        loss_dict.update({self.LOSS_FINAL_CLASSIFICATION: box_classification_loss})
+        loss_dict.update({self.LOSS_FINAL_BIN_CLASSIFICATION: bin_classification_loss})
+        loss_dict.update({self.LOSS_FINAL_REGRESSION: regression_loss})
 
         with tf.variable_scope('total_loss'):
-            total_loss = rpn_loss + avod_loss
+            total_loss = rpn_loss + brn_loss
 
         return loss_dict, total_loss

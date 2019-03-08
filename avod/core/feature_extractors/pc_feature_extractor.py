@@ -21,28 +21,28 @@ class PcFeatureExtractor:
             pts, fts = tf.split(pc_input_batches, [3, pc_data_dim - 3], axis=-1,
                                 name='split_points_features')
             if not use_extra_features:
-                features_sampled = None
+                fts = None
         else:
             pts = pc_input_batches
             fts = None
         ''' 
         if is_training: 
             # Augment
-            points_augmented = pf.augment(points_sampled, xforms, jitter_range)
-            features_augmented = features_sampled
-            if features_sampled and with_normal_feature:
+            points_augmented = pf.augment(pts, xforms, jitter_range)
+            features_augmented = fts
+            if fts and with_normal_feature:
                 if pc_data_dim < 6:
                     print('Only 3D normals are supported!')
                     exit()
                 elif pc_data_dim == 6:
-                    features_augmented = pf.augment(features_sampled, rotations)
+                    features_augmented = pf.augment(fts, rotations)
                 else:
-                    normals, rest = tf.split(features_sampled, [3, pc_data_dim - 6])
+                    normals, rest = tf.split(fts, [3, pc_data_dim - 6])
                     normals_augmented = pf.augment(normals, rotations)
                     features_augmented = tf.concat([normals_augmented, rest], axis=-1)
             return points_augmented, features_augmented
         else:
-            return points_sampled, features_sampled
+            return pts, fts
         '''
         return pts, fts
     

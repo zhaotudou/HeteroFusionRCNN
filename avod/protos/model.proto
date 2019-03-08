@@ -1,5 +1,6 @@
 package avod.protos;
 
+import "avod/protos/mini_batch.proto";
 import "avod/protos/layers.proto";
 
 // Message for configuring the DetectionModel.
@@ -117,6 +118,8 @@ message AvodConfig {
     required float avod_theta_bin_len = 10;
 
     required float avod_pooling_context_length = 11; 
+    
+    optional MiniBatchConfig mini_batch_config = 12;
 }
 
 message LossConfig {

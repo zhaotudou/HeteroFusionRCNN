@@ -35,7 +35,8 @@ def train(model_config, train_config, dataset_config):
         elif model_name == 'avod_model':
             model = AvodModel(model_config,
                               train_val_test=train_val_test,
-                              dataset=dataset)
+                              dataset=dataset,
+                              batch_size=train_config.batch_size)
         else:
             raise ValueError('Invalid model_name')
 

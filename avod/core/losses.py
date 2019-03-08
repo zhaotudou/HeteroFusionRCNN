@@ -132,7 +132,7 @@ class WeightedSmoothL1Loss(Loss):
     See also Equation (3) in the Fast R-CNN paper by Ross Girshick (ICCV 2015)
     """
 
-    def _compute_loss(self, prediction_tensor, target_tensor, weight):
+    def _compute_loss(self, prediction_tensor, target_tensor, weight, mask=None):
         """Compute loss function.
         Args:
             prediction_tensor: A float tensor of shape [num_anchors,
@@ -148,16 +148,20 @@ class WeightedSmoothL1Loss(Loss):
         abs_diff = tf.abs(diff)
         abs_diff_lt_1 = tf.less(abs_diff, 1)
 
-        smooth_l1norm = tf.reduce_sum(
-            tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5),
-            ) * weight
-        return smooth_l1norm
+        smooth_l1norm = tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5)
+        
+        if mask is not None:
+            masked_smooth_l1norm = smooth_l1norm * tf.cast(mask, tf.float32)
+        else:
+            masked_smooth_l1norm = smooth_l1norm
+
+        return tf.reduce_sum(masked_smooth_l1norm) * weight
 
 
 class WeightedSoftmaxLoss(Loss):
     """Softmax cross-entropy loss function."""
 
-    def _compute_loss(self, prediction_tensor, target_tensor, weight):
+    def _compute_loss(self, prediction_tensor, target_tensor, weight, mask=None):
         """Compute loss function.
         Args:
           prediction_tensor: A float tensor of shape [batch_size, num_anchors,
@@ -171,8 +175,13 @@ class WeightedSoftmaxLoss(Loss):
         per_row_cross_ent = (tf.nn.softmax_cross_entropy_with_logits(
             labels=tf.reshape(target_tensor, [-1, num_classes]),
             logits=tf.reshape(prediction_tensor, [-1, num_classes])))
+        
+        if mask is not None:
+            masked_cross_ent = per_row_cross_ent * tf.cast(tf.reshape(mask, [-1]), tf.float32)
+        else:
+            masked_cross_ent = per_row_cross_ent
 
-        return tf.reduce_sum(per_row_cross_ent) * weight
+        return tf.reduce_sum(masked_cross_ent) * weight
 
 class WeightedFocalLoss(Loss):
     

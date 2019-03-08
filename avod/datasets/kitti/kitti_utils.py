@@ -25,8 +25,10 @@ class KittiUtils(object):
 
         # Label Clusters
         self.label_cluster_utils = LabelClusterUtils(self.dataset)
-
         self.clusters, self.std_devs = [None, None]
+        # Label Seg Utils
+        self.label_seg_utils = LabelSegUtils(self.dataset)
+        self._label_seg_dir = self.label_seg_utils.label_seg_dir
 
         # BEV source from dataset config
         self.pc_source = self.dataset.pc_source
@@ -39,18 +41,12 @@ class KittiUtils(object):
         self.anchor_strides = np.reshape(self.config.anchor_strides, (-1, 2))
         self.expand_gt_size = self.config.label_seg_config.expand_gt_size 
 
-        self._density_threshold = self.config.density_threshold
-
         # Check that depth maps folder exists
         if self.pc_source == 'depth' and \
                 not os.path.exists(self.dataset.depth_dir):
             raise FileNotFoundError(
                 'Could not find depth maps, please run '
                 'demos/save_lidar_depth_maps.py in wavedata first')
-
-        # Label Seg Utils
-        self.label_seg_utils = LabelSegUtils(self.dataset)
-        self._label_seg_dir = self.label_seg_utils.label_seg_dir
 
         # Label Clusters
         self.clusters, self.std_devs = \

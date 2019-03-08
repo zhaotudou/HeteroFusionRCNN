@@ -83,6 +83,6 @@ def nms(boxes, scores, iou_thresh, max_output_size):
                 trim -= 1
                 if trim <= 0:
                     break
-        
+    #TODO if trim < 0 should pad to max_output_size   
     return np.asarray(nms_mask, dtype=np.bool)
 

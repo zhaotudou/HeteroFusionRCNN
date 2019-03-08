@@ -44,14 +44,17 @@ class RpnModel(model.DetectionModel):
     PRED_TOP_PROPOSALS = 'rpn_top_proposals'
     PRED_TOP_OBJECTNESS_SOFTMAX = 'rpn_top_objectness_softmax'
 
+    PRED_TOP_PROPOSAL_IOU3DS = 'rpn_top_proposal_iou3ds'
+    PRED_TOP_PROPOSAL_GT_BOXES = 'rpn_top_proposal_gt_boxes'
+    PRED_TOP_PROPOSAL_GT_CLS = 'rpn_top_proposal_gt_cls'
     ##############################
     # Keys for Loss
     ##############################
     LOSS_RPN_SEGMENTATION = 'rpn_seg_loss'
-    LOSS_RPN_CLASSIFICATION = 'rpn_cls_loss'
+    LOSS_RPN_BIN_CLASSIFICATION = 'rpn_cls_loss'
     LOSS_RPN_REGRESSION = 'rpn_reg_loss'
 
-    def __init__(self, model_config, train_val_test, dataset, batch_size):
+    def __init__(self, model_config, train_val_test, dataset, batch_size=1):
         """
         Args:
             model_config: configuration for the model
@@ -164,7 +167,7 @@ class RpnModel(model.DetectionModel):
             pc_input_placeholder = self._add_placeholder(
                                         tf.float32, 
                                         (self._batch_size, None, self._pc_data_dim),
-                                        self.PL_PC_INPUTS)
+                                        self.PL_PC_INPUTS) #(B,P',3)
 
             self._pc_pts_preprocessed, self._pc_fts_preprocessed = \
                 self._pc_feature_extractor.preprocess_input(
@@ -174,7 +177,7 @@ class RpnModel(model.DetectionModel):
         
         with tf.variable_scope('pl_labels'):
             self._add_placeholder(tf.float32, [self._batch_size, None, 8], 
-                                  self.PL_LABEL_SEGS)
+                                  self.PL_LABEL_SEGS) #(B,P',8)
 
     def _set_up_feature_extractors(self):
         """Sets up feature extractors and stores feature maps and
@@ -186,7 +189,7 @@ class RpnModel(model.DetectionModel):
             self._pc_feature_extractor.build(
                 self._pc_pts_preprocessed,
                 self._pc_fts_preprocessed,
-                self._is_training)
+                self._is_training) #(B,P,3) (B,P,C), P maybe equal to P'
         tf.summary.histogram('pc_fts', self._pc_fts)
 
     def _gather_residuals(self, res_x_norms, res_z_norms, res_theta_norms,
@@ -232,18 +235,18 @@ class RpnModel(model.DetectionModel):
 
         return res_x_norm, res_z_norm, res_theta_norm
 
-    def _gather_mean_sizes(self, cluster_sizes, foreground_preds):
+    def _gather_mean_sizes(self, cluster_sizes, cls_preds):
         '''
         Input:
             cluster_sizes: (Klass, Cluster=1, 3) [l,w,h], Klass is 0-based
-            foreground_preds: (B,p), [klass], kclass is 1-based, 0-background
+            cls_preds: (B,p), [klass], kclass is 1-based, 0-background
         Output
             mean_sizes: (B,p,3) [l,w,h]
 
         TF version: (if p is not None)
         ##########
-        B = foreground_preds.shape[0].value
-        p = foreground_preds.shape[1].value
+        B = cls_preds.shape[0].value
+        p = cls_preds.shape[1].value
         
         Bs = tf.range(B)
         ps = tf.range(p)
@@ -254,7 +257,7 @@ class RpnModel(model.DetectionModel):
         pK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [p,1,1])
         BpK_mean_sizes = tf.tile(tf.expand_dims(pK_mean_sizes, 0), [B,1,1,1])
 
-        BpK = tf.concat([Bp, tf.reshape(foreground_preds, (B,p,1))], axis=2) # (B,p,3)
+        BpK = tf.concat([Bp, tf.reshape(cls_preds, (B,p,1))], axis=2) # (B,p,3)
         
         mean_sizes = tf.gather_nd(BpK_mean_sizes, BpK)
 
@@ -263,7 +266,7 @@ class RpnModel(model.DetectionModel):
         '''
         K_mean_sizes = np.reshape(cluster_sizes, (-1,3))
         K_mean_sizes = np.vstack([np.asarray([0.0, 0.0, 0.0]), K_mean_sizes]) # insert 0-background
-        mean_sizes = K_mean_sizes[foreground_preds]
+        mean_sizes = K_mean_sizes[cls_preds]
         
         return mean_sizes.astype(np.float32)
 
@@ -279,31 +282,33 @@ class RpnModel(model.DetectionModel):
         #########################################
         with tf.variable_scope('foreground_segmentation'):
             seg_logits = pf.dense(self._pc_fts, self.num_classes + 1, 'seg_logits', 
-                                  self._is_training, with_bn=False, activation=None)
-            seg_softmax = tf.nn.softmax(seg_logits, name='seg_softmax')
-            seg_preds = tf.argmax(seg_softmax, axis=-1, name='seg_predictions')
-            seg_scores = tf.reduce_max(seg_softmax, axis=-1, name='seg_scores')
+                                  self._is_training, with_bn=False, activation=None)    #(B,P,K)
+            seg_softmax = tf.nn.softmax(seg_logits, name='seg_softmax') #(B,P,K)
+            seg_preds = tf.argmax(seg_softmax, axis=-1, name='seg_predictions') #(B,P)
+            seg_scores = tf.reduce_max(seg_softmax, axis=-1, name='seg_scores') #(B,P)
             
-        label_segs = self.placeholders[self.PL_LABEL_SEGS]
+        label_segs = self.placeholders[self.PL_LABEL_SEGS] #(B,P,8)
+        label_cls = label_segs[:,:,0]
+        label_box_3d = label_segs[:,:,1:]
         # foreground point masking
         with tf.variable_scope('foreground_masking'):
             if self._train_val_test in ['train', 'val']:
-                foreground_mask = label_segs[:,:,0] > 0
+                foreground_mask = label_cls > 0
             else:
                 foreground_mask = seg_preds > 0
             # TODO: batch_size must be 1
             foreground_pts = tf.reshape(
                     tf.boolean_mask(self._pc_pts, foreground_mask), 
-                    [self._batch_size, -1, self._pc_pts.shape[2].value])
+                    [self._batch_size, -1, self._pc_pts.shape[2].value]) #(B,p,3)
             foreground_fts = tf.reshape(
                     tf.boolean_mask(self._pc_fts, foreground_mask), 
-                    [self._batch_size, -1, self._pc_fts.shape[2].value])
+                    [self._batch_size, -1, self._pc_fts.shape[2].value]) #(B,p,C)
             foreground_preds = tf.reshape(
                     tf.boolean_mask(seg_preds, foreground_mask), 
-                    [self._batch_size, -1])
+                    [self._batch_size, -1]) #(B,p)
             foreground_scores = tf.reshape(
                     tf.boolean_mask(seg_scores, foreground_mask),
-                    [self._batch_size, -1])
+                    [self._batch_size, -1]) #(B,p)
         
         # branch-2: bin-based 3D proposal generation
         #########################################
@@ -336,6 +341,7 @@ class RpnModel(model.DetectionModel):
                     tf.summary.histogram(fc_layer.name.replace(':', '_'),
                                          fc_layer)
         # Return the proposals
+        ######################################################
         with tf.variable_scope('proposals'):
             # Decode bin-based 3D Box 
             bin_x = tf.argmax(bin_x_logits, axis=-1) #(B,p)
@@ -354,7 +360,7 @@ class RpnModel(model.DetectionModel):
 
             with tf.variable_scope('decoding'):
                 proposals = bin_based_box3d_encoder.tf_decode(
-                        foreground_pts,
+                        foreground_pts, 0,
                         bin_x, res_x_norm,
                         bin_z, res_z_norm,
                         bin_theta, res_theta_norm,
@@ -446,10 +452,13 @@ class RpnModel(model.DetectionModel):
                 
                 tf.summary.histogram('top_objectness_scores', top_objectness_scores)
 
+        ######################################################
+        # GTs for the loss function & metrics
+        ######################################################
         # Ground Truth Seg
         with tf.variable_scope('seg_one_hot_classes'):
             segs_gt_one_hot = tf.one_hot(
-                tf.to_int64(label_segs[:,:,0]), depth=self.num_classes + 1,
+                tf.to_int64(label_cls), depth=self.num_classes + 1,
                 on_value=1.0,
                 off_value=0.0)
         
@@ -457,8 +466,9 @@ class RpnModel(model.DetectionModel):
             num_foreground_pts = tf.reduce_sum(tf.cast(foreground_mask, tf.float32), name='num_foreground_pts')
             tf.summary.scalar('foreground_points_num', num_foreground_pts)
             # seg accuracy 
-            seg_correct = tf.equal(seg_preds, tf.to_int64(label_segs[:,:,0]))
-            seg_in_correct = tf.not_equal(seg_preds, tf.to_int64(label_segs[:,:,0]))
+            seg_correct = tf.equal(seg_preds, tf.to_int64(label_cls))
+            #seg_accuracy = tf.reduce_mean(seg_correct)
+            seg_in_correct = tf.not_equal(seg_preds, tf.to_int64(label_cls))
             num_correct = tf.reduce_sum(tf.cast(seg_correct, tf.float32))
             num_in_correct = tf.reduce_sum(tf.cast(seg_in_correct, tf.float32))
             num_total_pts = num_correct + num_in_correct
@@ -467,14 +477,16 @@ class RpnModel(model.DetectionModel):
         
         # Ground Truth Box Cls/Reg
         with tf.variable_scope('box_cls_reg_gt'):
-            label_box_3d = label_segs[:,:,1:]
+            foreground_label_cls = tf.reshape(
+                tf.boolean_mask(label_cls, foreground_mask), 
+                [self._batch_size, -1, 1])  #(B,p,1)
             foreground_label_boxes_3d = tf.reshape(
                 tf.boolean_mask(label_box_3d, foreground_mask), 
                 [self._batch_size, -1, 7])  #(B,p,7)
            
             (bin_x_gt, res_x_gt, bin_z_gt, res_z_gt, 
              bin_theta_gt, res_theta_gt, res_y_gt, res_size_gt) = bin_based_box3d_encoder.tf_encode(
-                foreground_pts, foreground_label_boxes_3d, mean_sizes,
+                foreground_pts, 0, foreground_label_boxes_3d, mean_sizes,
                 self.S, self.DELTA, self.R, self.DELTA_THETA)
             
             bin_x_gt_one_hot = tf.one_hot(
@@ -493,10 +505,11 @@ class RpnModel(model.DetectionModel):
                 off_value=0.0)
             
         with tf.variable_scope('proposal_recall_iou'): 
-            # reg iou
-            recalls_50, recalls_70, iou3ds, iou2ds = tf.py_func(box_util.compute_recall_iou, 
-                [top_proposals, foreground_label_boxes_3d],
-                [tf.float32, tf.float32, tf.float32, tf.float32])
+            # reg recall & iou
+            recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = \
+                tf.py_func(box_util.compute_recall_iou, 
+                    [top_proposals, foreground_label_boxes_3d, foreground_label_cls],
+                    [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
             tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
             tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
             tf.summary.scalar('iou_3d', tf.reduce_mean(iou3ds))
@@ -525,7 +538,11 @@ class RpnModel(model.DetectionModel):
             # Proposals after nms
             predictions[self.PRED_TOP_PROPOSALS] = top_proposals
             predictions[self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
-            
+
+            # Top Proposal IoU & corresponding GT boxes & cls, for next stage positive/negative sample selection use
+            predictions[self.PRED_TOP_PROPOSAL_IOU3DS] = iou3ds
+            predictions[self.PRED_TOP_PROPOSAL_GT_BOXES] = iou3ds_gt_boxes
+            predictions[self.PRED_TOP_PROPOSAL_GT_CLS] = iou3ds_gt_cls
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
@@ -686,25 +703,25 @@ class RpnModel(model.DetectionModel):
                     tf.summary.scalar('segmentation', segmentation_loss)
             
             # these should include foreground pts only
-            with tf.variable_scope('classification'):
+            with tf.variable_scope('bin_classification'):
                 cls_loss = losses.WeightedSoftmaxLoss()
                 cls_loss_weight = self._config.loss_config.cls_loss_weight
-                classification_loss = 0.0
+                bin_classification_loss = 0.0
                 #bin_x_logits, bin_z_logits, bin_theta_logits = prediction_dict[self.PRED_FG_CLS]
                 #bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = prediction_dict[self.PRED_FG_CLS_GT]
                 for elem in zip(prediction_dict[self.PRED_FG_CLS], prediction_dict[self.PRED_FG_CLS_GT]):
-                    classification_loss += cls_loss(elem[0], elem[1],
+                    bin_classification_loss += cls_loss(elem[0], elem[1],
                                                     weight=cls_loss_weight)
                 with tf.variable_scope('cls_norm'):
                     # normalize by the number of foreground pts
                     num_foreground_pts = prediction_dict[self.PRED_FG_PTS]
                     with tf.control_dependencies(
                         [tf.assert_positive(num_foreground_pts)]):
-                        classification_loss /= num_foreground_pts
-                    #classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                    #    classification_loss / num_foreground_pts,
+                        bin_classification_loss /= num_foreground_pts
+                    #bin_classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
+                    #    bin_classification_loss / num_foreground_pts,
                     #    0.0)
-                    tf.summary.scalar('classification', classification_loss)
+                    tf.summary.scalar('bin_classification', bin_classification_loss)
 
             with tf.variable_scope('regression'):
                 reg_loss = losses.WeightedSmoothL1Loss()
@@ -726,11 +743,11 @@ class RpnModel(model.DetectionModel):
                     tf.summary.scalar('regression', regression_loss)
             
             with tf.variable_scope('rpn_loss'):
-                rpn_loss = segmentation_loss + classification_loss + regression_loss
+                rpn_loss = segmentation_loss + bin_classification_loss + regression_loss
 
         loss_dict = {
             self.LOSS_RPN_SEGMENTATION: segmentation_loss,
-            self.LOSS_RPN_CLASSIFICATION: classification_loss,
+            self.LOSS_RPN_BIN_CLASSIFICATION: bin_classification_loss,
             self.LOSS_RPN_REGRESSION: regression_loss,
         }
 

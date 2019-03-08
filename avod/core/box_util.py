@@ -85,29 +85,42 @@ def is_clockwise(p):
     y = p[:,1]
     return np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)) > 0
 
-def compute_recall_iou(pred_boxes_3d, label_boxes_3d):
+def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
     '''
     Input:
         pred_boxes_3d: (B,n,7) [x,y,z,l,w,h,ry]
         label_boxes_3d: (B,p,7) [x,y,z,l,w,h,ry]
+        label_cls: (B,p,1) [cls]
     Output:
         recalls_50: (B)
         recalls_70: (B)
-        iou3ds: (B,n), 3d IOU
-        iou2ds: (B,n), bev oriented 2d IOU
+        iou2ds: (B,n), max bev oriented 2d IoU among label GTs
+        iou3ds: (B,n), max 3d IoU among label GTs
+        iou3ds_gt_boxes: (B,n,7), corresponding GT box3d
+        iou3ds_gt_cls: (B,n), corresponding GT cls
     '''
     B = pred_boxes_3d.shape[0]
     n = pred_boxes_3d.shape[1]
     recalls_50 = np.zeros(B, dtype=np.float32)
     recalls_70 = np.zeros(B, dtype=np.float32)
-    iou3ds = np.zeros((B,n), dtype=np.float32)
     iou2ds = np.zeros((B,n), dtype=np.float32)
+    iou3ds = np.zeros((B,n), dtype=np.float32)
+    iou3ds_gt_boxes = np.zeros((B,n,7), dtype=np.float32)
+    iou3ds_gt_cls = np.zeros((B,n), dtype=np.float32)
     for b in range(B):
         sb_pred_boxes_3d = pred_boxes_3d[b] #(n,7)
-        sb_label_boxes_3d = np.unique(label_boxes_3d[b], axis=0) #(m,7)
-        m = sb_label_boxes_3d.shape[0]
+
+        sb_label_boxes_3d = label_boxes_3d[b] #(p,7)
+        sb_label_cls = label_cls[b] #(p,1)
+        sb_label_segs = np.concatenate([sb_label_cls, sb_label_boxes_3d], axis=1)#(p,8)
+        
+        sb_label_segs_uniq = np.unique(sb_label_segs, axis=0) #(m,8)
+        sb_label_cls_uniq = sb_label_segs_uniq[:,0] #(m)
+        sb_label_boxes_3d_uniq = sb_label_segs_uniq[:,1:] #(m,7)
+        m = sb_label_segs_uniq.shape[0]
+        
         sb_pred_boxes_8co = [box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in sb_pred_boxes_3d]
-        sb_label_boxes_8co = [box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in sb_label_boxes_3d]
+        sb_label_boxes_8co = [box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in sb_label_boxes_3d_uniq]
         sb_iou2ds = np.zeros((n,m))
         sb_iou3ds = np.zeros((n,m))
         for i in range(n):
@@ -117,10 +130,12 @@ def compute_recall_iou(pred_boxes_3d, label_boxes_3d):
                 sb_iou3ds[i][j] = iou_3d
         recalls_50[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.5) / m
         recalls_70[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.7) / m
-        iou3ds[b] = np.max(sb_iou3ds, axis=1)
         iou2ds[b] = np.max(sb_iou2ds, axis=1)
+        iou3ds[b] = np.max(sb_iou3ds, axis=1)
+        iou3ds_gt_boxes[b] = sb_label_boxes_3d_uniq[np.argmax(sb_iou3ds, axis=1)]
+        iou3ds_gt_cls[b] = sb_label_cls_uniq[np.argmax(sb_iou3ds, axis=1)]
 
-    return recalls_50, recalls_70, iou3ds, iou2ds
+    return recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls
 
 def box3d_iou(corners1, corners2):
     ''' Compute 3D bounding box IoU.

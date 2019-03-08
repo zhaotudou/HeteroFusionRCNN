@@ -200,7 +200,7 @@ def set_up_summary_writer(model_config,
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
     summary_merged = summary_utils.summaries_to_keep(summaries,
                                                      global_summaries,
-                                                     histograms=False,
+                                                     histograms=True,
                                                      input_imgs=False,
                                                      input_pcs=False)
 

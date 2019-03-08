@@ -1,7 +1,5 @@
 package avod.protos;
 
-import "avod/protos/mini_batch.proto";
-
 message KittiUtilsConfig {
     // 3D area extents [min_x, max_x, min_y, max_y, min_z, max_z]
     repeated float area_extents = 1;
@@ -16,8 +14,6 @@ message KittiUtilsConfig {
     optional int32 density_threshold = 4 [default = 1];
 
     optional LabelSegConfig label_seg_config = 20;
-
-    optional MiniBatchConfig mini_batch_config = 21;
 }
 
 message LabelSegConfig {

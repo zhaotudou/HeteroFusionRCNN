@@ -18,10 +18,11 @@ from avod.core.models.rpn_model import RpnModel
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
-KEY_SUM_RPN_OBJ_LOSS = 'sum_rpn_obj_loss'
+KEY_SUM_RPN_SEG_LOSS = 'sum_rpn_seg_loss'
+KEY_SUM_RPN_BIN_CLS_LOSS = 'sum_rpn_bin_cls_loss'
 KEY_SUM_RPN_REG_LOSS = 'sum_rpn_reg_loss'
 KEY_SUM_RPN_TOTAL_LOSS = 'sum_rpn_total_loss'
-KEY_SUM_RPN_OBJ_ACC = 'sum_rpn_obj_accuracy'
+KEY_SUM_RPN_SEG_ACC = 'sum_rpn_seg_accuracy'
 
 KEY_SUM_AVOD_CLS_LOSS = 'sum_avod_cls_loss'
 KEY_SUM_AVOD_REG_LOSS = 'sum_avod_reg_loss'
@@ -201,7 +202,7 @@ class Evaluator:
             feed_dict_time = time.time() - start_time
 
             # Get sample name from model
-            sample_name = self.model.sample_info['sample_name']
+            sample_name = self.model.samples_info[0]
 
             # File paths for saving proposals and predictions
             rpn_file_path = prop_score_predictions_dir + "/{}.txt".format(
@@ -239,11 +240,13 @@ class Evaluator:
                                        feed_dict=feed_dict)
 
                 if self.model_config.alternating_training_step != 2:
-                    rpn_objectness_loss = eval_losses[RpnModel.LOSS_RPN_OBJECTNESS]
+                    rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
+                    rpn_bin_classification_loss = eval_losses[RpnModel.LOSS_RPN_BIN_CLASSIFICATION]
                     rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
 
                     self._update_rpn_losses(eval_rpn_losses,
-                                            rpn_objectness_loss,
+                                            rpn_segmentation_loss,
+                                            rpn_bin_classification_loss,
                                             rpn_regression_loss,
                                             eval_total_loss,
                                             global_step)
@@ -466,7 +469,8 @@ class Evaluator:
 
     def _update_rpn_losses(self,
                            eval_rpn_losses,
-                           rpn_objectness_loss,
+                           rpn_segmentation_loss,
+                           rpn_bin_classification_loss,
                            rpn_regression_loss,
                            eval_total_loss,
                            global_step):
@@ -488,26 +492,32 @@ class Evaluator:
         else:
             rpn_total_loss = eval_total_loss
 
-        print("Step {}: Eval RPN Loss: objectness {:.3f}, "
-              "regression {:.3f}, total {:.3f}".format(
+        print("Step {}: Eval RPN Loss: segmentation {:.3f}, "
+              "bin_cls {:.3f}, regression {:.3f}, total {:.3f}".format(
                     global_step,
-                    rpn_objectness_loss,
+                    rpn_segmentation_loss,
+                    rpn_bin_classification_loss,
                     rpn_regression_loss,
                     rpn_total_loss))
 
         # Get the loss sums from the losses dict
-        sum_rpn_obj_loss = eval_rpn_losses[KEY_SUM_RPN_OBJ_LOSS]
+        sum_rpn_seg_loss = eval_rpn_losses[KEY_SUM_RPN_SEG_LOSS]
+        sum_rpn_bin_cls_loss = eval_rpn_losses[KEY_SUM_RPN_BIN_CLS_LOSS]
         sum_rpn_reg_loss = eval_rpn_losses[KEY_SUM_RPN_REG_LOSS]
         sum_rpn_total_loss = eval_rpn_losses[KEY_SUM_RPN_TOTAL_LOSS]
 
-        sum_rpn_obj_loss += rpn_objectness_loss
+        sum_rpn_seg_loss += rpn_segmentation_loss
+        sum_rpn_bin_cls_loss += rpn_bin_classification_loss
         sum_rpn_reg_loss += rpn_regression_loss
         sum_rpn_total_loss += rpn_total_loss
 
         # update the losses sums
-        eval_rpn_losses.update({KEY_SUM_RPN_OBJ_LOSS:
-                                sum_rpn_obj_loss})
+        eval_rpn_losses.update({KEY_SUM_RPN_SEG_LOSS:
+                                sum_rpn_seg_loss})
 
+        eval_rpn_losses.update({KEY_SUM_RPN_BIN_CLS_LOSS:
+                                sum_rpn_bin_cls_loss})
+        
         eval_rpn_losses.update({KEY_SUM_RPN_REG_LOSS:
                                 sum_rpn_reg_loss})
 
@@ -683,42 +693,46 @@ class Evaluator:
                                      predictions_base_dir):
         """Helper function to save the RPN loss evaluation results.
         """
-        sum_rpn_obj_loss = eval_rpn_losses[KEY_SUM_RPN_OBJ_LOSS]
+        sum_rpn_seg_loss = eval_rpn_losses[KEY_SUM_RPN_SEG_LOSS]
+        sum_rpn_bin_cls_loss = eval_rpn_losses[KEY_SUM_RPN_BIN_CLS_LOSS]
         sum_rpn_reg_loss = eval_rpn_losses[KEY_SUM_RPN_REG_LOSS]
         sum_rpn_total_loss = eval_rpn_losses[KEY_SUM_RPN_TOTAL_LOSS]
-        sum_rpn_obj_accuracy = eval_rpn_losses[KEY_SUM_RPN_OBJ_ACC]
+        sum_rpn_seg_accuracy = eval_rpn_losses[KEY_SUM_RPN_SEG_ACC]
 
         # Calculate average loss and accuracy
-        avg_rpn_obj_loss = sum_rpn_obj_loss / num_valid_samples
+        avg_rpn_seg_loss = sum_rpn_seg_loss / num_valid_samples
+        avg_rpn_bin_cls_loss = sum_rpn_bin_cls_loss / num_valid_samples
         avg_rpn_reg_loss = sum_rpn_reg_loss / num_valid_samples
         avg_rpn_total_loss = sum_rpn_total_loss / num_valid_samples
-        avg_rpn_obj_accuracy = sum_rpn_obj_accuracy / num_valid_samples
+        avg_rpn_seg_accuracy = sum_rpn_seg_accuracy / num_valid_samples
 
-        print("Step {}: Average RPN Losses: objectness {:.3f}, "
-              "regression {:.3f}, total {:.3f}".format(global_step,
-                                                       avg_rpn_obj_loss,
+        print("Step {}: Average RPN Losses: segmentation {:.3f}, "
+              "bin_cls {:.3f}, regression {:.3f}, total {:.3f}".format(global_step,
+                                                       avg_rpn_seg_loss,
+                                                       avg_rpn_bin_cls_loss,
                                                        avg_rpn_reg_loss,
                                                        avg_rpn_total_loss))
-        print("Step {}: Average Objectness Accuracy:{} ".format(
+        print("Step {}: Average Segmentation Accuracy:{} ".format(
             global_step,
-            avg_rpn_obj_accuracy))
+            avg_rpn_seg_accuracy))
 
         # Append to end of file
         avg_loss_file_path = predictions_base_dir + '/rpn_avg_losses.csv'
         with open(avg_loss_file_path, 'ba') as fp:
             np.savetxt(fp,
                        np.reshape([global_step,
-                                   avg_rpn_obj_loss,
+                                   avg_rpn_seg_loss,
+                                   avg_rpn_bin_cls_loss,
                                    avg_rpn_reg_loss,
                                    avg_rpn_total_loss],
-                                  (1, 4)),
-                       fmt='%d, %.5f, %.5f, %.5f')
+                                  (1, 5)),
+                       fmt='%d, %.5f, %.5f, %.5f, %5f')
 
-        avg_acc_file_path = predictions_base_dir + '/rpn_avg_obj_acc.csv'
+        avg_acc_file_path = predictions_base_dir + '/rpn_avg_seg_acc.csv'
         with open(avg_acc_file_path, 'ba') as fp:
             np.savetxt(
                 fp, np.reshape(
-                    [global_step, avg_rpn_obj_accuracy],
+                    [global_step, avg_rpn_seg_accuracy],
                     (1, 2)),
                 fmt='%d, %.5f')
 
@@ -885,11 +899,12 @@ class Evaluator:
         eval_rpn_losses = dict()
 
         # Initialize Rpn average losses
-        eval_rpn_losses[KEY_SUM_RPN_OBJ_LOSS] = 0
+        eval_rpn_losses[KEY_SUM_RPN_SEG_LOSS] = 0
+        eval_rpn_losses[KEY_SUM_RPN_BIN_CLS_LOSS] = 0
         eval_rpn_losses[KEY_SUM_RPN_REG_LOSS] = 0
         eval_rpn_losses[KEY_SUM_RPN_TOTAL_LOSS] = 0
 
-        eval_rpn_losses[KEY_SUM_RPN_OBJ_ACC] = 0
+        eval_rpn_losses[KEY_SUM_RPN_SEG_ACC] = 0
 
         return eval_rpn_losses
 
@@ -952,18 +967,17 @@ class Evaluator:
             global_step: Current global step that is being evaluated.
         """
 
-        objectness_pred = predictions[RpnModel.PRED_MB_OBJECTNESS]
-        objectness_gt = predictions[RpnModel.PRED_MB_OBJECTNESS_GT]
-        objectness_accuracy = self.calculate_cls_accuracy(objectness_pred,
-                                                          objectness_gt)
+        seg_softmax = predictions[RpnModel.PRED_SEG_SOFTMAX]
+        seg_gt = predictions[RpnModel.PRED_SEG_GT]
+        segmentation_accuracy = self.calculate_cls_accuracy(seg_softmax, seg_gt)
 
         # get this from the key
-        sum_rpn_obj_accuracy = eval_rpn_losses[KEY_SUM_RPN_OBJ_ACC]
-        sum_rpn_obj_accuracy += objectness_accuracy
-        eval_rpn_losses.update({KEY_SUM_RPN_OBJ_ACC:
-                                sum_rpn_obj_accuracy})
-        print("Step {}: RPN Objectness Accuracy: {}".format(
-            global_step, objectness_accuracy))
+        sum_rpn_seg_accuracy = eval_rpn_losses[KEY_SUM_RPN_SEG_ACC]
+        sum_rpn_seg_accuracy += segmentation_accuracy
+        eval_rpn_losses.update({KEY_SUM_RPN_SEG_ACC:
+                                sum_rpn_seg_accuracy})
+        print("Step {}: RPN Segmentation Accuracy: {}".format(
+            global_step, segmentation_accuracy))
 
         if self.full_model:
             classification_pred = \
@@ -994,8 +1008,8 @@ class Evaluator:
         Returns:
             accuracy: A scalar value representing the accuracy
         """
-        correct_prediction = np.equal(np.argmax(cls_pred, 1),
-                                      np.argmax(cls_gt, 1))
+        correct_prediction = np.equal(np.argmax(cls_pred, -1),
+                                      np.argmax(cls_gt, -1))
         accuracy = np.mean(correct_prediction)
         return accuracy
 
@@ -1007,15 +1021,14 @@ class Evaluator:
 
         Returns:
             proposals_and_scores: A numpy array of shape (number_of_proposals,
-                8), containing the rpn proposal boxes and scores.
+                9), containing the rpn proposal boxes and scores.
         """
 
-        top_anchors = predictions[RpnModel.PRED_TOP_ANCHORS]
-        #top_proposals = box_3d_encoder.anchors_to_box_3d(top_anchors)
-        softmax_scores = predictions[RpnModel.PRED_TOP_OBJECTNESS_SOFTMAX]
+        top_proposals = np.squeeze(predictions[RpnModel.PRED_TOP_PROPOSALS], 0)
+        softmax_scores = np.squeeze(predictions[RpnModel.PRED_TOP_OBJECTNESS_SOFTMAX], 0)
 
-        proposals_and_scores = np.column_stack((top_anchors,
-                                                softmax_scores))
+        proposals_and_scores = np.column_stack((top_proposals,
+                                                np.expand_dims(softmax_scores, -1)))
 
         return proposals_and_scores
 
