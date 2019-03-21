@@ -151,6 +151,9 @@ class WeightedSmoothL1Loss(Loss):
         smooth_l1norm = tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5)
         
         if mask is not None:
+            rank = prediction_tensor.shape.ndims if prediction_tensor.shape else target_tensor.shape.ndims
+            if rank > mask.shape.ndims:
+                smooth_l1norm = tf.reduce_sum(smooth_l1norm, -1)
             masked_smooth_l1norm = smooth_l1norm * tf.cast(mask, tf.float32)
         else:
             masked_smooth_l1norm = smooth_l1norm

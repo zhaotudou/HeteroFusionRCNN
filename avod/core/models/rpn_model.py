@@ -285,7 +285,7 @@ class RpnModel(model.DetectionModel):
                                   self._is_training, with_bn=False, activation=None)    #(B,P,K)
             seg_softmax = tf.nn.softmax(seg_logits, name='seg_softmax') #(B,P,K)
             seg_preds = tf.argmax(seg_softmax, axis=-1, name='seg_predictions') #(B,P)
-            seg_scores = tf.reduce_max(seg_softmax, axis=-1, name='seg_scores') #(B,P)
+            seg_scores = tf.reduce_max(seg_softmax[:,:,1:], axis=-1, name='seg_scores') #(B,P)
             
         label_segs = self.placeholders[self.PL_LABEL_SEGS] #(B,P,8)
         label_cls = label_segs[:,:,0]
@@ -317,7 +317,6 @@ class RpnModel(model.DetectionModel):
             fc_layers = [foreground_fts]
             layers_config = self._config.layers_config.rpn_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
-                print(layer_param)
                 C = layer_param.C
                 dropout_rate = layer_param.dropout_rate
                 fc = pf.dense(fc_layers[-1], C, 'fc{:d}'.format(layer_idx), self._is_training)
@@ -357,7 +356,7 @@ class RpnModel(model.DetectionModel):
                 self._gather_mean_sizes,
                 [tf.convert_to_tensor(np.asarray(self._cluster_sizes)), foreground_preds],
                 tf.float32)
-
+            
             with tf.variable_scope('decoding'):
                 proposals = bin_based_box3d_encoder.tf_decode(
                         foreground_pts, 0,
@@ -506,14 +505,14 @@ class RpnModel(model.DetectionModel):
             
         with tf.variable_scope('proposal_recall_iou'): 
             # reg recall & iou
-            recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = \
-                tf.py_func(box_util.compute_recall_iou, 
-                    [top_proposals, foreground_label_boxes_3d, foreground_label_cls],
-                    [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
+            recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
+                box_util.compute_recall_iou, 
+                [top_proposals, foreground_label_boxes_3d, foreground_label_cls],
+                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
             tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
             tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
-            tf.summary.scalar('iou_3d', tf.reduce_mean(iou3ds))
-            tf.summary.scalar('iou_2d', tf.reduce_mean(iou2ds))
+            tf.summary.histogram('iou_3d', iou3ds)
+            tf.summary.histogram('iou_2d', iou2ds)
         
         # Specify the tensors to evaluate
         predictions = dict()
@@ -655,7 +654,7 @@ class RpnModel(model.DetectionModel):
                 label_seg_sampled = label_seg[choices]
                 
                 foreground_point_num = label_seg_sampled[label_seg_sampled[:, 0] > 0].shape[0]
-                if foreground_point_num > 0:
+                if foreground_point_num > 0 or self._train_val_test == 'test':
                     break
             
             batch_pc_inputs.append(pc_input_sampled)
@@ -718,9 +717,10 @@ class RpnModel(model.DetectionModel):
                     with tf.control_dependencies(
                         [tf.assert_positive(num_foreground_pts)]):
                         bin_classification_loss /= num_foreground_pts
-                    #bin_classification_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                    #    bin_classification_loss / num_foreground_pts,
-                    #    0.0)
+                    #bin_classification_loss = tf.cond(
+                    #    tf.greater(num_foreground_pts, 0), 
+                    #    true_fn=lambda: bin_classification_loss / num_foreground_pts,
+                    #    false_fn=lambda: bin_classification_loss)
                     tf.summary.scalar('bin_classification', bin_classification_loss)
 
             with tf.variable_scope('regression'):
@@ -737,9 +737,10 @@ class RpnModel(model.DetectionModel):
                     with tf.control_dependencies(
                         [tf.assert_positive(num_foreground_pts)]):
                         regression_loss /= num_foreground_pts
-                    #regression_loss = tf.where(tf.greater(num_foreground_pts, 0), 
-                    #    regression_loss / num_foreground_pts,
-                    #    0.0)
+                    #regression_loss = tf.cond(
+                    #    tf.greater(num_foreground_pts, 0), 
+                    #    true_fn=lambda: regression_loss / num_foreground_pts,
+                    #    false_fn=lambda: regression_loss)
                     tf.summary.scalar('regression', regression_loss)
             
             with tf.variable_scope('rpn_loss'):

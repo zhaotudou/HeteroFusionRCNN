@@ -78,13 +78,12 @@ def train(model, train_config):
     # Create the train op
     with tf.variable_scope('train_op'):
         variables_to_train = None
-        if model_config.alternating_training_step == 3:
-            variables_to_train = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "pc_bottleneck")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "proposal_roi_pooling")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "anchor_predictor")
-        elif model_config.alternating_training_step == 4:
+        if model_config.alternating_training_step == 2:
             variables_to_train = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "avod_roi_pooling")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "box_predictor")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "local_spatial_feature")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "pc_encoder")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "classification_confidence")
+            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "bin_based_box_refinement")
         train_op = slim.learning.create_train_op(
             total_loss,
             training_optimizer,
@@ -144,7 +143,7 @@ def train(model, train_config):
                                        saver)
         if len(saver.last_checkpoints) > 0:
             checkpoint_to_restore = saver.last_checkpoints[-1]
-            if model_config.alternating_training_step in [3, 4]:
+            if model_config.alternating_training_step in [2]:
                 sess.run(init)
                 trainer_utils.load_model_weights(sess, checkpoint_to_restore)
             else:

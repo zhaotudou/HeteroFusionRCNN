@@ -109,7 +109,6 @@ def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
     iou3ds_gt_cls = np.zeros((B,n), dtype=np.float32)
     for b in range(B):
         sb_pred_boxes_3d = pred_boxes_3d[b] #(n,7)
-
         sb_label_boxes_3d = label_boxes_3d[b] #(p,7)
         sb_label_cls = label_cls[b] #(p,1)
         sb_label_segs = np.concatenate([sb_label_cls, sb_label_boxes_3d], axis=1)#(p,8)
@@ -128,12 +127,13 @@ def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
                 iou_3d, iou_2d = box3d_iou(sb_pred_boxes_8co[i], sb_label_boxes_8co[j])
                 sb_iou2ds[i][j] = iou_2d
                 sb_iou3ds[i][j] = iou_3d
-        recalls_50[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.5) / m
-        recalls_70[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.7) / m
-        iou2ds[b] = np.max(sb_iou2ds, axis=1)
-        iou3ds[b] = np.max(sb_iou3ds, axis=1)
-        iou3ds_gt_boxes[b] = sb_label_boxes_3d_uniq[np.argmax(sb_iou3ds, axis=1)]
-        iou3ds_gt_cls[b] = sb_label_cls_uniq[np.argmax(sb_iou3ds, axis=1)]
+        if m * n > 0:
+            recalls_50[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.5) / m
+            recalls_70[b] = np.sum(np.max(sb_iou3ds, axis=0) > 0.7) / m
+            iou2ds[b] = np.max(sb_iou2ds, axis=1)
+            iou3ds[b] = np.max(sb_iou3ds, axis=1)
+            iou3ds_gt_boxes[b] = sb_label_boxes_3d_uniq[np.argmax(sb_iou3ds, axis=1)]
+            iou3ds_gt_cls[b] = sb_label_cls_uniq[np.argmax(sb_iou3ds, axis=1)]
 
     return recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls
 

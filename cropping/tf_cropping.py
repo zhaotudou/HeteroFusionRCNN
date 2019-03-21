@@ -26,21 +26,23 @@ def pc_crop_and_sample(pts, fts, mask, boxes, box_ind, resize):
         non_empty_box_mask:  (N)         bool
     '''
     return cropping_module.pc_crop_and_sample(pts, fts, mask, boxes, box_ind, resize)
-## ops.NoGradient('PcCropAndSample')
+ops.NoGradient('PcCropAndSample')
+'''
 @ops.RegisterGradient("PcCropAndSample")
 def _PcCropAndSampleGrad(op, grad_crop_pts, grad_crop_fts, grad_crop_mask, grad_crop_ind, grad_non_empty_box):
     # assume grad_crop_ind == None
     pts = op.inputs[0]
     fts = op.inputs[1]
-    boxes = op.inputs[2]
-    box_ind = op.inputs[3]
+    boxes = op.inputs[3]
+    box_ind = op.inputs[4]
     
-    crop_ind = op.outputs[2]
+    crop_ind = op.outputs[3]
 
     #grad_pts = cropping_module.pc_crop_and_sample_grad_pts(pts, box_ind, crop_ind, grad_crop_pts)
     grad_fts = cropping_module.pc_crop_and_sample_grad_fts(fts, box_ind, crop_ind, grad_crop_fts)
     #grad_boxes = cropping_module.pc_crop_and_sample_grad_boxes(grad_crop_pts, grad_crop_fts)
     return [None, grad_fts, None, None, None]
+'''
 
 if __name__=='__main__':
 

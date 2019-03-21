@@ -45,7 +45,6 @@ def tf_decode(ref_pts, ref_theta,
         x = ref_pts[:,0] + (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * 0.5 * DELTA
         z = ref_pts[:,2] + (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * 0.5 * DELTA
         y = ref_pts[:,1] + res_y
-        
     theta = ref_theta + (tf.to_float(bin_theta) + 0.5) * DELTA_THETA - R + res_theta_norm * 0.5 * DELTA_THETA
     size = mean_sizes + res_size
     
@@ -92,7 +91,7 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
         dx = boxes_3d[:,:,0] - ref_pts[:,:,0]
         dy = boxes_3d[:,:,1] - ref_pts[:,:,1]
         dz = boxes_3d[:,:,2] - ref_pts[:,:,2]
-        dsize = boxes_3d[:,:,3:6] - mean_sizes 
+        dsize = boxes_3d[:,:,3:6] - mean_sizes
         dtheta = boxes_3d[:,:,6] - ref_theta
     elif ndims == 2:
         dx = boxes_3d[:,0] - ref_pts[:,0]
