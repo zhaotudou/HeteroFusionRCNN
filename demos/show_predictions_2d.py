@@ -49,7 +49,7 @@ def main():
 
     fig_size = (10, 6.1)
 
-    rpn_score_threshold = 0.001
+    rpn_score_threshold = 0.1
     avod_score_threshold = 0.1
 
     gt_classes = ['Car']
@@ -57,15 +57,15 @@ def main():
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = 'avod_cars'
+    checkpoint_name = 'rpn_cars_alt_1'
 
     # Drawing Toggles
-    draw_proposals_separate = False
+    draw_proposals_separate = True
     draw_overlaid = False
-    draw_predictions_separate = True
+    draw_predictions_separate = False
 
     # Show orientation for both GT and proposals/predictions
-    draw_orientations_on_prop = False
+    draw_orientations_on_prop = True
     draw_orientations_on_pred = False
 
     # Draw 2D bounding boxes

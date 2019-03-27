@@ -8,6 +8,7 @@ from __future__ import print_function
 import numpy as np
 from scipy.spatial import ConvexHull
 from avod.core import box_8c_encoder
+from avod.core import oriented_nms
 
 def polygon_clip(subjectPolygon, clipPolygon):
    """ Clip a polygon with another polygon.
@@ -57,10 +58,6 @@ def polygon_clip(subjectPolygon, clipPolygon):
           return None
    return(outputList)
 
-def poly_area(x,y):
-    """ Ref: http://stackoverflow.com/questions/24467972/calculate-area-of-polygon-given-x-y-coordinates """
-    return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
-
 def convex_hull_intersection(p1, p2):
     """ Compute area of two convex hull's intersection area.
         p1,p2 are a list of (x,y) tuples of hull vertices.
@@ -73,6 +70,17 @@ def convex_hull_intersection(p1, p2):
     else:
         return None, 0.0  
 
+def polygon_area(x,y):
+    """ Ref: http://stackoverflow.com/questions/24467972/calculate-area-of-polygon-given-x-y-coordinates """
+    return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
+
+def polygon_iou(rect1, rect2):
+    area1 = polygon_area(np.array(rect1)[:,0], np.array(rect1)[:,1])
+    area2 = polygon_area(np.array(rect2)[:,0], np.array(rect2)[:,1])
+    inter, inter_area = convex_hull_intersection(rect1, rect2)
+    iou_2d = inter_area/(area1+area2-inter_area)
+    return iou_2d, inter_area
+
 def box3d_vol(corners):
     ''' corners: (8,3) no assumption on axis direction '''
     a = np.sqrt(np.sum((corners[0,:] - corners[1,:])**2))
@@ -84,6 +92,31 @@ def is_clockwise(p):
     x = p[:,0]
     y = p[:,1]
     return np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)) > 0
+
+def box3d_iou(corners1, corners2):
+    ''' Compute 3D bounding box IoU. for Oriented BBox
+
+    Input:
+        corners1: numpy array (8,3), assume up direction is negative Y
+        corners2: numpy array (8,3), assume up direction is negative Y
+    Output:
+        iou: 3D bounding box IoU
+        iou_2d: bird's eye view 2D bounding box IoU
+
+    todo (rqi): add more description on corner points' orders.
+    '''
+    # corner points are in counter clockwise order
+    rect1 = [(corners1[i,0], corners1[i,2]) for i in range(3,-1,-1)]
+    rect2 = [(corners2[i,0], corners2[i,2]) for i in range(3,-1,-1)] 
+    #iou_2d, inter_area = polygon_iou(rect1, rect2)
+    iou_2d, inter_area = oriented_nms.polygon_iou(rect1, rect2)
+    ymax = min(corners1[0,1], corners2[0,1])
+    ymin = max(corners1[4,1], corners2[4,1])
+    inter_vol = inter_area * max(0.0, ymax-ymin)
+    vol1 = box3d_vol(corners1)
+    vol2 = box3d_vol(corners2)
+    iou = inter_vol / (vol1 + vol2 - inter_vol)
+    return iou, iou_2d
 
 def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
     '''
@@ -137,37 +170,9 @@ def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
 
     return recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls
 
-def box3d_iou(corners1, corners2):
-    ''' Compute 3D bounding box IoU.
-
-    Input:
-        corners1: numpy array (8,3), assume up direction is negative Y
-        corners2: numpy array (8,3), assume up direction is negative Y
-    Output:
-        iou: 3D bounding box IoU
-        iou_2d: bird's eye view 2D bounding box IoU
-
-    todo (rqi): add more description on corner points' orders.
-    '''
-    # corner points are in counter clockwise order
-    rect1 = [(corners1[i,0], corners1[i,2]) for i in range(3,-1,-1)]
-    rect2 = [(corners2[i,0], corners2[i,2]) for i in range(3,-1,-1)] 
-    area1 = poly_area(np.array(rect1)[:,0], np.array(rect1)[:,1])
-    area2 = poly_area(np.array(rect2)[:,0], np.array(rect2)[:,1])
-    inter, inter_area = convex_hull_intersection(rect1, rect2)
-    iou_2d = inter_area/(area1+area2-inter_area)
-    ymax = min(corners1[0,1], corners2[0,1])
-    ymin = max(corners1[4,1], corners2[4,1])
-    inter_vol = inter_area * max(0.0, ymax-ymin)
-    vol1 = box3d_vol(corners1)
-    vol2 = box3d_vol(corners2)
-    iou = inter_vol / (vol1 + vol2 - inter_vol)
-    return iou, iou_2d
-
-
 def get_iou(bb1, bb2):
     """
-    Calculate the Intersection over Union (IoU) of two 2D bounding boxes.
+    Calculate the Intersection over Union (IoU) of two 2D bounding boxes. for Axis-Aligned BBox
 
     Parameters
     ----------
@@ -216,7 +221,7 @@ def get_iou(bb1, bb2):
     return iou
 
 def box2d_iou(box1, box2):
-    ''' Compute 2D bounding box IoU.
+    ''' Compute 2D bounding box IoU. for Axis-Aligned BBox
 
     Input:
         box1: tuple of (xmin,ymin,xmax,ymax)
@@ -227,9 +232,8 @@ def box2d_iou(box1, box2):
     return get_iou({'x1':box1[0], 'y1':box1[1], 'x2':box1[2], 'y2':box1[3]}, \
         {'x1':box2[0], 'y1':box2[1], 'x2':box2[2], 'y2':box2[3]})
 
-
 if __name__=='__main__':
-
+    '''
     # Function for polygon ploting
     import matplotlib
     from matplotlib.patches import Polygon
@@ -260,7 +264,7 @@ if __name__=='__main__':
     sub_poly = [(0,0),(300,0),(300,300),(0,300)]
     clip_poly = [(150,150),(300,300),(150,450),(0,300)] 
     inter_poly = polygon_clip(sub_poly, clip_poly)
-    print(poly_area(np.array(inter_poly)[:,0], np.array(inter_poly)[:,1]))
+    print(polygon_area(np.array(inter_poly)[:,0], np.array(inter_poly)[:,1]))
     
     # Test convex hull interaction function
     rect1 = [(50,0),(50,300),(300,300),(300,0)]
@@ -269,7 +273,7 @@ if __name__=='__main__':
     inter, area = convex_hull_intersection(rect1, rect2)
     print((inter, area))
     if inter is not None:
-        print(poly_area(np.array(inter)[:,0], np.array(inter)[:,1]))
+        print(polygon_area(np.array(inter)[:,0], np.array(inter)[:,1]))
     
     print('------------------')
     rect1 = [(0.30026005199835404, 8.9408694211408424), \
@@ -285,3 +289,10 @@ if __name__=='__main__':
     plot_polys([rect1, rect2])
     inter, area = convex_hull_intersection(rect1, rect2)
     print((inter, area))
+    '''
+    import timeit
+    rect1 = [(1,1), (0,1), (0,0), (1,0)]
+    rect2 = [(1.25,2.25), (0.25,1.25), (1.25,0.25), (2.25,1.25)]
+    print(timeit.timeit('polygon_iou(rect1, rect2)', number=10000, globals=globals())) 
+    print(timeit.timeit('oriented_nms.polygon_iou(rect1, rect2)', number=10000, 
+            setup="from avod.core import oriented_nms", globals=globals())) 

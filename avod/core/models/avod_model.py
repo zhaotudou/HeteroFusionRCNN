@@ -6,6 +6,7 @@ from avod.builders import feature_extractor_builder
 from avod.builders import avod_fc_layers_builder
 from avod.builders import avod_loss_builder
 from avod.core import anchor_projector
+from avod.core import box_3d_projector
 from avod.core import anchor_encoder
 from avod.core import box_3d_encoder
 from avod.core import box_8c_encoder
@@ -16,6 +17,7 @@ from avod.core import pointfly as pf
 from avod.core import box_list
 from avod.core import box_list_ops
 from avod.core import box_util
+from avod.core import oriented_nms
 
 from avod.core import model
 from avod.core import losses
@@ -435,7 +437,7 @@ class AvodModel(model.DetectionModel):
                         res_y, res_size, mean_sizes,
                         self.S, self.DELTA, self.R, self.DELTA_THETA) #(N,7)
 
-            oriented_NMS = False
+            oriented_NMS = True
             print("oriented_NMS = " + str(oriented_NMS))
             # BEV projection
             with tf.variable_scope('bev_projection'):
@@ -457,17 +459,11 @@ class AvodModel(model.DetectionModel):
                 cls_scores = tf.boolean_mask(cls_scores, non_empty_box_mask) #(N')
                 cls_softmax = tf.boolean_mask(cls_softmax, non_empty_box_mask) #(N')
                 if oriented_NMS: 
-                    nms_masks = tf.py_func(
+                    nms_indices = tf.py_func(
                         oriented_nms.nms,
                         [bev_boxes, cls_scores, 
                         tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
-                        tf.bool)
-                
-                    top_boxes_3d = tf.reshape(
-                                        tf.boolean_mask(reg_boxes_3d, nms_masks),
-                                        [-1, 7])
-                    top_cls_softmax = tf.boolean_mask(cls_softmax, nms_masks)
-                    top_cls_scores = tf.boolean_mask(cls_scores, nms_masks)
+                        tf.int32)
                 else:
                     nms_indices = tf.image.non_max_suppression(
                         bev_boxes_tf_order,
@@ -475,9 +471,9 @@ class AvodModel(model.DetectionModel):
                         max_output_size=self._nms_size,
                         iou_threshold=self._nms_iou_thresh)
                     
-                    top_boxes_3d = tf.gather(reg_boxes_3d, nms_indices)
-                    top_cls_softmax = tf.gather(cls_softmax, nms_indices)
-                    top_cls_scores = tf.gather(cls_scores, nms_indices)
+                top_boxes_3d = tf.gather(reg_boxes_3d, nms_indices)
+                top_cls_softmax = tf.gather(cls_softmax, nms_indices)
+                top_cls_scores = tf.gather(cls_scores, nms_indices)
                 
                 tf.summary.histogram('top_cls_scores', top_cls_scores)
         

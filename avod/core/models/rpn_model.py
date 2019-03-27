@@ -366,7 +366,7 @@ class RpnModel(model.DetectionModel):
                         res_y, res_size, mean_sizes,
                         self.S, self.DELTA, self.R, self.DELTA_THETA) # (B,p,7)
             
-            oriented_NMS = False
+            oriented_NMS = True
             print("oriented_NMS = " + str(oriented_NMS))
             # BEV projection
             with tf.variable_scope('bev_projection'):
@@ -406,26 +406,27 @@ class RpnModel(model.DetectionModel):
             with tf.variable_scope('bev_nms'):
                 if oriented_NMS: 
                     def single_batch_oriented_nms_fn(args):
-                        (single_batch_boxes, single_batch_scores) = args
-                        single_batch_nms_mask = tf.py_func(
+                        (single_batch_boxes, single_batch_scores, single_batch_proposals) = args
+                        single_batch_nms_indices = tf.py_func(
                             oriented_nms.nms,
                             [single_batch_boxes, single_batch_scores, 
                             tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
-                            tf.bool)
-                        return single_batch_nms_mask
+                            tf.int32)
 
-                    nms_masks = tf.map_fn(
+                        single_batch_top_proposals = tf.gather(single_batch_proposals,
+                                                               single_batch_nms_indices)
+                        single_batch_top_scores = tf.gather(single_batch_scores,
+                                                            single_batch_nms_indices)
+                        return [single_batch_top_proposals, 
+                                single_batch_top_scores,
+                                single_batch_nms_indices]
+
+                    (top_proposals, top_objectness_scores, nms_indices) = tf.map_fn(
                         single_batch_oriented_nms_fn,
-                        elems=[bev_proposal_boxes, foreground_scores],
-                        dtype=tf.bool)
-                    nms_masks = tf.reshape(nms_masks, [self._batch_size, -1])
-                
-                    top_proposals = tf.reshape(
-                                        tf.boolean_mask(proposals, nms_masks),
-                                        [self._batch_size, -1, 7])
-                    top_objectness_scores = tf.reshape(
-                                            tf.boolean_mask(foreground_scores, nms_masks),
-                                            [self._batch_size, -1])
+                        elems=[bev_proposal_boxes, foreground_scores, proposals],
+                        dtype=[tf.float32, tf.float32, tf.int32])
+                    top_proposals = tf.reshape(top_proposals, [self._batch_size, -1, 7])
+                    top_objectness_scores = tf.reshape(top_objectness_scores, [self._batch_size, -1])
                 else:
                     def single_batch_nms_fn(args):
                         (single_batch_boxes_tf_order, single_batch_scores, single_batch_proposals) = args

@@ -36,9 +36,6 @@ def np_box_3d_to_box_8co(box_3d):
                |
                |y_axis
     
-    
-    
-    
     """
 
     format_checker.check_box_3d_format(box_3d)
