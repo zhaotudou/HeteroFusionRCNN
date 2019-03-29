@@ -202,7 +202,7 @@ class Evaluator:
             feed_dict_time = time.time() - start_time
 
             # Get sample name from model
-            sample_name = self.model.samples_info[0]
+            sample_name = self.model._samples_info[0]
 
             # File paths for saving proposals and predictions
             rpn_file_path = prop_score_predictions_dir + "/{}.txt".format(
@@ -220,6 +220,9 @@ class Evaluator:
             print("Step {}: {} / {}, Inference on sample {}".format(
                 global_step, num_valid_samples, num_samples,
                 sample_name))
+
+            if os.path.exists(rpn_file_path):
+                continue
 
             # Do predictions, loss calculations, and summaries
             if validation:

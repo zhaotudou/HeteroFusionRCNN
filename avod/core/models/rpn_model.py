@@ -125,7 +125,7 @@ class RpnModel(model.DetectionModel):
         self._placeholder_inputs = dict()
 
         # Information about the current sample
-        self.samples_info = []
+        self._samples_info = []
 
         # Dataset
         self.dataset = dataset
@@ -310,6 +310,13 @@ class RpnModel(model.DetectionModel):
                     tf.boolean_mask(seg_scores, foreground_mask),
                     [self._batch_size, -1]) #(B,p)
         
+            self._foreground_label_cls = tf.reshape(
+                tf.boolean_mask(label_cls, foreground_mask), 
+                [self._batch_size, -1, 1])  #(B,p,1)
+            self._foreground_label_boxes_3d = tf.reshape(
+                tf.boolean_mask(label_box_3d, foreground_mask), 
+                [self._batch_size, -1, 7])  #(B,p,7)
+        
         # branch-2: bin-based 3D proposal generation
         #########################################
         with tf.variable_scope('bin_based_rpn'):
@@ -366,91 +373,82 @@ class RpnModel(model.DetectionModel):
                         res_y, res_size, mean_sizes,
                         self.S, self.DELTA, self.R, self.DELTA_THETA) # (B,p,7)
             
-            oriented_NMS = True
-            print("oriented_NMS = " + str(oriented_NMS))
-            # BEV projection
-            with tf.variable_scope('bev_projection'):
-                if oriented_NMS: 
+            # NMS
+            if not (self._config.alternating_training_step == 2 and self._train_val_test in ['train', 'val']):
+                oriented_NMS = True
+                print("oriented_NMS = " + str(oriented_NMS))
+                # BEV projection
+                with tf.variable_scope('bev_projection'):
                     def single_batch_project_to_bev_fn(single_batch_proposals):
-                        single_batch_bev_proposal_boxes, _ = tf.py_func(
-                            box_3d_projector.project_to_bev,
-                            [single_batch_proposals, tf.constant(self._bev_extents)],
-                            (tf.float32, tf.float32))
+                        if oriented_NMS:
+                            single_batch_bev_proposal_boxes, _ = tf.py_func(
+                                box_3d_projector.project_to_bev,
+                                [single_batch_proposals, tf.constant(self._bev_extents)],
+                                (tf.float32, tf.float32))
+                        else:
+                            # ortho rotating
+                            single_batch_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
+                                                            single_batch_proposals)
+                            single_batch_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
+                                                                    single_batch_proposal_anchors, 
+                                                                    self._bev_extents)
+                            single_batch_bev_proposal_boxes = anchor_projector.reorder_projected_boxes(
+                                                                single_batch_bev_proposal_boxes)
                         return single_batch_bev_proposal_boxes
             
                     bev_proposal_boxes = tf.map_fn(
                         single_batch_project_to_bev_fn,
                         elems=proposals,
                         dtype=tf.float32)
-                    bev_proposal_boxes = tf.reshape(bev_proposal_boxes, 
-                                                    [self._batch_size, -1, 4, 2])
-                else:
-                    def single_batch_project_to_bev_fn(single_batch_proposals):
-                        # ortho rotating
-                        single_batch_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
-                                                        single_batch_proposals)
-                        single_batch_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
-                                                                single_batch_proposal_anchors, 
-                                                                self._bev_extents)
-                        single_batch_bev_proposal_boxes_tf_order = anchor_projector.reorder_projected_boxes(
-                                single_batch_bev_proposal_boxes)
-
-                        return single_batch_bev_proposal_boxes_tf_order
-
-                    bev_proposal_boxes_tf_order = tf.map_fn(
-                        single_batch_project_to_bev_fn,
-                        elems=proposals,
-                        dtype=tf.float32)
-            
-            # bev-NMS and ignore multiclass
-            with tf.variable_scope('bev_nms'):
-                if oriented_NMS: 
-                    def single_batch_oriented_nms_fn(args):
+                    if oriented_NMS:
+                        bev_proposal_boxes = tf.reshape(bev_proposal_boxes, 
+                                                        [self._batch_size, -1, 4, 2])
+                # BEV-NMS and ignore multiclass
+                with tf.variable_scope('bev_nms'):
+                    def single_batch_nms_fn(args):
                         (single_batch_boxes, single_batch_scores, single_batch_proposals) = args
-                        single_batch_nms_indices = tf.py_func(
-                            oriented_nms.nms,
-                            [single_batch_boxes, single_batch_scores, 
-                            tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
-                            tf.int32)
-
+                        if oriented_NMS: 
+                            single_batch_nms_indices = tf.py_func(
+                                oriented_nms.nms,
+                                [single_batch_boxes, single_batch_scores, 
+                                tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
+                                tf.int32)
+                        else:
+                            single_batch_nms_indices = tf.image.non_max_suppression(
+                                single_batch_boxes_tf_order,
+                                single_batch_scores,
+                                max_output_size=self._nms_size,
+                                iou_threshold=self._nms_iou_thresh)
+                        
                         single_batch_top_proposals = tf.gather(single_batch_proposals,
                                                                single_batch_nms_indices)
                         single_batch_top_scores = tf.gather(single_batch_scores,
                                                             single_batch_nms_indices)
-                        return [single_batch_top_proposals, 
-                                single_batch_top_scores,
-                                single_batch_nms_indices]
+                        return [single_batch_top_proposals, single_batch_top_scores]
 
-                    (top_proposals, top_objectness_scores, nms_indices) = tf.map_fn(
-                        single_batch_oriented_nms_fn,
+                    (top_proposals, top_objectness_scores) = tf.map_fn(
+                        single_batch_nms_fn,
                         elems=[bev_proposal_boxes, foreground_scores, proposals],
-                        dtype=[tf.float32, tf.float32, tf.int32])
+                        dtype=[tf.float32, tf.float32])
                     top_proposals = tf.reshape(top_proposals, [self._batch_size, -1, 7])
                     top_objectness_scores = tf.reshape(top_objectness_scores, [self._batch_size, -1])
-                else:
-                    def single_batch_nms_fn(args):
-                        (single_batch_boxes_tf_order, single_batch_scores, single_batch_proposals) = args
-                        
-                        single_batch_nms_indices = tf.image.non_max_suppression(
-                            single_batch_boxes_tf_order,
-                            single_batch_scores,
-                            max_output_size=self._nms_size,
-                            iou_threshold=self._nms_iou_thresh)
-                        
-                        single_batch_top_proposals = tf.gather(single_batch_proposals,
-                                                               single_batch_nms_indices)
-                        single_batch_top_scores = tf.gather(single_batch_scores,
-                                                            single_batch_nms_indices)
-                        return [single_batch_top_proposals, 
-                                single_batch_top_scores,
-                                single_batch_nms_indices]
-
-                    (top_proposals, top_objectness_scores, nms_indices) = tf.map_fn(
-                        single_batch_nms_fn,
-                        elems=[bev_proposal_boxes_tf_order, foreground_scores, proposals],
-                        dtype=[tf.float32, tf.float32, tf.int32])
                 
-                tf.summary.histogram('top_objectness_scores', top_objectness_scores)
+                    tf.summary.histogram('top_objectness_scores', top_objectness_scores)
+            
+                with tf.variable_scope('proposal_recall_iou'): 
+                    # top proposal recall & iou
+                    recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
+                        box_util.compute_recall_iou, 
+                        [top_proposals, self._foreground_label_boxes_3d, self._foreground_label_cls],
+                        [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
+                    tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
+                    tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
+                    tf.summary.histogram('iou_3d', iou3ds)
+                    tf.summary.histogram('iou_2d', iou2ds)
+            else:
+                # no NMS applied, don't care whatever top_* is
+                top_proposals = proposals
+                top_objectness_scores = foreground_scores
 
         ######################################################
         # GTs for the loss function & metrics
@@ -477,16 +475,9 @@ class RpnModel(model.DetectionModel):
         
         # Ground Truth Box Cls/Reg
         with tf.variable_scope('box_cls_reg_gt'):
-            foreground_label_cls = tf.reshape(
-                tf.boolean_mask(label_cls, foreground_mask), 
-                [self._batch_size, -1, 1])  #(B,p,1)
-            foreground_label_boxes_3d = tf.reshape(
-                tf.boolean_mask(label_box_3d, foreground_mask), 
-                [self._batch_size, -1, 7])  #(B,p,7)
-           
             (bin_x_gt, res_x_gt, bin_z_gt, res_z_gt, 
              bin_theta_gt, res_theta_gt, res_y_gt, res_size_gt) = bin_based_box3d_encoder.tf_encode(
-                foreground_pts, 0, foreground_label_boxes_3d, mean_sizes,
+                foreground_pts, 0, self._foreground_label_boxes_3d, mean_sizes,
                 self.S, self.DELTA, self.R, self.DELTA_THETA)
             
             bin_x_gt_one_hot = tf.one_hot(
@@ -503,21 +494,11 @@ class RpnModel(model.DetectionModel):
                 tf.to_int64(bin_theta_gt), depth=int(2 * self.R / self.DELTA_THETA),
                 on_value=1.0,
                 off_value=0.0)
-            
-        with tf.variable_scope('proposal_recall_iou'): 
-            # reg recall & iou
-            recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
-                box_util.compute_recall_iou, 
-                [top_proposals, foreground_label_boxes_3d, foreground_label_cls],
-                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
-            tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
-            tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
-            tf.summary.histogram('iou_3d', iou3ds)
-            tf.summary.histogram('iou_2d', iou2ds)
         
-        # Specify the tensors to evaluate
+        ######################################################
+        # Prediction Dict
+        ######################################################
         predictions = dict()
-
         if self._train_val_test in ['train', 'val']:
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_SEG_GT] = segs_gt_one_hot
@@ -540,9 +521,9 @@ class RpnModel(model.DetectionModel):
             predictions[self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
 
             # Top Proposal IoU & corresponding GT boxes & cls, for next stage positive/negative sample selection use
-            predictions[self.PRED_TOP_PROPOSAL_IOU3DS] = iou3ds
-            predictions[self.PRED_TOP_PROPOSAL_GT_BOXES] = iou3ds_gt_boxes
-            predictions[self.PRED_TOP_PROPOSAL_GT_CLS] = iou3ds_gt_cls
+            #predictions[self.PRED_TOP_PROPOSAL_IOU3DS] = iou3ds
+            #predictions[self.PRED_TOP_PROPOSAL_GT_BOXES] = iou3ds_gt_boxes
+            #predictions[self.PRED_TOP_PROPOSAL_GT_CLS] = iou3ds_gt_cls
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
@@ -631,7 +612,7 @@ class RpnModel(model.DetectionModel):
         batch_pc_inputs = []
         batch_label_segs = []
         #batch_label_boxes_3d = []
-        self.samples_info.clear()
+        self._samples_info.clear()
         for sample in samples:
             # Network input data
             # image_input = sample.get(constants.KEY_IMAGE_INPUT)
@@ -663,7 +644,7 @@ class RpnModel(model.DetectionModel):
             
             # Temporary sample info for debugging
             sample_name = sample.get(constants.KEY_SAMPLE_NAME)
-            self.samples_info.append(sample_name)
+            self._samples_info.append(sample_name)
 
         # this is a list to match the explicit shape for the placeholder
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]

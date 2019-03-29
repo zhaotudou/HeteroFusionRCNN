@@ -308,7 +308,7 @@ class KittiDataset:
         return sample_dicts
 
     def load_proposals(self, sample_name):
-        proposals = np.loadtxt(self.get_proposal_path(sample_name))[:, 0:7]
+        proposals = np.loadtxt(self.get_proposal_path(sample_name)).reshape(-1,8)[:, 0:7]
         return proposals
 
     def _shuffle_samples(self):
