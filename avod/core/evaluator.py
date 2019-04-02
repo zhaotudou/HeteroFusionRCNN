@@ -25,12 +25,10 @@ KEY_SUM_RPN_TOTAL_LOSS = 'sum_rpn_total_loss'
 KEY_SUM_RPN_SEG_ACC = 'sum_rpn_seg_accuracy'
 
 KEY_SUM_AVOD_CLS_LOSS = 'sum_avod_cls_loss'
+KEY_SUM_AVOD_BIN_CLS_LOSS = 'sum_avod_bin_cls_loss'
 KEY_SUM_AVOD_REG_LOSS = 'sum_avod_reg_loss'
 KEY_SUM_AVOD_TOTAL_LOSS = 'sum_avod_total_loss'
-KEY_SUM_AVOD_LOC_LOSS = 'sum_avod_loc_loss'
-KEY_SUM_AVOD_ANG_LOSS = 'sum_avod_ang_loss'
 KEY_SUM_AVOD_CLS_ACC = 'sum_avod_cls_accuracy'
-KEY_NUM_VALID_REG_SAMPLES = 'num_valid_reg_samples'
 
 
 class Evaluator:
@@ -165,23 +163,10 @@ class Evaluator:
         trainer_utils.create_dir(prop_score_predictions_dir)
 
         if self.full_model:
-            # Make sure the box representation is valid
-            box_rep = self.model_config.avod_config.avod_box_representation
-            if box_rep not in ['box_3d', 'box_8c', 'box_8co',
-                               'box_4c', 'box_4ca']:
-                raise ValueError('Invalid box representation {}.'.
-                                 format(box_rep))
-
             avod_predictions_dir = predictions_base_dir + \
                 "/final_predictions_and_scores/{}/{}".format(
                     data_split, global_step)
             trainer_utils.create_dir(avod_predictions_dir)
-
-            if box_rep in ['box_8c', 'box_8co', 'box_4c', 'box_4ca']:
-                avod_box_corners_dir = predictions_base_dir + \
-                    "/final_boxes_{}_and_scores/{}/{}".format(
-                        box_rep, data_split, global_step)
-                trainer_utils.create_dir(avod_box_corners_dir)
 
             # Avod average losses dictionary
             eval_avod_losses = self._create_avod_losses_dict()
@@ -212,10 +197,6 @@ class Evaluator:
                 avod_file_path = avod_predictions_dir + \
                     "/{}.txt".format(sample_name)
 
-                if box_rep in ['box_8c', 'box_8co', 'box_4c', 'box_4ca']:
-                    avod_box_corners_file_path = avod_box_corners_dir + \
-                        '/{}.txt'.format(sample_name)
-
             num_valid_samples += 1
             print("Step {}: {} / {}, Inference on sample {}".format(
                 global_step, num_valid_samples, num_samples,
@@ -242,17 +223,16 @@ class Evaluator:
                                         self._total_loss],
                                        feed_dict=feed_dict)
 
-                if self.model_config.alternating_training_step != 2:
-                    rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
-                    rpn_bin_classification_loss = eval_losses[RpnModel.LOSS_RPN_BIN_CLASSIFICATION]
-                    rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
+                rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
+                rpn_bin_classification_loss = eval_losses[RpnModel.LOSS_RPN_BIN_CLASSIFICATION]
+                rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
 
-                    self._update_rpn_losses(eval_rpn_losses,
-                                            rpn_segmentation_loss,
-                                            rpn_bin_classification_loss,
-                                            rpn_regression_loss,
-                                            eval_total_loss,
-                                            global_step)
+                self._update_rpn_losses(eval_rpn_losses,
+                                        rpn_segmentation_loss,
+                                        rpn_bin_classification_loss,
+                                        rpn_regression_loss,
+                                        eval_total_loss,
+                                        global_step)
 
                 # Save proposals
                 proposals_and_scores = \
@@ -262,24 +242,15 @@ class Evaluator:
                 if self.full_model:
                     # Save predictions
                     predictions_and_scores = \
-                        self.get_avod_predicted_boxes_3d_and_scores(predictions,
-                                                                    box_rep)
+                        self.get_avod_predicted_boxes_3d_and_scores(predictions)
                     np.savetxt(avod_file_path, predictions_and_scores, fmt='%.5f')
 
-                    if box_rep in ['box_3d', 'box_4ca']:
-                        self._update_avod_box_cls_loc_orient_losses(
-                            eval_avod_losses,
-                            eval_losses,
-                            eval_total_loss,
-                            global_step)
-
-                    elif box_rep in ['box_8c', 'box_8co', 'box_4c']:
-                        self._update_avod_box_cls_loc_losses(
-                            eval_avod_losses,
-                            eval_losses,
-                            eval_total_loss,
-                            global_step)
-
+                    self._update_avod_box_cls_loc_losses(
+                        eval_avod_losses,
+                        eval_losses,
+                        eval_total_loss,
+                        global_step)
+                    '''
                     if box_rep != 'box_3d':
                         # Save box corners for all box reps
                         # except for box_3d which is not a corner rep
@@ -289,7 +260,7 @@ class Evaluator:
                         np.savetxt(avod_box_corners_file_path,
                                    predicted_box_corners_and_scores,
                                    fmt='%.5f')
-
+                    '''
                 # Calculate accuracies
                 self.get_cls_accuracy(predictions,
                                       eval_avod_losses if self.full_model else None,
@@ -313,8 +284,7 @@ class Evaluator:
                 proposals_and_scores = \
                     self.get_rpn_proposals_and_scores(predictions)
                 predictions_and_scores = \
-                    self.get_avod_predicted_boxes_3d_and_scores(predictions,
-                                                                box_rep)
+                    self.get_avod_predicted_boxes_3d_and_scores(predictions)
 
                 np.savetxt(rpn_file_path, proposals_and_scores, fmt='%.3f')
                 np.savetxt(avod_file_path, predictions_and_scores, fmt='%.5f')
@@ -331,8 +301,7 @@ class Evaluator:
                     eval_avod_losses,
                     num_valid_samples,
                     global_step,
-                    predictions_base_dir,
-                    box_rep=box_rep)
+                    predictions_base_dir)
 
                 # Kitti native evaluation, do this during validation
                 # and when running Avod model.
@@ -491,7 +460,7 @@ class Evaluator:
         if self.full_model:
             # The full model total_loss will be the sum of Rpn and Avod
             # so calculate the total rpn loss instead
-            rpn_total_loss = rpn_objectness_loss + rpn_regression_loss
+            rpn_total_loss = rpn_segmentation_loss + rpn_bin_classification_loss +  rpn_regression_loss
         else:
             rpn_total_loss = eval_total_loss
 
@@ -527,92 +496,6 @@ class Evaluator:
         eval_rpn_losses.update({KEY_SUM_RPN_TOTAL_LOSS:
                                 sum_rpn_total_loss})
 
-    def _update_avod_box_cls_loc_orient_losses(self,
-                                               eval_avod_losses,
-                                               eval_losses,
-                                               eval_total_loss,
-                                               global_step):
-        """Helper function to calculate the evaluation average losses.
-
-        Note: This function evaluates classification, regression/offsets
-            and orientation losses.
-
-        Args:
-            eval_avod_losses: A dictionary containing all the average
-                losses.
-            eval_losses: A dictionary containing the current evaluation
-                losses.
-            eval_total_loss: A scalar loss of model total loss.
-            global_step: Global step at which the metrics are computed.
-        """
-        # Get the loss sums from the losses dict
-        sum_avod_cls_loss = eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS]
-        sum_avod_reg_loss = eval_avod_losses[KEY_SUM_AVOD_REG_LOSS]
-        sum_avod_total_loss = eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS]
-
-        # for the full model, we expect a total of 4 losses
-        assert (len(eval_losses) > 2)
-        avod_classification_loss = \
-            eval_losses[AvodModel.LOSS_FINAL_CLASSIFICATION]
-        avod_regression_loss = \
-            eval_losses[AvodModel.LOSS_FINAL_REGRESSION]
-
-        avod_localization_loss = \
-            eval_losses[AvodModel.LOSS_FINAL_LOCALIZATION]
-        avod_orientation_loss = \
-            eval_losses[AvodModel.LOSS_FINAL_ORIENTATION]
-
-        sum_avod_cls_loss += avod_classification_loss
-        sum_avod_reg_loss += avod_regression_loss
-        sum_avod_total_loss += eval_total_loss
-
-        # update the losses sums
-        eval_avod_losses.update({KEY_SUM_AVOD_CLS_LOSS:
-                                 sum_avod_cls_loss})
-
-        eval_avod_losses.update({KEY_SUM_AVOD_REG_LOSS:
-                                 sum_avod_reg_loss})
-
-        eval_avod_losses.update({KEY_SUM_AVOD_TOTAL_LOSS:
-                                 sum_avod_total_loss})
-
-        # Only add localization and orientation losses if valid
-        # (greater than 0)
-        if (avod_localization_loss > 0.0) and \
-                (avod_orientation_loss > 0.0):
-
-            sum_avod_loc_loss = eval_avod_losses[KEY_SUM_AVOD_LOC_LOSS]
-            sum_avod_ang_loss = eval_avod_losses[KEY_SUM_AVOD_ANG_LOSS]
-
-            sum_avod_loc_loss += avod_localization_loss
-            sum_avod_ang_loss += avod_orientation_loss
-
-            eval_avod_losses.update({KEY_SUM_AVOD_LOC_LOSS:
-                                     sum_avod_loc_loss})
-            eval_avod_losses.update({KEY_SUM_AVOD_ANG_LOSS:
-                                     sum_avod_ang_loss})
-            num_valid_regression_samples = \
-                eval_avod_losses[KEY_NUM_VALID_REG_SAMPLES]
-            num_valid_regression_samples += 1
-            eval_avod_losses.update({KEY_NUM_VALID_REG_SAMPLES:
-                                     num_valid_regression_samples})
-
-        print("Step {}: Eval AVOD Loss: "
-              "classification {:.3f}, "
-              "regression {:.3f}, "
-              "total {:.3f}".format(
-                global_step,
-                avod_classification_loss,
-                avod_regression_loss,
-                eval_total_loss))
-
-        print("Step {}: Eval AVOD Loss: "
-              "localization {:.3f}, "
-              "orientation {:.3f}".format(
-                global_step,
-                avod_localization_loss,
-                avod_orientation_loss))
-
     def _update_avod_box_cls_loc_losses(self,
                                         eval_avod_losses,
                                         eval_losses,
@@ -633,25 +516,29 @@ class Evaluator:
         """
 
         sum_avod_cls_loss = eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS]
+        sum_avod_bin_cls_loss = eval_avod_losses[KEY_SUM_AVOD_BIN_CLS_LOSS]
         sum_avod_reg_loss = eval_avod_losses[KEY_SUM_AVOD_REG_LOSS]
         sum_avod_total_loss = eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS]
 
         # for the full model, we expect a total of 4 losses
-        assert (len(eval_losses) > 2)
+        assert (len(eval_losses) > 3)
         avod_classification_loss = \
             eval_losses[AvodModel.LOSS_FINAL_CLASSIFICATION]
+        avod_bin_classification_loss = \
+            eval_losses[AvodModel.LOSS_FINAL_BIN_CLASSIFICATION]
         avod_regression_loss = \
             eval_losses[AvodModel.LOSS_FINAL_REGRESSION]
 
-        avod_localization_loss = \
-            eval_losses[AvodModel.LOSS_FINAL_LOCALIZATION]
-
         sum_avod_cls_loss += avod_classification_loss
+        sum_avod_bin_cls_loss += avod_bin_classification_loss
         sum_avod_reg_loss += avod_regression_loss
         sum_avod_total_loss += eval_total_loss
 
         eval_avod_losses.update({KEY_SUM_AVOD_CLS_LOSS:
                                  sum_avod_cls_loss})
+
+        eval_avod_losses.update({KEY_SUM_AVOD_BIN_CLS_LOSS:
+                                 sum_avod_bin_cls_loss})
 
         eval_avod_losses.update({KEY_SUM_AVOD_REG_LOSS:
                                  sum_avod_reg_loss})
@@ -659,35 +546,16 @@ class Evaluator:
         eval_avod_losses.update({KEY_SUM_AVOD_TOTAL_LOSS:
                                  sum_avod_total_loss})
 
-        # Only add localization and orientation losses if valid
-        # (greater than 0)
-        if (avod_localization_loss > 0.0):
-
-            sum_avod_loc_loss = eval_avod_losses[KEY_SUM_AVOD_LOC_LOSS]
-
-            sum_avod_loc_loss += avod_localization_loss
-
-            eval_avod_losses.update({KEY_SUM_AVOD_LOC_LOSS:
-                                     sum_avod_loc_loss})
-            num_valid_regression_samples = \
-                eval_avod_losses[KEY_NUM_VALID_REG_SAMPLES]
-            num_valid_regression_samples += 1
-            eval_avod_losses.update({KEY_NUM_VALID_REG_SAMPLES:
-                                     num_valid_regression_samples})
-
         print("Step {}: Eval AVOD Loss: "
               "classification {:.3f}, "
+              "bin_classification {:.3f}, "
               "regression {:.3f}, "
               "total {:.3f}".format(
                 global_step,
                 avod_classification_loss,
+                avod_bin_classification_loss,
                 avod_regression_loss,
                 eval_total_loss))
-
-        print("Step {}: Eval AVOD Loss: "
-              "localization {:.3f}, ".format(
-                global_step,
-                avod_localization_loss))
 
     def save_proposal_losses_results(self,
                                      eval_rpn_losses,
@@ -743,8 +611,7 @@ class Evaluator:
                                        eval_avod_losses,
                                        num_valid_samples,
                                        global_step,
-                                       predictions_base_dir,
-                                       box_rep):
+                                       predictions_base_dir):
         """Helper function to save the AVOD loss evaluation results.
 
         Args:
@@ -757,116 +624,48 @@ class Evaluator:
                 one of 'box_3d', 'box_8c' etc.
         """
         sum_avod_cls_loss = eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS]
+        sum_avod_bin_cls_loss = eval_avod_losses[KEY_SUM_AVOD_BIN_CLS_LOSS]
         sum_avod_reg_loss = eval_avod_losses[KEY_SUM_AVOD_REG_LOSS]
         sum_avod_total_loss = eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS]
-
-        sum_avod_loc_loss = eval_avod_losses[KEY_SUM_AVOD_LOC_LOSS]
-        sum_avod_ang_loss = eval_avod_losses[KEY_SUM_AVOD_ANG_LOSS]
 
         sum_avod_cls_accuracy = \
             eval_avod_losses[KEY_SUM_AVOD_CLS_ACC]
 
-        num_valid_regression_samples = \
-            eval_avod_losses[KEY_NUM_VALID_REG_SAMPLES]
-
         avg_avod_cls_loss = sum_avod_cls_loss / num_valid_samples
+        avg_avod_bin_cls_loss = sum_avod_bin_cls_loss / num_valid_samples
         avg_avod_reg_loss = sum_avod_reg_loss / num_valid_samples
         avg_avod_total_loss = sum_avod_total_loss / num_valid_samples
 
-        if num_valid_regression_samples > 0:
-            avg_avod_loc_loss = \
-                sum_avod_loc_loss / num_valid_regression_samples
-
-            if box_rep in ['box_3d', 'box_4ca']:
-                avg_avod_ang_loss = \
-                    sum_avod_ang_loss / num_valid_regression_samples
-        else:
-            avg_avod_loc_loss = 0
-            avg_avod_ang_loss = 0
-
         avg_avod_cls_accuracy = sum_avod_cls_accuracy / num_valid_samples
-
-        # Write summaries
-        summary_utils.add_scalar_summary(
-            'avod_losses/classification/classification',
-            avg_avod_cls_loss,
-            self.summary_writer, global_step)
-        summary_utils.add_scalar_summary(
-            'avod_losses/regression/regression_total',
-            avg_avod_reg_loss,
-            self.summary_writer, global_step)
-
-        summary_utils.add_scalar_summary(
-            'avod_losses/regression/localization',
-            avg_avod_loc_loss,
-            self.summary_writer, global_step)
-        if box_rep in ['box_3d', 'box_4ca']:
-            summary_utils.add_scalar_summary(
-                'avod_losses/regression/orientation',
-                avg_avod_ang_loss,
-                self.summary_writer, global_step)
 
         print("Step {}: Average AVOD Losses: "
               "cls {:.5f}, "
+              "bin_cls {:.5f}, "
               "reg {:.5f}, "
               "total {:.5f} ".format(
                 global_step,
                 avg_avod_cls_loss,
+                avg_avod_bin_cls_loss,
                 avg_avod_reg_loss,
                 avg_avod_total_loss,
                   ))
-
-        if box_rep in ['box_3d', 'box_4ca']:
-            print("Step {} Average AVOD Losses: "
-                  "loc {:.5f} "
-                  "ang {:.5f}".format(
-                    global_step,
-                    avg_avod_loc_loss,
-                    avg_avod_ang_loss,
-                      ))
-        elif box_rep in ['box_8c', 'box_8co', 'box_4c']:
-            print("Step {} Average AVOD Losses: "
-                  "loc {:.5f} ".format(
-                    global_step,
-                    avg_avod_loc_loss
-                      ))
-        else:
-            raise NotImplementedError('Print average loss not implemented')
 
         print("Step {}: Average Classification Accuracy: {} ".format(
             global_step, avg_avod_cls_accuracy))
 
         # Append to end of file
         avg_loss_file_path = predictions_base_dir + '/avod_avg_losses.csv'
-        if box_rep in ['box_3d', 'box_4ca']:
-            with open(avg_loss_file_path, 'ba') as fp:
-                np.savetxt(fp,
-                           [np.hstack(
-                            [global_step,
-                                avg_avod_cls_loss,
-                                avg_avod_reg_loss,
-                                avg_avod_total_loss,
-
-                                avg_avod_loc_loss,
-                                avg_avod_ang_loss,
-                             ]
-                            )],
-                           fmt='%d, %.5f, %.5f, %.5f, %.5f, %.5f')
-        elif box_rep in ['box_8c', 'box_8co', 'box_4c']:
-            with open(avg_loss_file_path, 'ba') as fp:
-                np.savetxt(fp,
-                           [np.hstack(
-                            [global_step,
-                                avg_avod_cls_loss,
-                                avg_avod_reg_loss,
-                                avg_avod_total_loss,
-
-                                avg_avod_loc_loss,
-                             ]
-                            )],
-                           fmt='%d, %.5f, %.5f, %.5f, %.5f')
-        else:
-            raise NotImplementedError('Saving losses not implemented')
+        with open(avg_loss_file_path, 'ba') as fp:
+            np.savetxt(fp,
+                       [np.hstack(
+                        [global_step,
+                            avg_avod_cls_loss,
+                            avg_avod_bin_cls_loss,
+                            avg_avod_reg_loss,
+                            avg_avod_total_loss,
+                         ]
+                        )],
+                       fmt='%d, %.5f, %.5f, %.5f, %.5f')
 
         avg_acc_file_path = predictions_base_dir + '/avod_avg_cls_acc.csv'
         with open(avg_acc_file_path, 'ba') as fp:
@@ -882,17 +681,11 @@ class Evaluator:
         eval_avod_losses = dict()
         # Initialize Avod average losses
         eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS] = 0
+        eval_avod_losses[KEY_SUM_AVOD_BIN_CLS_LOSS] = 0
         eval_avod_losses[KEY_SUM_AVOD_REG_LOSS] = 0
         eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS] = 0
 
-        eval_avod_losses[KEY_SUM_AVOD_LOC_LOSS] = 0
-        eval_avod_losses[KEY_SUM_AVOD_ANG_LOSS] = 0
-
         eval_avod_losses[KEY_SUM_AVOD_CLS_ACC] = 0
-
-        # Number of samples that got regressed because
-        # they were classified correctly
-        eval_avod_losses[KEY_NUM_VALID_REG_SAMPLES] = 0
 
         return eval_avod_losses
 
@@ -984,7 +777,7 @@ class Evaluator:
 
         if self.full_model:
             classification_pred = \
-                predictions[AvodModel.PRED_MB_CLASSIFICATION_SOFTMAX]
+                predictions[AvodModel.PRED_MB_CLASSIFICATION_LOGITS]
             classification_gt = \
                 predictions[AvodModel.PRED_MB_CLASSIFICATIONS_GT]
             classification_accuracy = self.calculate_cls_accuracy(
@@ -1035,8 +828,7 @@ class Evaluator:
 
         return proposals_and_scores
 
-    def get_avod_predicted_boxes_3d_and_scores(self, predictions,
-                                               box_rep):
+    def get_avod_predicted_boxes_3d_and_scores(self, predictions):
         """Returns the predictions and scores stacked for saving to file.
 
         Args:
@@ -1050,79 +842,10 @@ class Evaluator:
                 boxes, orientations, scores, and types.
         """
 
-        if box_rep == 'box_3d':
-            # Convert anchors + orientation to box_3d
-            final_pred_anchors = predictions[
-                AvodModel.PRED_TOP_PREDICTION_ANCHORS]
-            final_pred_orientations = predictions[
-                AvodModel.PRED_TOP_ORIENTATIONS]
-
-            final_pred_boxes_3d = box_3d_encoder.anchors_to_box_3d(
-                final_pred_anchors, fix_lw=True)
-            final_pred_boxes_3d[:, 6] = final_pred_orientations
-
-        elif box_rep in ['box_8c', 'box_8co', 'box_4c']:
-            # Predictions are in box_3d format already
-            final_pred_boxes_3d = predictions[
-                AvodModel.PRED_TOP_PREDICTION_BOXES_3D]
-
-        elif box_rep == 'box_4ca':
-            # boxes_3d from boxes_4c
-            final_pred_boxes_3d = predictions[
-                AvodModel.PRED_TOP_PREDICTION_BOXES_3D]
-
-            # Predicted orientation from layers
-            final_pred_orientations = predictions[
-                AvodModel.PRED_TOP_ORIENTATIONS]
-
-            # Calculate difference between box_3d and predicted angle
-            ang_diff = final_pred_boxes_3d[:, 6] - final_pred_orientations
-
-            # Wrap differences between -pi and pi
-            two_pi = 2 * np.pi
-            ang_diff[ang_diff < -np.pi] += two_pi
-            ang_diff[ang_diff > np.pi] -= two_pi
-
-            def swap_boxes_3d_lw(boxes_3d):
-                boxes_3d_lengths = np.copy(boxes_3d[:, 3])
-                boxes_3d[:, 3] = boxes_3d[:, 4]
-                boxes_3d[:, 4] = boxes_3d_lengths
-                return boxes_3d
-
-            pi_0_25 = 0.25 * np.pi
-            pi_0_50 = 0.50 * np.pi
-            pi_0_75 = 0.75 * np.pi
-
-            # Rotate 90 degrees if difference between pi/4 and 3/4 pi
-            rot_pos_90_indices = np.logical_and(pi_0_25 < ang_diff,
-                                                ang_diff < pi_0_75)
-            final_pred_boxes_3d[rot_pos_90_indices] = \
-                swap_boxes_3d_lw(final_pred_boxes_3d[rot_pos_90_indices])
-            final_pred_boxes_3d[rot_pos_90_indices, 6] += pi_0_50
-
-            # Rotate -90 degrees if difference between -pi/4 and -3/4 pi
-            rot_neg_90_indices = np.logical_and(-pi_0_25 > ang_diff,
-                                                ang_diff > -pi_0_75)
-            final_pred_boxes_3d[rot_neg_90_indices] = \
-                swap_boxes_3d_lw(final_pred_boxes_3d[rot_neg_90_indices])
-            final_pred_boxes_3d[rot_neg_90_indices, 6] -= pi_0_50
-
-            # Flip angles if abs difference if greater than or equal to 135
-            # degrees
-            swap_indices = np.abs(ang_diff) >= pi_0_75
-            final_pred_boxes_3d[swap_indices, 6] += np.pi
-
-            # Wrap to -pi, pi
-            above_pi_indices = final_pred_boxes_3d[:, 6] > np.pi
-            final_pred_boxes_3d[above_pi_indices, 6] -= two_pi
-
-        else:
-            raise NotImplementedError('Parse predictions not implemented for',
-                                      box_rep)
+        final_pred_boxes_3d = predictions[AvodModel.PRED_TOP_PREDICTION_BOXES_3D]
 
         # Append score and class index (object type)
-        final_pred_softmax = predictions[
-            AvodModel.PRED_TOP_CLASSIFICATION_SOFTMAX]
+        final_pred_softmax = predictions[AvodModel.PRED_TOP_PREDICTION_SOFTMAX]
 
         # Find max class score index
         not_bkg_scores = final_pred_softmax[:, 1:]

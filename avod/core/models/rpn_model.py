@@ -374,69 +374,77 @@ class RpnModel(model.DetectionModel):
                         self.S, self.DELTA, self.R, self.DELTA_THETA) # (B,p,7)
             
             # NMS
-            if not (self._config.alternating_training_step == 2 and self._train_val_test in ['train', 'val']):
+            if self._train_val_test == 'train' or (self._config.alternating_training_step == 2 and self._train_val_test == 'val'):
+                # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
+                # to speed up training, non-oriented-NMS is applied, as we don't care what top_* is 
+                # during training that much except for rawly recall/iou metrics computing
+                oriented_NMS = False
+            else:
                 oriented_NMS = True
-                print("oriented_NMS = " + str(oriented_NMS))
-                # BEV projection
-                with tf.variable_scope('bev_projection'):
-                    def single_batch_project_to_bev_fn(single_batch_proposals):
-                        if oriented_NMS:
-                            single_batch_bev_proposal_boxes, _ = tf.py_func(
-                                box_3d_projector.project_to_bev,
-                                [single_batch_proposals, tf.constant(self._bev_extents)],
-                                (tf.float32, tf.float32))
-                        else:
-                            # ortho rotating
-                            single_batch_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
-                                                            single_batch_proposals)
-                            single_batch_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
-                                                                    single_batch_proposal_anchors, 
-                                                                    self._bev_extents)
-                            single_batch_bev_proposal_boxes = anchor_projector.reorder_projected_boxes(
-                                                                single_batch_bev_proposal_boxes)
-                        return single_batch_bev_proposal_boxes
-            
-                    bev_proposal_boxes = tf.map_fn(
-                        single_batch_project_to_bev_fn,
-                        elems=proposals,
-                        dtype=tf.float32)
+            print("oriented_NMS = " + str(oriented_NMS))
+            # BEV projection
+            with tf.variable_scope('bev_projection'):
+                def single_batch_project_to_bev_fn(single_batch_proposals):
                     if oriented_NMS:
-                        bev_proposal_boxes = tf.reshape(bev_proposal_boxes, 
-                                                        [self._batch_size, -1, 4, 2])
-                # BEV-NMS and ignore multiclass
-                with tf.variable_scope('bev_nms'):
-                    def single_batch_nms_fn(args):
-                        (single_batch_boxes, single_batch_scores, single_batch_proposals) = args
-                        if oriented_NMS: 
-                            single_batch_nms_indices = tf.py_func(
-                                oriented_nms.nms,
-                                [single_batch_boxes, single_batch_scores, 
-                                tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
-                                tf.int32)
-                        else:
-                            single_batch_nms_indices = tf.image.non_max_suppression(
-                                single_batch_boxes_tf_order,
-                                single_batch_scores,
-                                max_output_size=self._nms_size,
-                                iou_threshold=self._nms_iou_thresh)
-                        
-                        single_batch_top_proposals = tf.gather(single_batch_proposals,
-                                                               single_batch_nms_indices)
-                        single_batch_top_scores = tf.gather(single_batch_scores,
-                                                            single_batch_nms_indices)
-                        return [single_batch_top_proposals, single_batch_top_scores]
+                        single_batch_bev_proposal_boxes, _ = tf.py_func(
+                            box_3d_projector.project_to_bev,
+                            [single_batch_proposals, tf.constant(self._bev_extents)],
+                            (tf.float32, tf.float32))
+                    else:
+                        # ortho rotating
+                        single_batch_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
+                                                        single_batch_proposals)
+                        single_batch_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
+                                                                single_batch_proposal_anchors, 
+                                                                self._bev_extents)
+                        single_batch_bev_proposal_boxes = anchor_projector.reorder_projected_boxes(
+                                                            single_batch_bev_proposal_boxes)
+                    return single_batch_bev_proposal_boxes
+        
+                bev_proposal_boxes = tf.map_fn(
+                    single_batch_project_to_bev_fn,
+                    elems=proposals,
+                    dtype=tf.float32)
+                if oriented_NMS:
+                    bev_proposal_boxes = tf.reshape(bev_proposal_boxes, 
+                                                    [self._batch_size, -1, 4, 2])
+            # BEV-NMS and ignore multiclass
+            with tf.variable_scope('bev_nms'):
+                def single_batch_nms_fn(args):
+                    (single_batch_boxes, single_batch_scores, single_batch_proposals) = args
+                    if oriented_NMS: 
+                        single_batch_nms_indices = tf.py_func(
+                            oriented_nms.nms,
+                            [single_batch_boxes, single_batch_scores, 
+                            tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
+                            tf.int32)
+                    else:
+                        single_batch_nms_indices = tf.image.non_max_suppression(
+                            single_batch_boxes,
+                            single_batch_scores,
+                            max_output_size=self._nms_size,
+                            iou_threshold=self._nms_iou_thresh)
+                    
+                    single_batch_top_proposals = tf.gather(single_batch_proposals,
+                                                           single_batch_nms_indices)
+                    single_batch_top_scores = tf.gather(single_batch_scores,
+                                                        single_batch_nms_indices)
+                    return [single_batch_top_proposals, single_batch_top_scores]
 
-                    (top_proposals, top_objectness_scores) = tf.map_fn(
-                        single_batch_nms_fn,
-                        elems=[bev_proposal_boxes, foreground_scores, proposals],
-                        dtype=[tf.float32, tf.float32])
-                    top_proposals = tf.reshape(top_proposals, [self._batch_size, -1, 7])
-                    top_objectness_scores = tf.reshape(top_objectness_scores, [self._batch_size, -1])
-                
-                    tf.summary.histogram('top_objectness_scores', top_objectness_scores)
+                (top_proposals, top_objectness_scores) = tf.map_fn(
+                    single_batch_nms_fn,
+                    elems=[bev_proposal_boxes, foreground_scores, proposals],
+                    dtype=[tf.float32, tf.float32])
+                top_proposals = tf.reshape(top_proposals, [self._batch_size, -1, 7])
+                top_objectness_scores = tf.reshape(top_objectness_scores, [self._batch_size, -1])
             
+                tf.summary.histogram('top_objectness_scores', top_objectness_scores)
+            
+            if self._config.alternating_training_step != 2: 
                 with tf.variable_scope('proposal_recall_iou'): 
-                    # top proposal recall & iou
+                    # top proposal recall & iou, 
+                    # during training, due to using non-oriented-nms, this values maybe much smaller 
+                    # than that of using oriented-NMS which will be computed during training full AVOD model
                     recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
                         box_util.compute_recall_iou, 
                         [top_proposals, self._foreground_label_boxes_3d, self._foreground_label_cls],
@@ -445,10 +453,6 @@ class RpnModel(model.DetectionModel):
                     tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
                     tf.summary.histogram('iou_3d', iou3ds)
                     tf.summary.histogram('iou_2d', iou2ds)
-            else:
-                # no NMS applied, don't care whatever top_* is
-                top_proposals = proposals
-                top_objectness_scores = foreground_scores
 
         ######################################################
         # GTs for the loss function & metrics
@@ -471,7 +475,7 @@ class RpnModel(model.DetectionModel):
             num_in_correct = tf.reduce_sum(tf.cast(seg_in_correct, tf.float32))
             num_total_pts = num_correct + num_in_correct
             seg_accuracy = num_correct / num_total_pts
-            tf.summary.scalar('segmentation accuracy', seg_accuracy)
+            tf.summary.scalar('segmentation_accuracy', seg_accuracy)
         
         # Ground Truth Box Cls/Reg
         with tf.variable_scope('box_cls_reg_gt'):
@@ -519,11 +523,6 @@ class RpnModel(model.DetectionModel):
             # Proposals after nms
             predictions[self.PRED_TOP_PROPOSALS] = top_proposals
             predictions[self.PRED_TOP_OBJECTNESS_SOFTMAX] = top_objectness_scores
-
-            # Top Proposal IoU & corresponding GT boxes & cls, for next stage positive/negative sample selection use
-            #predictions[self.PRED_TOP_PROPOSAL_IOU3DS] = iou3ds
-            #predictions[self.PRED_TOP_PROPOSAL_GT_BOXES] = iou3ds_gt_boxes
-            #predictions[self.PRED_TOP_PROPOSAL_GT_CLS] = iou3ds_gt_cls
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax

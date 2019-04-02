@@ -146,6 +146,8 @@ class AvodModel(model.DetectionModel):
         # Inputs to network placeholders
         self._placeholder_inputs = dict()
 
+        self._samples_info = []
+
     def _add_placeholder(self, dtype, shape, name):
         placeholder = tf.placeholder(dtype, shape, name)
         self.placeholders[name] = placeholder
@@ -156,7 +158,7 @@ class AvodModel(model.DetectionModel):
         Keys are defined as self.PL_*.
         """
         with tf.variable_scope('pl_proposals'):
-             self._add_placeholder(tf.float32, [None, None, 7], self.PL_PROPOSALS)
+             self._add_placeholder(tf.float32, [self._batch_size, None, 7], self.PL_PROPOSALS)
     
     def _canonical_transform(self, pts, boxes_3d):
         '''
@@ -267,28 +269,25 @@ class AvodModel(model.DetectionModel):
         # Share the same prediction dict as RPN
         prediction_dict = rpn_model.build()
         
-        if self._config.alternating_training_step == 2:
+        if self._train_val_test in ['train', 'val']:
             self._set_up_input_pls()
             top_proposals = self.placeholders[self.PL_PROPOSALS]
-            top_proposals = tf.reshape(top_proposals, [self._batch_size, -1, 7])
-            with tf.variable_scope('proposal_recall_iou'): 
-                # top proposal recall & iou
-                recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
-                    box_util.compute_recall_iou, 
-                    [top_proposals, rpn_model._foreground_label_boxes_3d, rpn_model._foreground_label_cls],
-                    [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
-                tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
-                tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
-                tf.summary.histogram('iou_3d', iou3ds)
-                tf.summary.histogram('iou_2d', iou2ds)
-                top_proposal_iou3ds = tf.reshape(iou3ds, [-1])
-                top_proposal_gt_cls = tf.reshape(iou3ds_gt_cls, [-1])
-                top_proposal_gt_boxes = tf.reshape(iou3ds_gt_boxes, [-1,7])
         else:
             top_proposals = prediction_dict[RpnModel.PRED_TOP_PROPOSALS]#(B,n,7)
-            #top_proposal_iou3ds = tf.reshape(prediction_dict[RpnModel.PRED_TOP_PROPOSAL_IOU3DS], [-1])
-            #top_proposal_gt_cls = tf.reshape(prediction_dict[RpnModel.PRED_TOP_PROPOSAL_GT_CLS], [-1])
-            #top_proposal_gt_boxes = tf.reshape(prediction_dict[RpnModel.PRED_TOP_PROPOSAL_GT_BOXES], [-1,7])
+        
+        with tf.variable_scope('proposal_recall_iou'): 
+            # Top Proposal Recall/IoU & corresponding GT boxes & cls, for positive/negative sample selection usage
+            recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
+                box_util.compute_recall_iou, 
+                [top_proposals, rpn_model._foreground_label_boxes_3d, rpn_model._foreground_label_cls],
+                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
+            tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
+            tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
+            tf.summary.histogram('iou_3d', iou3ds)
+            tf.summary.histogram('iou_2d', iou2ds)
+            top_proposal_iou3ds = tf.reshape(iou3ds, [-1])
+            top_proposal_gt_cls = tf.reshape(iou3ds_gt_cls, [-1])
+            top_proposal_gt_boxes = tf.reshape(iou3ds_gt_boxes, [-1,7])
         foreground_mask = prediction_dict[RpnModel.PRED_FG_MASK] #(B,P)
 
         # Expand proposals' size
@@ -548,8 +547,10 @@ class AvodModel(model.DetectionModel):
             recalls_50, recalls_70, iou2ds, iou3ds, _, _ = tf.py_func(
                 box_util.compute_recall_iou, 
                 [tf.expand_dims(top_boxes_3d, 0), 
-                 tf.expand_dims(top_proposal_gt_boxes, 0),
-                 tf.reshape(top_proposal_gt_cls, [1,-1,1])],
+                 rpn_model._foreground_label_boxes_3d,
+                 rpn_model._foreground_label_cls],
+                 #tf.expand_dims(top_proposal_gt_boxes, 0),
+                 #tf.reshape(top_proposal_gt_cls, [1,-1,1])],
                 [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
             tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
             tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
@@ -622,8 +623,9 @@ class AvodModel(model.DetectionModel):
     
     def create_feed_dict(self, batch_size=1):
         feed_dict = self._rpn_model.create_feed_dict(batch_size)
+        self._samples_info = self._rpn_model._samples_info
         batch_proposals = []
-        for sample_name in self._rpn_model._samples_info:
+        for sample_name in self._samples_info:
             proposal = self.dataset.load_proposals(sample_name)
             batch_proposals.append(proposal)
         self._placeholder_inputs[self.PL_PROPOSALS] = np.asarray(batch_proposals)
@@ -632,9 +634,6 @@ class AvodModel(model.DetectionModel):
         return feed_dict
 
     def loss(self, prediction_dict):
-        loss_dict = {}
-        rpn_loss = tf.constant(0.0)
-        
         # cls Mini batch preds & gt
         cls_logits = prediction_dict[self.PRED_MB_CLASSIFICATION_LOGITS]
         cls_gt_one_hot = prediction_dict[self.PRED_MB_CLASSIFICATIONS_GT]
@@ -709,11 +708,10 @@ class AvodModel(model.DetectionModel):
             with tf.variable_scope('brn_loss'):
                 brn_loss = box_classification_loss + bin_classification_loss + regression_loss
         
+        loss_dict, rpn_loss = self._rpn_model.loss(prediction_dict)
+        
         loss_dict.update({self.LOSS_FINAL_CLASSIFICATION: box_classification_loss})
         loss_dict.update({self.LOSS_FINAL_BIN_CLASSIFICATION: bin_classification_loss})
         loss_dict.update({self.LOSS_FINAL_REGRESSION: regression_loss})
 
-        with tf.variable_scope('total_loss'):
-            total_loss = rpn_loss + brn_loss
-
-        return loss_dict, total_loss
+        return loss_dict, brn_loss

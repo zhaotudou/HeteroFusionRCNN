@@ -57,16 +57,16 @@ def main():
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = 'rpn_cars_alt_1'
+    checkpoint_name = 'avod_cars_alt_2'
 
     # Drawing Toggles
-    draw_proposals_separate = True
+    draw_proposals_separate = False
     draw_overlaid = False
-    draw_predictions_separate = False
+    draw_predictions_separate = True
 
     # Show orientation for both GT and proposals/predictions
-    draw_orientations_on_prop = True
-    draw_orientations_on_pred = False
+    draw_orientations_on_prop = False
+    draw_orientations_on_pred = True
 
     # Draw 2D bounding boxes
     draw_projected_2d_boxes = True
@@ -171,7 +171,7 @@ def main():
                 continue
             print('Sample {}: Drawing proposals'.format(sample_name))
 
-            proposals_and_scores = np.loadtxt(proposals_file_path)
+            proposals_and_scores = np.loadtxt(proposals_file_path).reshape(-1, 8)
 
             proposal_boxes_3d = proposals_and_scores[:, 0:7]
             proposal_scores = proposals_and_scores[:, 7]
@@ -200,7 +200,7 @@ def main():
             predictions_and_scores = np.loadtxt(
                 predictions_and_scores_dir +
                 "/{}/{}.txt".format(global_step,
-                                    sample_name))
+                                    sample_name)).reshape(-1, 9)
 
             prediction_boxes_3d = predictions_and_scores[:, 0:7]
             prediction_scores = predictions_and_scores[:, 7]
