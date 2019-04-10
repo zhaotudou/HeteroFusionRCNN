@@ -24,7 +24,8 @@ class RpnModel(model.DetectionModel):
     ##############################
     # Keys for Placeholders
     ##############################
-    PL_PC_INPUTS = 'pc_inputs_pl'
+    PL_PC_INPUT = 'pc_input_pl'
+    PL_IMG_INPUT = 'img_input_pl'
     PL_LABEL_SEGS = 'label_segs_pl'
 
     ##############################
@@ -83,9 +84,9 @@ class RpnModel(model.DetectionModel):
         self._pc_sample_pts_variance = input_config.pc_sample_pts_variance
         self._pc_sample_pts_clip = input_config.pc_sample_pts_clip
 
-        #self._img_pixel_size = np.asarray([input_config.img_dims_h,
-        #                                   input_config.img_dims_w])
-        #self._img_depth = input_config.img_depth
+        self._img_pixel_size = np.asarray([input_config.img_dims_h,
+                                           input_config.img_dims_w])
+        self._img_depth = input_config.img_depth
 
         # Rpn config
         rpn_config = self._config.rpn_config
@@ -113,11 +114,9 @@ class RpnModel(model.DetectionModel):
         self._pc_feature_extractor = \
             feature_extractor_builder.get_extractor(
                 self._config.layers_config.pc_feature_extractor)
-        '''
         self._img_feature_extractor = \
             feature_extractor_builder.get_extractor(
                 self._config.layers_config.img_feature_extractor)
-        '''
         # Network input placeholders
         self.placeholders = dict()
 
@@ -139,19 +138,17 @@ class RpnModel(model.DetectionModel):
         self._anchor_generator = \
             grid_anchor_3d_generator.GridAnchor3dGenerator()
         
-        #self._path_drop_probabilities = self._config.path_drop_probabilities
+        self._path_drop_probabilities = self._config.path_drop_probabilities
         self._train_on_all_samples = self._config.train_on_all_samples
         self._eval_all_samples = self._config.eval_all_samples
         # Overwrite the dataset's variable with the config
         self.dataset.train_on_all_samples = self._train_on_all_samples
         self.dataset.eval_all_samples = self._eval_all_samples
-        '''
         if self._train_val_test in ["val", "test"]:
             # Disable path-drop, this should already be disabled inside the
             # evaluator, but just in case.
             self._path_drop_probabilities[0] = 1.0
             self._path_drop_probabilities[1] = 1.0
-        '''
 
     def _add_placeholder(self, dtype, shape, name):
         placeholder = tf.placeholder(dtype, shape, name)
@@ -167,7 +164,7 @@ class RpnModel(model.DetectionModel):
             pc_input_placeholder = self._add_placeholder(
                                         tf.float32, 
                                         (self._batch_size, None, self._pc_data_dim),
-                                        self.PL_PC_INPUTS) #(B,P',3)
+                                        self.PL_PC_INPUT) #(B,P',3)
 
             self._pc_pts_preprocessed, self._pc_fts_preprocessed = \
                 self._pc_feature_extractor.preprocess_input(
@@ -175,6 +172,17 @@ class RpnModel(model.DetectionModel):
                     self._config.input_config,
                     self._is_training)
         
+        with tf.variable_scope('img_input'):
+            # Take variable size input images
+            img_input_placeholder = self._add_placeholder(
+                tf.float32,
+                [self._batch_size, None, None, self._img_depth],
+                self.PL_IMG_INPUT)
+
+            self._img_preprocessed = \
+                self._img_feature_extractor.preprocess_input(
+                    img_input_placeholder, self._img_pixel_size)
+
         with tf.variable_scope('pl_labels'):
             self._add_placeholder(tf.float32, [self._batch_size, None, 8], 
                                   self.PL_LABEL_SEGS) #(B,P',8)
@@ -184,13 +192,19 @@ class RpnModel(model.DetectionModel):
         bottlenecks as member variables.
         """
 
-        #self.bev_feature_maps, self.bev_end_points = \
         self._pc_pts, self._pc_fts = \
             self._pc_feature_extractor.build(
                 self._pc_pts_preprocessed,
                 self._pc_fts_preprocessed,
                 self._is_training) #(B,P,3) (B,P,C), P maybe equal to P'
         tf.summary.histogram('pc_fts', self._pc_fts)
+        
+        self._img_fts, _ = \
+            self._img_feature_extractor.build(
+                self._img_preprocessed,
+                self._img_pixel_size,
+                self._is_training) #(B,H,W,C1)
+
 
     def _gather_residuals(self, res_x_norms, res_z_norms, res_theta_norms,
                                 bin_x, bin_z, bin_theta):
@@ -650,7 +664,7 @@ class RpnModel(model.DetectionModel):
 
         # Fill in the rest
         # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
-        self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(batch_pc_inputs)
+        self._placeholder_inputs[self.PL_PC_INPUT] = np.asarray(batch_pc_inputs)
         self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(batch_label_segs)
         
         # Sample Info

@@ -4,7 +4,7 @@ package avod.protos;
 message LayersConfig {
 
     required FeatureExtractor pc_feature_extractor = 1;
-    //required FeatureExtractor img_feature_extractor = 2;
+    required FeatureExtractor img_feature_extractor = 2;
 
     required RPNLayersConfig rpn_config = 3;
     required AVODLayersConfig avod_config = 4;

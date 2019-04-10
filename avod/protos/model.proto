@@ -62,10 +62,11 @@ message InputConfig {
 
     optional float pc_sample_pts_variance = 6 [default = 0.125];
     optional float pc_sample_pts_clip = 7 [default = 0.25];
+    
     // Image dimensions
-    //optional int32 img_dims_h = 4 [default = 480];
-    //optional int32 img_dims_w = 5 [default = 1590];
-    //optional int32 img_depth = 6 [default = 3];
+    optional int32 img_dims_h = 8 [default = 360];
+    optional int32 img_dims_w = 9 [default = 1200];
+    optional int32 img_depth = 10 [default = 3];
 }
 
 message RpnConfig {
