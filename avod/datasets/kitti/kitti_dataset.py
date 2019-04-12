@@ -260,14 +260,14 @@ class KittiDataset:
                         ((self.train_val_test == 'train' and (not self.train_on_all_samples)) or
                         (self.train_val_test == 'val' and (not self.eval_all_samples))):
                     continue
-
+                '''
                 obj_labels = obj_utils.read_labels(self.label_dir,
                                                    int(sample_name))
                 # Only use objects that match dataset classes
                 obj_labels = self.kitti_utils.filter_labels(obj_labels)
-
+                '''
             else:
-                obj_labels = None
+                #obj_labels = None
                 label_seg = np.zeros((16384, 8), dtype=np.float32)
 
             img_idx = int(sample_name)
@@ -308,7 +308,7 @@ class KittiDataset:
         return sample_dicts
 
     def load_proposals(self, sample_name):
-        proposals = np.loadtxt(self.get_proposal_path(sample_name)).reshape(-1,8)[:, 0:7]
+        proposals = np.loadtxt(self.get_proposal_path(sample_name)).reshape((-1,8))[:, 0:7]
         return proposals
 
     def _shuffle_samples(self):

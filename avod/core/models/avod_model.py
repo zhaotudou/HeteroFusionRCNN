@@ -73,9 +73,12 @@ class AvodModel(model.DetectionModel):
         super(AvodModel, self).__init__(model_config)
 
         self._batch_size = batch_size
-        # TODO: batch_size must be 1 
+        # batch_size must be 1. Indeed, what really cares is mini_batch_size, i.e. num proposals
         if self._batch_size != 1:
             raise ValueError('Invalid batch_size, should be 1')
+        # Create the RpnModel
+        self._rpn_model = RpnModel(model_config, train_val_test, dataset, batch_size)
+
         self.dataset = dataset
         self._bev_extents = self.dataset.kitti_utils.bev_extents
         self._cluster_sizes, _ = self.dataset.get_cluster_info()
@@ -129,9 +132,6 @@ class AvodModel(model.DetectionModel):
         if self._box_rep not in ['box_3d', 'box_8c', 'box_8co',
                                  'box_4c', 'box_4ca']:
             raise ValueError('Invalid box representation', self._box_rep)
-
-        # Create the RpnModel
-        self._rpn_model = RpnModel(model_config, train_val_test, dataset, batch_size)
 
         if train_val_test not in ["train", "val", "test"]:
             raise ValueError('Invalid train_val_test value,'
@@ -269,11 +269,8 @@ class AvodModel(model.DetectionModel):
         # Share the same prediction dict as RPN
         prediction_dict = rpn_model.build()
         
-        if self._train_val_test in ['train', 'val']:
-            self._set_up_input_pls()
-            top_proposals = self.placeholders[self.PL_PROPOSALS]
-        else:
-            top_proposals = prediction_dict[RpnModel.PRED_TOP_PROPOSALS]#(B,n,7)
+        self._set_up_input_pls()
+        top_proposals = self.placeholders[self.PL_PROPOSALS]
         
         with tf.variable_scope('proposal_recall_iou'): 
             # Top Proposal Recall/IoU & corresponding GT boxes & cls, for positive/negative sample selection usage
@@ -622,6 +619,10 @@ class AvodModel(model.DetectionModel):
         return bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size
     
     def create_feed_dict(self, batch_size=1):
+        
+        if batch_size != self._batch_size :
+            raise ValueError('feed batch_size must equal to model build batch_size')
+
         feed_dict = self._rpn_model.create_feed_dict(batch_size)
         self._samples_info = self._rpn_model._samples_info
         batch_proposals = []
