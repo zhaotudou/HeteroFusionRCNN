@@ -282,6 +282,7 @@ class RpnModel(model.DetectionModel):
         # branch-1: foreground point segmentation
         #########################################
         with tf.variable_scope('foreground_segmentation'):
+            #TODO: num seg class should be 2 (bkg/fg), not num_classes + 1
             seg_logits = pf.dense(self._pc_fts, self.num_classes + 1, 'seg_logits', 
                                   self._is_training, with_bn=False, activation=None)    #(B,P,K)
             seg_softmax = tf.nn.softmax(seg_logits, name='seg_softmax') #(B,P,K)
@@ -421,10 +422,14 @@ class RpnModel(model.DetectionModel):
                         sb_nms_indices = tf.pad(sb_nms_indices, 
                                             [[0, self._nms_size-tf.shape(sb_nms_indices)[0]]], mode='CONSTANT', constant_values=-1)
                         return sb_nms_indices
-
+                    
+                    bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
+                    bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
+                    bin_theta_scores = tf.reduce_max(tf.nn.softmax(bin_theta_logits), axis=-1)
+                    confidence = foreground_scores * bin_x_scores * bin_z_scores * bin_theta_scores
                     nms_indices = tf.map_fn(
                         sb_nms_fn,
-                        elems=[bev_proposal_boxes, foreground_scores],
+                        elems=[bev_proposal_boxes, confidence],
                         dtype=tf.int32)
             
         ######################################################
