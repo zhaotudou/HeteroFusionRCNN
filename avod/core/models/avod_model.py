@@ -30,6 +30,7 @@ class AvodModel(model.DetectionModel):
     # Keys for Placeholders
     ##############################
     PL_PROPOSALS = 'proposals_pl'
+    PL_PROPOSALS_INFO = 'proposals_info_pl'
     
     ##############################
     # Keys for Predictions
@@ -73,9 +74,12 @@ class AvodModel(model.DetectionModel):
         super(AvodModel, self).__init__(model_config)
 
         self._batch_size = batch_size
-        # TODO: batch_size must be 1 
+        # batch_size must be 1. Indeed, what really cares is mini_batch_size, i.e. num proposals
         if self._batch_size != 1:
             raise ValueError('Invalid batch_size, should be 1')
+        # Create the RpnModel
+        self._rpn_model = RpnModel(model_config, train_val_test, dataset, batch_size)
+
         self.dataset = dataset
         self._bev_extents = self.dataset.kitti_utils.bev_extents
         self._cluster_sizes, _ = self.dataset.get_cluster_info()
@@ -130,9 +134,6 @@ class AvodModel(model.DetectionModel):
                                  'box_4c', 'box_4ca']:
             raise ValueError('Invalid box representation', self._box_rep)
 
-        # Create the RpnModel
-        self._rpn_model = RpnModel(model_config, train_val_test, dataset, batch_size)
-
         if train_val_test not in ["train", "val", "test"]:
             raise ValueError('Invalid train_val_test value,'
                              'should be one of ["train", "val", "test"]')
@@ -159,6 +160,7 @@ class AvodModel(model.DetectionModel):
         """
         with tf.variable_scope('pl_proposals'):
              self._add_placeholder(tf.float32, [self._batch_size, None, 7], self.PL_PROPOSALS)
+             self._add_placeholder(tf.float32, [self._batch_size, None, 9], self.PL_PROPOSALS_INFO)
     
     def _canonical_transform(self, pts, boxes_3d):
         '''
@@ -183,9 +185,9 @@ class AvodModel(model.DetectionModel):
                             axis=2)
         pts_rot = tf.matmul(rot_mats, pts, transpose_a=True, transpose_b=True)
         
-        pts_ct_x = pts_rot[:,0] - tf.reshape(boxes_3d[:,0], (-1,1))
-        pts_ct_y = pts_rot[:,1] - tf.reshape(boxes_3d[:,1], (-1,1))
-        pts_ct_z = pts_rot[:,2] - tf.reshape(boxes_3d[:,2], (-1,1))
+        pts_ct_x = pts_rot[:,0] - tf.reshape(boxes_3d[:,0], [-1,1])
+        pts_ct_y = pts_rot[:,1] - tf.reshape(boxes_3d[:,1], [-1,1])
+        pts_ct_z = pts_rot[:,2] - tf.reshape(boxes_3d[:,2], [-1,1])
 
         pts_ct = tf.stack([pts_ct_x, pts_ct_y, pts_ct_z], axis=1)
 
@@ -206,15 +208,15 @@ class AvodModel(model.DetectionModel):
         #TF version: (if N is not None)
         ##########
         N = bin_x.shape[0].value
-        Ns = tf.reshape(tf.range(N), (N,1))
+        Ns = tf.reshape(tf.range(N), [N,1])
 
-        NK_x = tf.concat([Ns, tf.reshape(bin_x, (N,1))], axis=1) # (N,2)
+        NK_x = tf.concat([Ns, tf.reshape(bin_x, [N,1])], axis=1) # (N,2)
         res_x_norm = tf.gather_nd(res_x_norms, NK_x) #(N)
         
-        NK_z = tf.concat([Ns, tf.reshape(bin_z, (N,1))], axis=1) # (N,2)
+        NK_z = tf.concat([Ns, tf.reshape(bin_z, [N,1])], axis=1) # (N,2)
         res_z_norm = tf.gather_nd(res_z_norms, NK_z) #(N)
         
-        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, (N,1))], axis=1) # (N,2)
+        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N,1])], axis=1) # (N,2)
         res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta) #(N)
     
         '''
@@ -244,12 +246,12 @@ class AvodModel(model.DetectionModel):
         ##########
         N = cls_preds.shape[0].value
         
-        Ns = tf.reshape(tf.range(N), (N,1))
+        Ns = tf.reshape(tf.range(N), [N,1])
 
-        K_mean_sizes = tf.reshape(cluster_sizes, (-1,3))
+        K_mean_sizes = tf.reshape(cluster_sizes, [-1,3])
         NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N,1,1])
 
-        NK = tf.concat([Ns, tf.reshape(cls_preds, (N,1))], axis=1) # (N,2)
+        NK = tf.concat([Ns, tf.reshape(cls_preds, [N,1])], axis=1) # (N,2)
         
         mean_sizes = tf.gather_nd(NK_mean_sizes, NK)
         return mean_sizes
@@ -268,44 +270,17 @@ class AvodModel(model.DetectionModel):
         rpn_model = self._rpn_model
         # Share the same prediction dict as RPN
         prediction_dict = rpn_model.build()
-        
-        if self._train_val_test in ['train', 'val']:
-            self._set_up_input_pls()
-            top_proposals = self.placeholders[self.PL_PROPOSALS]
-        else:
-            top_proposals = prediction_dict[RpnModel.PRED_TOP_PROPOSALS]#(B,n,7)
-        
-        with tf.variable_scope('proposal_recall_iou'): 
-            # Top Proposal Recall/IoU & corresponding GT boxes & cls, for positive/negative sample selection usage
-            recalls_50, recalls_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = tf.py_func(
-                box_util.compute_recall_iou, 
-                [top_proposals, rpn_model._foreground_label_boxes_3d, rpn_model._foreground_label_cls],
-                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
-            tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
-            tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
-            tf.summary.histogram('iou_3d', iou3ds)
-            tf.summary.histogram('iou_2d', iou2ds)
-            top_proposal_iou3ds = tf.reshape(iou3ds, [-1])
-            top_proposal_gt_cls = tf.reshape(iou3ds_gt_cls, [-1])
-            top_proposal_gt_boxes = tf.reshape(iou3ds_gt_boxes, [-1,7])
-        foreground_mask = prediction_dict[RpnModel.PRED_FG_MASK] #(B,P)
-
-        # Expand proposals' size
-        with tf.variable_scope('expand_proposal'):
-            expand_length = self._pooling_context_length
-            expanded_size = top_proposals[:,:,3:6] + expand_length
-            expanded_proposals = tf.stack([
-                top_proposals[:,:,0],
-                top_proposals[:,:,1],
-                top_proposals[:,:,2],
-                expanded_size[:,:,0],
-                expanded_size[:,:,1],
-                expanded_size[:,:,2],
-                top_proposals[:,:,6],
-            ], axis=2)  #(B,n,7)
-            
         pc_pts = rpn_model._pc_pts  #(B,P,3)
         pc_fts = rpn_model._pc_fts  #(B,P,C)
+        foreground_mask = rpn_model._foreground_mask #(B,P)
+        
+        self._set_up_input_pls()
+        proposals = self.placeholders[self.PL_PROPOSALS]    #(B,n,7)
+        proposals_info = self.placeholders[self.PL_PROPOSALS_INFO] #(B,n,9)
+        proposals_iou3d = tf.reshape(proposals_info[:,:,0], [-1])   #(N=Bn)
+        proposals_gt_box3d = tf.reshape(proposals_info[:,:,1:8], [-1,7]) #(N=Bn,7)
+        proposals_gt_cls = tf.reshape(proposals_info[:,:,8], [-1]) #(N=Bn)
+        
         '''
         if not (self._path_drop_probabilities[0] ==
                 self._path_drop_probabilities[1] == 1.0):
@@ -326,6 +301,20 @@ class AvodModel(model.DetectionModel):
         '''
         # ROI Pooling
         with tf.variable_scope('avod_roi_pooling'):
+            # Expand proposals' size
+            with tf.variable_scope('expand_proposal'):
+                expand_length = self._pooling_context_length
+                expanded_size = proposals[:,:,3:6] + expand_length
+                expanded_proposals = tf.stack([
+                    proposals[:,:,0],
+                    proposals[:,:,1],
+                    proposals[:,:,2],
+                    expanded_size[:,:,0],
+                    expanded_size[:,:,1],
+                    expanded_size[:,:,2],
+                    proposals[:,:,6],
+                ], axis=2)  #(B,n,7)
+            
             def get_box_indices(boxes):
                 proposals_shape = boxes.get_shape().as_list()
                 if any(dim is None for dim in proposals_shape):
@@ -339,9 +328,9 @@ class AvodModel(model.DetectionModel):
             tf_box_indices = get_box_indices(expanded_proposals)
 
             # Do ROI Pooling on PC
+            proposals = tf.reshape(proposals, [-1,7]) #(N=Bn,7)
+            expanded_proposals = tf.reshape(expanded_proposals, [-1,7]) #(N=Bn,7)
             from cropping import tf_cropping
-            top_proposals = tf.reshape(top_proposals, (-1,7)) #(N=Bn,7)
-            expanded_proposals = tf.reshape(expanded_proposals, (-1,7)) #(N=Bn,7)
             crop_pts, crop_fts, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
                 pc_pts,
                 pc_fts,
@@ -362,7 +351,7 @@ class AvodModel(model.DetectionModel):
             '''
         with tf.variable_scope('local_spatial_feature'):
             with tf.variable_scope('canonical_transform'):
-                crop_pts_ct = self._canonical_transform(crop_pts, expanded_proposals)
+                crop_pts_ct = self._canonical_transform(crop_pts, proposals)
 
             with tf.variable_scope('distance_to_sensor'):
                 crop_distance = tf.sqrt(
@@ -403,7 +392,7 @@ class AvodModel(model.DetectionModel):
             cls_logits = tf.reduce_mean(cls_multi_logits, axis=1, name='cls_logits')    #(N,K)
             cls_softmax = tf.nn.softmax(cls_logits, name='cls_softmax') #(N,K)
             cls_preds = tf.argmax(cls_softmax, axis=-1, name='cls_predictions')
-            cls_scores = tf.reduce_max(cls_softmax[:, 1:], axis=-1, name='cls_scores')
+            cls_scores = tf.reduce_max(cls_softmax[:,1:], axis=-1, name='cls_scores')
 
 
         #branch-2: bin-based 3D box refinement
@@ -450,113 +439,104 @@ class AvodModel(model.DetectionModel):
 
             with tf.variable_scope('decoding'):
                 reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
-                        expanded_proposals[:,:3], expanded_proposals[:,6],
+                        proposals[:,:3], proposals[:,6],
                         bin_x, res_x_norm,
                         bin_z, res_z_norm,
                         bin_theta, res_theta_norm,
                         res_y, res_size, mean_sizes,
                         self.S, self.DELTA, self.R, self.DELTA_THETA) #(N,7)
 
-            oriented_NMS = True
-            print("oriented_NMS = " + str(oriented_NMS))
-            # BEV projection
-            with tf.variable_scope('bev_projection'):
-                reg_boxes_3d = tf.boolean_mask(reg_boxes_3d, non_empty_box_mask) #(N',7)
-                if oriented_NMS: 
-                    bev_boxes, _ = tf.py_func(
-                        box_3d_projector.project_to_bev,
-                        [reg_boxes_3d, tf.constant(self._bev_extents)],
-                        (tf.float32, tf.float32))
-            
-                else:
-                    # ortho rotating
-                    box_anchors = box_3d_encoder.tf_box_3d_to_anchor(reg_boxes_3d)
-                    bev_boxes, _ = anchor_projector.project_to_bev(box_anchors, self._bev_extents)
-                    bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(bev_boxes)
-
-            # bev-NMS and ignore multiclass
-            with tf.variable_scope('bev_nms'):
-                cls_scores = tf.boolean_mask(cls_scores, non_empty_box_mask) #(N')
-                cls_softmax = tf.boolean_mask(cls_softmax, non_empty_box_mask) #(N')
-                if oriented_NMS: 
-                    nms_indices = tf.py_func(
-                        oriented_nms.nms,
-                        [bev_boxes, cls_scores, 
-                        tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
-                        tf.int32)
-                else:
-                    nms_indices = tf.image.non_max_suppression(
-                        bev_boxes_tf_order,
-                        cls_scores,
-                        max_output_size=self._nms_size,
-                        iou_threshold=self._nms_iou_thresh)
-                    
-                top_boxes_3d = tf.gather(reg_boxes_3d, nms_indices)
-                top_cls_softmax = tf.gather(cls_softmax, nms_indices)
-                top_cls_scores = tf.gather(cls_scores, nms_indices)
+            # NMS
+            if self._train_val_test == 'train':
+                # to speed up training, skip NMS, as we don't care what top_* is during training
+                print('Skip BRN-NMS during training')
+                top_boxes_3d = reg_boxes_3d
+                top_cls_softmax = cls_softmax
+            else:
+                # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
+                # while get significant higher proposal recall@IoU=0.7
+                oriented_NMS = True
+                print("BRN oriented_NMS = " + str(oriented_NMS))
+                # BEV projection
+                with tf.variable_scope('bev_projection'):
+                    reg_boxes_3d = tf.boolean_mask(reg_boxes_3d, non_empty_box_mask) #(N',7)
+                    if oriented_NMS: 
+                        bev_boxes, _ = tf.py_func(
+                            box_3d_projector.project_to_bev,
+                            [reg_boxes_3d, tf.constant(self._bev_extents)],
+                            (tf.float32, tf.float32))
                 
-                tf.summary.histogram('top_cls_scores', top_cls_scores)
+                    else:
+                        # ortho rotating
+                        box_anchors = box_3d_encoder.tf_box_3d_to_anchor(reg_boxes_3d)
+                        bev_boxes, _ = anchor_projector.project_to_bev(box_anchors, self._bev_extents)
+                        bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(bev_boxes)
+
+                # bev-NMS and ignore multiclass
+                with tf.variable_scope('bev_nms'):
+                    cls_scores = tf.boolean_mask(cls_scores, non_empty_box_mask) #(N')
+                    cls_softmax = tf.boolean_mask(cls_softmax, non_empty_box_mask) #(N')
+                    if oriented_NMS: 
+                        nms_indices = tf.py_func(
+                            oriented_nms.nms,
+                            [bev_boxes, cls_scores, 
+                            tf.constant(self._nms_iou_thresh), tf.constant(self._nms_size)],
+                            tf.int32)
+                    else:
+                        nms_indices = tf.image.non_max_suppression(
+                            bev_boxes_tf_order,
+                            cls_scores,
+                            max_output_size=self._nms_size,
+                            iou_threshold=self._nms_iou_thresh)
+                        
+                    top_boxes_3d = tf.gather(reg_boxes_3d, nms_indices)
+                    top_cls_softmax = tf.gather(cls_softmax, nms_indices)
         
         ######################################################
         # Determine Positive/Negative GTs for the loss function & metrics
         ######################################################
         # for box cls loss
         with tf.variable_scope('box_cls_gt'):
-            neg_cls_mask = tf.less(top_proposal_iou3ds, self.cls_neg_iou_range[1])
-            pos_cls_mask = tf.greater(top_proposal_iou3ds, self.cls_pos_iou_range[0])
+            neg_cls_mask = tf.less(proposals_iou3d, self.cls_neg_iou_range[1])
+            pos_cls_mask = tf.greater(proposals_iou3d, self.cls_pos_iou_range[0])
             pos_neg_cls_mask = tf.logical_or(neg_cls_mask, pos_cls_mask)
             pos_neg_cls_mask = tf.logical_and(pos_neg_cls_mask, non_empty_box_mask)
             
             # cls gt
             cls_gt = tf.where(neg_cls_mask, 
-                              tf.zeros_like(top_proposal_gt_cls),
-                              top_proposal_gt_cls)
+                              tf.zeros_like(proposals_gt_cls),
+                              proposals_gt_cls)
             cls_gt_one_hot = tf.one_hot(
-                            tf.to_int64(cls_gt), depth=self.num_classes + 1,
+                            tf.to_int32(cls_gt), depth=self.num_classes + 1,
                             on_value=1.0,
                             off_value=0.0)
            
         # for box refinement loss
         with tf.variable_scope('box_cls_reg_gt'):
-            pos_reg_mask = tf.greater(top_proposal_iou3ds, self.reg_pos_iou_range[0])
+            pos_reg_mask = tf.greater(proposals_iou3d, self.reg_pos_iou_range[0])
             pos_reg_mask = tf.logical_and(pos_reg_mask, non_empty_box_mask)
             
             # reg gt
             (bin_x_gt, res_x_gt, bin_z_gt, res_z_gt, 
              bin_theta_gt, res_theta_gt, res_y_gt, res_size_gt) = bin_based_box3d_encoder.tf_encode(
-                top_proposals[:,:3], top_proposals[:,6], 
-                top_proposal_gt_boxes, mean_sizes,
+                proposals[:,:3], proposals[:,6], 
+                proposals_gt_box3d, mean_sizes,
                 self.S, self.DELTA, self.R, self.DELTA_THETA)
             
             bin_x_gt_one_hot = tf.one_hot(
-                tf.to_int64(bin_x_gt), depth=int(2 * self.S / self.DELTA),
+                tf.to_int32(bin_x_gt), depth=int(2 * self.S / self.DELTA),
                 on_value=1.0,
                 off_value=0.0)
             
             bin_z_gt_one_hot = tf.one_hot(
-                tf.to_int64(bin_z_gt), depth=int(2 * self.S / self.DELTA),
+                tf.to_int32(bin_z_gt), depth=int(2 * self.S / self.DELTA),
                 on_value=1.0,
                 off_value=0.0)
             
             bin_theta_gt_one_hot = tf.one_hot(
-                tf.to_int64(bin_theta_gt), depth=int(2 * self.R / self.DELTA_THETA),
+                tf.to_int32(bin_theta_gt), depth=int(2 * self.R / self.DELTA_THETA),
                 on_value=1.0,
                 off_value=0.0)
-
-        with tf.variable_scope('box_recall_iou'):
-            recalls_50, recalls_70, iou2ds, iou3ds, _, _ = tf.py_func(
-                box_util.compute_recall_iou, 
-                [tf.expand_dims(top_boxes_3d, 0), 
-                 rpn_model._foreground_label_boxes_3d,
-                 rpn_model._foreground_label_cls],
-                 #tf.expand_dims(top_proposal_gt_boxes, 0),
-                 #tf.reshape(top_proposal_gt_cls, [1,-1,1])],
-                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32])
-            tf.summary.scalar('recall_50', tf.reduce_mean(recalls_50))
-            tf.summary.scalar('recall_70', tf.reduce_mean(recalls_70))
-            tf.summary.histogram('iou_3d', iou3ds)
-            tf.summary.histogram('iou_2d', iou2ds)
-        
 
         ######################################################
         # Prediction Dict
@@ -584,7 +564,6 @@ class AvodModel(model.DetectionModel):
         else:
             prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = top_boxes_3d
             prediction_dict[self.PRED_TOP_PREDICTION_SOFTMAX] = top_cls_softmax
-
         return prediction_dict
 
     def _parse_brn_output(self, brn_output):
@@ -622,13 +601,21 @@ class AvodModel(model.DetectionModel):
         return bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size
     
     def create_feed_dict(self, batch_size=1):
+        
+        if batch_size != self._batch_size :
+            raise ValueError('feed batch_size must equal to model build batch_size')
+
         feed_dict = self._rpn_model.create_feed_dict(batch_size)
         self._samples_info = self._rpn_model._samples_info
         batch_proposals = []
+        batch_proposals_info = []
         for sample_name in self._samples_info:
-            proposal = self.dataset.load_proposals(sample_name)
-            batch_proposals.append(proposal)
+            proposals = self.dataset.load_proposals(sample_name)
+            proposals_info = self.dataset.load_proposals_info(sample_name)
+            batch_proposals.append(proposals)
+            batch_proposals_info.append(proposals_info)
         self._placeholder_inputs[self.PL_PROPOSALS] = np.asarray(batch_proposals)
+        self._placeholder_inputs[self.PL_PROPOSALS_INFO] = np.asarray(batch_proposals_info)
         for key, value in self.placeholders.items():
             feed_dict[value] = self._placeholder_inputs[key]
         return feed_dict

@@ -1,4 +1,5 @@
 import os
+import copy
 
 import numpy as np
 import tensorflow as tf
@@ -97,48 +98,74 @@ class LabelSegUtils:
             '[ ' + str(expand_gt_size) + ']'
     
     @classmethod 
-    def label_point_cloud_v2(cls, points, boxes_8co, boxes_3d, klasses):
+    def label_point_cloud(cls, points, boxes_3d, klasses, expand_gt_size):
         '''
         Give all points a label if it is inside a box
          Input:
            points: (N x 3)
-           boxes_8co: (M x 8 x 3)
            boxes_3d: (M x 7) [x,y,z,l,w,h,ry]
            klasses: (M) [klass] 1-based, 0-background
+           expand_gt_size: scalar, expand box size, ignore points in expanded area
          Return:
-           label_seg: (N x 8), [klass,x,y,z,l,w,h,ry] 
+           label_seg: (N x 8), [klass,x,y,z,l,w,h,ry]
+                      klass = -1: ignore
+                      klass = 0 : bkg
+                      klass > 0 : object class
         '''
         num_points = points.shape[0]
-        num_boxes = boxes_8co.shape[0]
+        num_boxes = boxes_3d.shape[0]
+        # expand_size
+        boxes_3d_exp = copy.deepcopy(boxes_3d)
+        for box_3d in boxes_3d_exp:
+            box_3d[3:6] += expand_gt_size
+        boxes_8co = np.asarray(
+            [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T for box_3d in boxes_3d])
+        boxes_8co_exp = np.asarray(
+            [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T for box_3d in boxes_3d_exp])
+        
         label_seg = np.zeros((num_points, 8), dtype=np.float32)
         for i in range(num_boxes):
+            box_3d = boxes_3d[i]
             klass = klasses[i]
             box_8co = boxes_8co[i,:,:]
-            box_3d = boxes_3d[i]
+            box_8co_exp = boxes_8co_exp[i,:,:]
+            
             point_mask = obj_utils.is_point_inside(points.T, box_8co.T)
             for j in range(num_points):
                 if point_mask[j]:
                     label_seg[j, 0] = float(klass)
                     label_seg[j, 1:8] = box_3d[:]
+            
+            point_mask_exp = obj_utils.is_point_inside(points.T, box_8co_exp.T)
+            for j in range(num_points):
+                if point_mask_exp[j] and label_seg[j,0] == 0:
+                    label_seg[j, 0] = -1.0
         return label_seg
 
     @classmethod 
-    def label_point_cloud(cls, points, boxes_8co, boxes_3d, klasses):
+    def label_point_cloud_v2(cls, points, boxes_3d, klasses, expand_gt_size=0.0):
         '''
         Give all points a label if it is inside a box
          Input:
            points: (N x 3)
-           boxes_8co: (M x 8 x 3)
            boxes_3d: (M x 7) [x,y,z,l,w,h,ry]
            klasses: (M) [klass] 1-based, 0-background
+           expand_gt_size: scalar, expand box size, ignore points in expanded area
          Return:
            label_seg: (N x 8), [klass,x,y,z,l,w,h,ry] 
+                      klass = 0 : bkg
+                      klass > 0 : object class
         '''
+        assert(expand_gt_size == 0.0)
+
         num_points = points.shape[0]
-        num_boxes = boxes_8co.shape[0]
-        label_seg = np.zeros((num_points, 8), dtype=np.float32)
+        num_boxes = boxes_3d.shape[0]
+        boxes_8co = np.asarray(
+            [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T for box_3d in boxes_3d])
         if num_boxes > 0:
             facets = box_8c_encoder.np_box_8co_to_facet(boxes_8co)
+        
+        label_seg = np.zeros((num_points, 8), dtype=np.float32)
         for i in range(num_boxes):
             klass = klasses[i]
             box_8co = boxes_8co[i,:,:]
@@ -190,17 +217,13 @@ class LabelSegUtils:
 
 def main():
     points = np.asarray([[1.0, 0, 0.1],[-0.3, -0.5, -0.3]])
-    boxes_3d = np.asarray([0, 0, 0, 1, 1, 1, 3.14/4])
-    boxes_8co = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d).T
-    boxes_3d = boxes_3d.reshape(-1, 7)
-    boxes_8co = boxes_8co.reshape(-1, 8, 3)
-    print(boxes_8co)
+    boxes_3d = np.asarray([0, 0, 0, 1, 1, 1, 3.14/4]).reshape((-1,7))
     klasses = np.asarray([1])
-    label_seg = LabelSegUtils.label_point_cloud(points, boxes_8co, boxes_3d, klasses)
+    label_seg = LabelSegUtils.label_point_cloud(points, boxes_3d, klasses, 0.0)
     print(label_seg)
     foreground = label_seg[label_seg[:,0] > 0]
     print(foreground)
-    label_seg = LabelSegUtils.label_point_cloud_v2(points, boxes_8co, boxes_3d, klasses)
+    label_seg = LabelSegUtils.label_point_cloud_v2(points, boxes_3d, klasses, 0.0)
     print(label_seg)
     foreground = label_seg[label_seg[:,0] > 0]
     print(foreground)

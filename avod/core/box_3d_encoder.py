@@ -76,7 +76,7 @@ def box_3d_to_anchor(boxes_3d, ortho_rotate=False):
         N x 6 ndarray of anchors in 'anchor' form
     """
 
-    boxes_3d = np.asarray(boxes_3d).reshape(-1, 7)
+    boxes_3d = np.asarray(boxes_3d).reshape((-1, 7))
 
     fc.check_box_3d_format(boxes_3d)
 

@@ -38,11 +38,11 @@ def xconv(pts, fts, qrs, tag, B, K, D, P, C, C_pts_fts, is_training, with_X_tran
     if with_X_transformation:
         ######################## X-transformation #########################
         X_0 = pf.conv2d(nn_pts_local, K * K, tag + 'X_0', is_training, (1, K))  # (B, P, 1, K*K)
-        X_0_KK = tf.reshape(X_0, (B, P, K, K), name=tag + 'X_0_KK')             # (B, P, K, K)
+        X_0_KK = tf.reshape(X_0, [B, P, K, K], name=tag + 'X_0_KK')             # (B, P, K, K)
         X_1 = pf.depthwise_conv2d(X_0_KK, K, tag + 'X_1', is_training, (1, K))  # (B, P, 1, K*K)
-        X_1_KK = tf.reshape(X_1, (B, P, K, K), name=tag + 'X_1_KK')             # (B, P, K, K))
+        X_1_KK = tf.reshape(X_1, [B, P, K, K], name=tag + 'X_1_KK')             # (B, P, K, K))
         X_2 = pf.depthwise_conv2d(X_1_KK, K, tag + 'X_2', is_training, (1, K), activation=None) # (B, P, 1, K*K)
-        X_2_KK = tf.reshape(X_2, (B, P, K, K), name=tag + 'X_2_KK') # (B, P, K, K)
+        X_2_KK = tf.reshape(X_2, [B, P, K, K], name=tag + 'X_2_KK') # (B, P, K, K)
         fts_X = tf.matmul(X_2_KK, nn_fts_input, name=tag + 'fts_X') # (B, P, K, C_pts_fts)
         ###################################################################
     else:
@@ -101,7 +101,7 @@ class PointCNN(pc_feature_extractor.PcFeatureExtractor):
                 else:
                     if self.config.sampling == 'fps':
                         fps_indices = tf_sampling.farthest_point_sample(P, pts)
-                        batch_indices = tf.tile(tf.reshape(tf.range(B), (-1, 1, 1)), (1, P, 1))
+                        batch_indices = tf.tile(tf.reshape(tf.range(B), [-1, 1, 1]), (1, P, 1))
                         indices = tf.concat([batch_indices, tf.expand_dims(fps_indices,-1)], axis=-1)
                         qrs = tf.gather_nd(pts, indices, name= tag + 'qrs') # (B, P, 3)
                     elif self.config.sampling == 'ids':

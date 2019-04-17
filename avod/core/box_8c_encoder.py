@@ -169,9 +169,9 @@ def tf_box_3d_to_box_8co(boxes_3d):
                          transpose_b=False)
 
     # Translate the corners
-    corners_3d_x = boxes_8c[:, 0] + tf.reshape(boxes_3d[:, 0], (-1, 1))
-    corners_3d_y = boxes_8c[:, 1] + tf.reshape(boxes_3d[:, 1], (-1, 1))
-    corners_3d_z = boxes_8c[:, 2] + tf.reshape(boxes_3d[:, 2], (-1, 1))
+    corners_3d_x = boxes_8c[:, 0] + tf.reshape(boxes_3d[:, 0], [-1, 1])
+    corners_3d_y = boxes_8c[:, 1] + tf.reshape(boxes_3d[:, 1], [-1, 1])
+    corners_3d_z = boxes_8c[:, 2] + tf.reshape(boxes_3d[:, 2], [-1, 1])
 
     boxes_8c = tf.stack([corners_3d_x,
                          corners_3d_y,
@@ -328,9 +328,9 @@ def tf_box_3d_to_box_8c(boxes_3d):
                          transpose_b=False)
 
     # Translate the corners
-    corners_3d_x = boxes_8c[:, 0] + tf.reshape(centroid_x, (-1, 1))
-    corners_3d_y = boxes_8c[:, 1] + tf.reshape(centroid_y, (-1, 1))
-    corners_3d_z = boxes_8c[:, 2] + tf.reshape(centroid_z, (-1, 1))
+    corners_3d_x = boxes_8c[:, 0] + tf.reshape(centroid_x, [-1, 1])
+    corners_3d_y = boxes_8c[:, 1] + tf.reshape(centroid_y, [-1, 1])
+    corners_3d_z = boxes_8c[:, 2] + tf.reshape(centroid_z, [-1, 1])
 
     boxes_8c = tf.stack([corners_3d_x,
                          corners_3d_y,
@@ -487,8 +487,8 @@ def box_8c_to_box_3d(box_8c):
     center_z = tf.reduce_mean(z_corners[:, 0:4], axis=1)
 
     # Translate the centroid to the origin before rotation
-    translated_x = box_8c[:, 0] - tf.reshape(center_x, (-1, 1))
-    translated_z = box_8c[:, 2] - tf.reshape(center_z, (-1, 1))
+    translated_x = box_8c[:, 0] - tf.reshape(center_x, [-1, 1])
+    translated_z = box_8c[:, 2] - tf.reshape(center_z, [-1, 1])
 
     # The sign for the angle needs to be flipped because we
     # want to rotate back i.e. reverse rotation op we did during
@@ -516,8 +516,8 @@ def box_8c_to_box_3d(box_8c):
     aligned_corners = align_boxes_8c(corners_3d)
 
     # Translate the corners back
-    aligned_corners_x = aligned_corners[:, 0] + tf.reshape(center_x, (-1, 1))
-    aligned_corners_z = aligned_corners[:, 2] + tf.reshape(center_z, (-1, 1))
+    aligned_corners_x = aligned_corners[:, 0] + tf.reshape(center_x, [-1, 1])
+    aligned_corners_z = aligned_corners[:, 2] + tf.reshape(center_z, [-1, 1])
 
     new_x_corners = aligned_corners_x
     new_y_corners = aligned_corners[:, 1]
@@ -565,7 +565,7 @@ def tf_box_8c_to_offsets(boxes_8c,
     offsets = tf.subtract(boxes_8c_gt, boxes_8c)
 
     # Reshape the offsets to a (24 x N) vector
-    reshaped_offsets = tf.reshape(offsets, (24, -1))
+    reshaped_offsets = tf.reshape(offsets, [24, -1])
     ones = tf.ones_like(reshaped_offsets)
     # This gives diagonals of shape (24 x N)
     # This now enables us to divide acorss N batches
@@ -596,7 +596,7 @@ def tf_offsets_to_box_8c(boxes_8c,
     # Get the diagonal of the boxes
     diagonals = tf_box_8c_diagonal_length(boxes_8c)
     # Reshape the offsets to a (24 x N) vector
-    reshaped_offsets = tf.reshape(offsets, (24, -1))
+    reshaped_offsets = tf.reshape(offsets, [24, -1])
     ones = tf.ones_like(reshaped_offsets)
     # This gives diagonals of shape (24 x N)
     diagonals_mult = tf.multiply(ones, diagonals)

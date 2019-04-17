@@ -73,7 +73,7 @@ def save_predictions_in_kitti_format(model,
             np.savetxt(kitti_predictions_3d_file_path, [])
             continue
         
-        all_predictions = np.loadtxt(predictions_file_path).reshape(-1, 9)
+        all_predictions = np.loadtxt(predictions_file_path).reshape((-1, 9))
         
         # # Swap l, w for predictions where w > l
         # swapped_indices = all_predictions[:, 4] > all_predictions[:, 3]

@@ -8,10 +8,13 @@ from multiprocessing import Process
 
 import tensorflow as tf
 
+from wavedata.tools.obj_detection import obj_utils
+
 from avod.core import box_3d_encoder
 from avod.core import evaluator_utils
 from avod.core import summary_utils
 from avod.core import trainer_utils
+from avod.core import box_util
 
 from avod.core.models.avod_model import AvodModel
 from avod.core.models.rpn_model import RpnModel
@@ -23,6 +26,13 @@ KEY_SUM_RPN_BIN_CLS_LOSS = 'sum_rpn_bin_cls_loss'
 KEY_SUM_RPN_REG_LOSS = 'sum_rpn_reg_loss'
 KEY_SUM_RPN_TOTAL_LOSS = 'sum_rpn_total_loss'
 KEY_SUM_RPN_SEG_ACC = 'sum_rpn_seg_accuracy'
+KEY_SUM_RPN_RECALL_50 = 'sum_rpn_recall_50'
+KEY_SUM_RPN_RECALL_70 = 'sum_rpn_recall_70'
+KEY_SUM_RPN_LABEL = 'sum_rpn_label'
+KEY_SUM_RPN_PROPOSAL = 'sum_rpn_proposal'
+KEY_SUM_RPN_IOU2D = 'sum_rpn_iou2d'
+KEY_SUM_RPN_IOU3D = 'sum_rpn_iou3d'
+KEY_SUM_RPN_ANGLE_RES = 'sum_rpn_angel_residual'
 
 KEY_SUM_AVOD_CLS_LOSS = 'sum_avod_cls_loss'
 KEY_SUM_AVOD_BIN_CLS_LOSS = 'sum_avod_bin_cls_loss'
@@ -152,24 +162,29 @@ class Evaluator:
         global_step = trainer_utils.get_global_step(
             self._sess, self.global_step_tensor)
 
-        # Rpn average losses dictionary
-        if validation:
-            eval_rpn_losses = self._create_rpn_losses_dict()
-
-        # Add folders to save predictions
-        prop_score_predictions_dir = predictions_base_dir + \
-            "/proposals_and_scores/{}/{}".format(
-                data_split, global_step)
-        trainer_utils.create_dir(prop_score_predictions_dir)
-
         if self.full_model:
+            # Add folders to save predictions
             avod_predictions_dir = predictions_base_dir + \
                 "/final_predictions_and_scores/{}/{}".format(
                     data_split, global_step)
             trainer_utils.create_dir(avod_predictions_dir)
-
-            # Avod average losses dictionary
-            eval_avod_losses = self._create_avod_losses_dict()
+            
+            if validation:
+                eval_avod_stats = self._create_avod_stats_dict()
+        else:
+            # Add folders to save proposals
+            prop_score_predictions_dir = predictions_base_dir + \
+                "/proposals_and_scores/{}/{}".format(
+                    data_split, global_step)
+            trainer_utils.create_dir(prop_score_predictions_dir)
+            
+            if validation:
+                eval_rpn_stats = self._create_rpn_stats_dict()
+                # Add folders to save proposals info, i.e. IoUs with GT Boxes
+                prop_info_dir = predictions_base_dir + \
+                    "/proposals_info/{}/{}".format(
+                        data_split, global_step)
+                trainer_utils.create_dir(prop_info_dir)
 
         num_valid_samples = 0
 
@@ -187,23 +202,23 @@ class Evaluator:
             feed_dict_time = time.time() - start_time
 
             # Get sample name from model
-            sample_name = self.model._samples_info[0]
-
-            # File paths for saving proposals and predictions
-            rpn_file_path = prop_score_predictions_dir + "/{}.txt".format(
-                sample_name)
+            sample_names = self.model._samples_info
 
             if self.full_model:
-                avod_file_path = avod_predictions_dir + \
-                    "/{}.txt".format(sample_name)
+                assert(len(sample_names) == 1)
+                avod_file_path = avod_predictions_dir + "/{}.txt".format(sample_names[0])
+                if os.path.exists(avod_file_path):
+                    continue
+            else:
+                # File paths for saving proposals and predictions
+                rpn_file_paths = [prop_score_predictions_dir + "/{}.txt".format(sample_name) 
+                                    for sample_name in sample_names]
+                if os.path.exists(rpn_file_paths[0]):
+                    continue
 
-            num_valid_samples += 1
+            num_valid_samples += self._batch_size
             print("Step {}: {} / {}, Inference on sample {}".format(
-                global_step, num_valid_samples, num_samples,
-                sample_name))
-
-            if os.path.exists(rpn_file_path):
-                continue
+                global_step, num_valid_samples, num_samples, ' '.join(sample_names)))
 
             # Do predictions, loss calculations, and summaries
             if validation:
@@ -223,30 +238,12 @@ class Evaluator:
                                         self._total_loss],
                                        feed_dict=feed_dict)
 
-                rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
-                rpn_bin_classification_loss = eval_losses[RpnModel.LOSS_RPN_BIN_CLASSIFICATION]
-                rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
-
-                self._update_rpn_losses(eval_rpn_losses,
-                                        rpn_segmentation_loss,
-                                        rpn_bin_classification_loss,
-                                        rpn_regression_loss,
-                                        eval_total_loss,
-                                        global_step)
-
-                # Save proposals
-                proposals_and_scores = \
-                    self.get_rpn_proposals_and_scores(predictions)
-                np.savetxt(rpn_file_path, proposals_and_scores, fmt='%.3f')
-
                 if self.full_model:
                     # Save predictions
-                    predictions_and_scores = \
-                        self.get_avod_predicted_boxes_3d_and_scores(predictions)
-                    np.savetxt(avod_file_path, predictions_and_scores, fmt='%.5f')
+                    self.save_avod_predicted_boxes_3d_and_scores(predictions, avod_file_path)
 
                     self._update_avod_box_cls_loc_losses(
-                        eval_avod_losses,
+                        eval_avod_stats,
                         eval_losses,
                         eval_total_loss,
                         global_step)
@@ -261,10 +258,33 @@ class Evaluator:
                                    predicted_box_corners_and_scores,
                                    fmt='%.5f')
                     '''
+                else:
+                    rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
+                    rpn_bin_classification_loss = eval_losses[RpnModel.LOSS_RPN_BIN_CLASSIFICATION]
+                    rpn_regression_loss = eval_losses[RpnModel.LOSS_RPN_REGRESSION]
+
+                    self._update_rpn_losses(eval_rpn_stats,
+                                            rpn_segmentation_loss,
+                                            rpn_bin_classification_loss,
+                                            rpn_regression_loss,
+                                            eval_total_loss,
+                                            global_step)
+
+                    # Save proposals
+                    self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
+
+                    # Save proposals info
+                    prop_info_files = [prop_info_dir + "/{}.txt".format(sample_name) 
+                                        for sample_name in sample_names]
+                    self.calculate_proposals_info(rpn_file_paths, 
+                                                  sample_names,
+                                                  prop_info_files,
+                                                  eval_rpn_stats, 
+                                                  global_step)
+
                 # Calculate accuracies
                 self.get_cls_accuracy(predictions,
-                                      eval_avod_losses if self.full_model else None,
-                                      eval_rpn_losses,
+                                      eval_avod_stats if self.full_model else eval_rpn_stats,
                                       global_step)
                 print("Step {}: Total time {} s".format(
                     global_step, time.time() - start_time))
@@ -281,24 +301,17 @@ class Evaluator:
                 total_feed_dict_time.append(feed_dict_time)
                 total_inference_time.append(inference_time)
 
-                proposals_and_scores = \
-                    self.get_rpn_proposals_and_scores(predictions)
-                predictions_and_scores = \
-                    self.get_avod_predicted_boxes_3d_and_scores(predictions)
-
-                np.savetxt(rpn_file_path, proposals_and_scores, fmt='%.3f')
-                np.savetxt(avod_file_path, predictions_and_scores, fmt='%.5f')
+                if self.full_model:
+                    self.save_avod_predicted_boxes_3d_and_scores(predictions, avod_file_path)
+                else:
+                    self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
 
         # end while current_epoch == model.dataset.epochs_completed:
 
         if validation:
-            self.save_proposal_losses_results(eval_rpn_losses,
-                                              num_valid_samples,
-                                              global_step,
-                                              predictions_base_dir)
             if self.full_model:
-                self.save_prediction_losses_results(
-                    eval_avod_losses,
+                self.save_prediction_stats(
+                    eval_avod_stats,
                     num_valid_samples,
                     global_step,
                     predictions_base_dir)
@@ -308,6 +321,11 @@ class Evaluator:
                 # Store predictions in kitti format
                 if self.do_kitti_native_eval:
                     self.run_kitti_native_eval(global_step)
+            else:
+                self.save_rpn_stats(eval_rpn_stats,
+                                    num_valid_samples,
+                                    global_step,
+                                    predictions_base_dir)
 
         else:
             # Test mode --> train_val_test == 'test'
@@ -440,7 +458,7 @@ class Evaluator:
                 time.sleep(time_to_next_eval)
 
     def _update_rpn_losses(self,
-                           eval_rpn_losses,
+                           eval_rpn_stats,
                            rpn_segmentation_loss,
                            rpn_bin_classification_loss,
                            rpn_regression_loss,
@@ -449,7 +467,7 @@ class Evaluator:
         """Helper function to calculate the evaluation average losses.
 
         Args:
-            eval_rpn_losses: A dictionary containing all the average
+            eval_rpn_stats: A dictionary containing all the average
                 losses.
             rpn_objectness_loss: A scalar loss of rpn objectness.
             rpn_regression_loss: A scalar loss of rpn objectness.
@@ -473,10 +491,10 @@ class Evaluator:
                     rpn_total_loss))
 
         # Get the loss sums from the losses dict
-        sum_rpn_seg_loss = eval_rpn_losses[KEY_SUM_RPN_SEG_LOSS]
-        sum_rpn_bin_cls_loss = eval_rpn_losses[KEY_SUM_RPN_BIN_CLS_LOSS]
-        sum_rpn_reg_loss = eval_rpn_losses[KEY_SUM_RPN_REG_LOSS]
-        sum_rpn_total_loss = eval_rpn_losses[KEY_SUM_RPN_TOTAL_LOSS]
+        sum_rpn_seg_loss = eval_rpn_stats[KEY_SUM_RPN_SEG_LOSS]
+        sum_rpn_bin_cls_loss = eval_rpn_stats[KEY_SUM_RPN_BIN_CLS_LOSS]
+        sum_rpn_reg_loss = eval_rpn_stats[KEY_SUM_RPN_REG_LOSS]
+        sum_rpn_total_loss = eval_rpn_stats[KEY_SUM_RPN_TOTAL_LOSS]
 
         sum_rpn_seg_loss += rpn_segmentation_loss
         sum_rpn_bin_cls_loss += rpn_bin_classification_loss
@@ -484,20 +502,20 @@ class Evaluator:
         sum_rpn_total_loss += rpn_total_loss
 
         # update the losses sums
-        eval_rpn_losses.update({KEY_SUM_RPN_SEG_LOSS:
+        eval_rpn_stats.update({KEY_SUM_RPN_SEG_LOSS:
                                 sum_rpn_seg_loss})
 
-        eval_rpn_losses.update({KEY_SUM_RPN_BIN_CLS_LOSS:
+        eval_rpn_stats.update({KEY_SUM_RPN_BIN_CLS_LOSS:
                                 sum_rpn_bin_cls_loss})
         
-        eval_rpn_losses.update({KEY_SUM_RPN_REG_LOSS:
+        eval_rpn_stats.update({KEY_SUM_RPN_REG_LOSS:
                                 sum_rpn_reg_loss})
 
-        eval_rpn_losses.update({KEY_SUM_RPN_TOTAL_LOSS:
+        eval_rpn_stats.update({KEY_SUM_RPN_TOTAL_LOSS:
                                 sum_rpn_total_loss})
 
     def _update_avod_box_cls_loc_losses(self,
-                                        eval_avod_losses,
+                                        eval_avod_stats,
                                         eval_losses,
                                         eval_total_loss,
                                         global_step):
@@ -507,7 +525,7 @@ class Evaluator:
             losses.
 
         Args:
-            eval_avod_losses: A dictionary containing all the average
+            eval_avod_stats: A dictionary containing all the average
                 losses.
             eval_losses: A dictionary containing the current evaluation
                 losses.
@@ -515,10 +533,10 @@ class Evaluator:
             global_step: Global step at which the metrics are computed.
         """
 
-        sum_avod_cls_loss = eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS]
-        sum_avod_bin_cls_loss = eval_avod_losses[KEY_SUM_AVOD_BIN_CLS_LOSS]
-        sum_avod_reg_loss = eval_avod_losses[KEY_SUM_AVOD_REG_LOSS]
-        sum_avod_total_loss = eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS]
+        sum_avod_cls_loss = eval_avod_stats[KEY_SUM_AVOD_CLS_LOSS]
+        sum_avod_bin_cls_loss = eval_avod_stats[KEY_SUM_AVOD_BIN_CLS_LOSS]
+        sum_avod_reg_loss = eval_avod_stats[KEY_SUM_AVOD_REG_LOSS]
+        sum_avod_total_loss = eval_avod_stats[KEY_SUM_AVOD_TOTAL_LOSS]
 
         # for the full model, we expect a total of 4 losses
         assert (len(eval_losses) > 3)
@@ -534,16 +552,16 @@ class Evaluator:
         sum_avod_reg_loss += avod_regression_loss
         sum_avod_total_loss += eval_total_loss
 
-        eval_avod_losses.update({KEY_SUM_AVOD_CLS_LOSS:
+        eval_avod_stats.update({KEY_SUM_AVOD_CLS_LOSS:
                                  sum_avod_cls_loss})
 
-        eval_avod_losses.update({KEY_SUM_AVOD_BIN_CLS_LOSS:
+        eval_avod_stats.update({KEY_SUM_AVOD_BIN_CLS_LOSS:
                                  sum_avod_bin_cls_loss})
 
-        eval_avod_losses.update({KEY_SUM_AVOD_REG_LOSS:
+        eval_avod_stats.update({KEY_SUM_AVOD_REG_LOSS:
                                  sum_avod_reg_loss})
 
-        eval_avod_losses.update({KEY_SUM_AVOD_TOTAL_LOSS:
+        eval_avod_stats.update({KEY_SUM_AVOD_TOTAL_LOSS:
                                  sum_avod_total_loss})
 
         print("Step {}: Eval AVOD Loss: "
@@ -557,18 +575,25 @@ class Evaluator:
                 avod_regression_loss,
                 eval_total_loss))
 
-    def save_proposal_losses_results(self,
-                                     eval_rpn_losses,
-                                     num_valid_samples,
-                                     global_step,
-                                     predictions_base_dir):
+    def save_rpn_stats(self,
+                       eval_rpn_stats,
+                       num_valid_samples,
+                       global_step,
+                       predictions_base_dir):
         """Helper function to save the RPN loss evaluation results.
         """
-        sum_rpn_seg_loss = eval_rpn_losses[KEY_SUM_RPN_SEG_LOSS]
-        sum_rpn_bin_cls_loss = eval_rpn_losses[KEY_SUM_RPN_BIN_CLS_LOSS]
-        sum_rpn_reg_loss = eval_rpn_losses[KEY_SUM_RPN_REG_LOSS]
-        sum_rpn_total_loss = eval_rpn_losses[KEY_SUM_RPN_TOTAL_LOSS]
-        sum_rpn_seg_accuracy = eval_rpn_losses[KEY_SUM_RPN_SEG_ACC]
+        sum_rpn_seg_loss = eval_rpn_stats[KEY_SUM_RPN_SEG_LOSS]
+        sum_rpn_bin_cls_loss = eval_rpn_stats[KEY_SUM_RPN_BIN_CLS_LOSS]
+        sum_rpn_reg_loss = eval_rpn_stats[KEY_SUM_RPN_REG_LOSS]
+        sum_rpn_total_loss = eval_rpn_stats[KEY_SUM_RPN_TOTAL_LOSS]
+        sum_rpn_seg_accuracy = eval_rpn_stats[KEY_SUM_RPN_SEG_ACC]
+        sum_rpn_recall_50 = eval_rpn_stats[KEY_SUM_RPN_RECALL_50]
+        sum_rpn_recall_70 = eval_rpn_stats[KEY_SUM_RPN_RECALL_70]
+        sum_rpn_label = eval_rpn_stats[KEY_SUM_RPN_LABEL]
+        sum_rpn_proposal = eval_rpn_stats[KEY_SUM_RPN_PROPOSAL]
+        sum_rpn_iou2d = eval_rpn_stats[KEY_SUM_RPN_IOU2D]
+        sum_rpn_iou3d = eval_rpn_stats[KEY_SUM_RPN_IOU3D]
+        sum_rpn_angel_res = eval_rpn_stats[KEY_SUM_RPN_ANGLE_RES]
 
         # Calculate average loss and accuracy
         avg_rpn_seg_loss = sum_rpn_seg_loss / num_valid_samples
@@ -577,16 +602,29 @@ class Evaluator:
         avg_rpn_total_loss = sum_rpn_total_loss / num_valid_samples
         avg_rpn_seg_accuracy = sum_rpn_seg_accuracy / num_valid_samples
 
+        avg_rpn_proposal = sum_rpn_proposal / num_valid_samples
+        total_rpn_recall_50 = sum_rpn_recall_50 / sum_rpn_label
+        total_rpn_recall_70 = sum_rpn_recall_70 / sum_rpn_label
+        
+        avg_rpn_iou2d = sum_rpn_iou2d / sum_rpn_proposal
+        avg_rpn_iou3d = sum_rpn_iou3d / sum_rpn_proposal
+        avg_rpn_angel_res = sum_rpn_angel_res / sum_rpn_proposal
         print("Step {}: Average RPN Losses: segmentation {:.3f}, "
               "bin_cls {:.3f}, regression {:.3f}, total {:.3f}".format(global_step,
                                                        avg_rpn_seg_loss,
                                                        avg_rpn_bin_cls_loss,
                                                        avg_rpn_reg_loss,
                                                        avg_rpn_total_loss))
-        print("Step {}: Average Segmentation Accuracy:{} ".format(
+        print("Step {}: Average Segmentation Accuracy:{:.3f} ".format(
             global_step,
             avg_rpn_seg_accuracy))
-
+        print("Step {}: Total RPN Recall@3DIoU=0.5: {:.3f}  Recall@3DIoU=0.7: {:.3f}, Average Proposals: {:.3f}".format(
+            global_step,
+            total_rpn_recall_50, total_rpn_recall_70, avg_rpn_proposal))
+        print("Step {}: Average RPN IoU_2D: {:.3f} , IoU_3D: {:.3f}, Average Angel Residual: {:.3f}".format(
+            global_step,
+            avg_rpn_iou2d, avg_rpn_iou3d, avg_rpn_angel_res))
+        
         # Append to end of file
         avg_loss_file_path = predictions_base_dir + '/rpn_avg_losses.csv'
         with open(avg_loss_file_path, 'ba') as fp:
@@ -606,16 +644,25 @@ class Evaluator:
                     [global_step, avg_rpn_seg_accuracy],
                     (1, 2)),
                 fmt='%d, %.5f')
+        
+        total_recall_file_path = predictions_base_dir + '/rpn_total_recall.csv'
+        with open(total_recall_file_path, 'ba') as fp:
+            np.savetxt(
+                fp, np.reshape(
+                    [global_step, total_rpn_recall_50, total_rpn_recall_70, avg_rpn_proposal, 
+                     avg_rpn_iou2d, avg_rpn_iou3d, avg_rpn_angel_res],
+                    (1, 7)),
+                fmt='%d, %.5f, %.5f, %.5f, %.5f, %.5f, %.5f')
 
-    def save_prediction_losses_results(self,
-                                       eval_avod_losses,
-                                       num_valid_samples,
-                                       global_step,
-                                       predictions_base_dir):
+    def save_prediction_stats(self,
+                              eval_avod_stats,
+                              num_valid_samples,
+                              global_step,
+                              predictions_base_dir):
         """Helper function to save the AVOD loss evaluation results.
 
         Args:
-            eval_avod_losses: A dictionary containing the loss sums
+            eval_avod_stats: A dictionary containing the loss sums
             num_valid_samples: An int, number of valid evaluated samples
                 i.e. samples with valid ground-truth.
             global_step: Global step at which the metrics are computed.
@@ -623,13 +670,12 @@ class Evaluator:
             box_rep: A string, the format of the 3D bounding box
                 one of 'box_3d', 'box_8c' etc.
         """
-        sum_avod_cls_loss = eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS]
-        sum_avod_bin_cls_loss = eval_avod_losses[KEY_SUM_AVOD_BIN_CLS_LOSS]
-        sum_avod_reg_loss = eval_avod_losses[KEY_SUM_AVOD_REG_LOSS]
-        sum_avod_total_loss = eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS]
+        sum_avod_cls_loss = eval_avod_stats[KEY_SUM_AVOD_CLS_LOSS]
+        sum_avod_bin_cls_loss = eval_avod_stats[KEY_SUM_AVOD_BIN_CLS_LOSS]
+        sum_avod_reg_loss = eval_avod_stats[KEY_SUM_AVOD_REG_LOSS]
+        sum_avod_total_loss = eval_avod_stats[KEY_SUM_AVOD_TOTAL_LOSS]
 
-        sum_avod_cls_accuracy = \
-            eval_avod_losses[KEY_SUM_AVOD_CLS_ACC]
+        sum_avod_cls_accuracy = eval_avod_stats[KEY_SUM_AVOD_CLS_ACC]
 
         avg_avod_cls_loss = sum_avod_cls_loss / num_valid_samples
         avg_avod_bin_cls_loss = sum_avod_bin_cls_loss / num_valid_samples
@@ -650,7 +696,7 @@ class Evaluator:
                 avg_avod_total_loss,
                   ))
 
-        print("Step {}: Average Classification Accuracy: {} ".format(
+        print("Step {}: Average Classification Accuracy: {:.3f} ".format(
             global_step, avg_avod_cls_accuracy))
 
         # Append to end of file
@@ -675,34 +721,42 @@ class Evaluator:
                     (1, 2)),
                 fmt='%d, %.5f')
 
-    def _create_avod_losses_dict(self):
+    def _create_avod_stats_dict(self):
         """Returns a dictionary of the losses sum for averaging.
         """
-        eval_avod_losses = dict()
+        eval_avod_stats = dict()
         # Initialize Avod average losses
-        eval_avod_losses[KEY_SUM_AVOD_CLS_LOSS] = 0
-        eval_avod_losses[KEY_SUM_AVOD_BIN_CLS_LOSS] = 0
-        eval_avod_losses[KEY_SUM_AVOD_REG_LOSS] = 0
-        eval_avod_losses[KEY_SUM_AVOD_TOTAL_LOSS] = 0
+        eval_avod_stats[KEY_SUM_AVOD_CLS_LOSS] = 0
+        eval_avod_stats[KEY_SUM_AVOD_BIN_CLS_LOSS] = 0
+        eval_avod_stats[KEY_SUM_AVOD_REG_LOSS] = 0
+        eval_avod_stats[KEY_SUM_AVOD_TOTAL_LOSS] = 0
 
-        eval_avod_losses[KEY_SUM_AVOD_CLS_ACC] = 0
+        eval_avod_stats[KEY_SUM_AVOD_CLS_ACC] = 0
 
-        return eval_avod_losses
+        return eval_avod_stats
 
-    def _create_rpn_losses_dict(self):
+    def _create_rpn_stats_dict(self):
         """Returns a dictionary of the losses sum for averaging.
         """
-        eval_rpn_losses = dict()
+        eval_rpn_stats = dict()
 
         # Initialize Rpn average losses
-        eval_rpn_losses[KEY_SUM_RPN_SEG_LOSS] = 0
-        eval_rpn_losses[KEY_SUM_RPN_BIN_CLS_LOSS] = 0
-        eval_rpn_losses[KEY_SUM_RPN_REG_LOSS] = 0
-        eval_rpn_losses[KEY_SUM_RPN_TOTAL_LOSS] = 0
+        eval_rpn_stats[KEY_SUM_RPN_SEG_LOSS] = 0
+        eval_rpn_stats[KEY_SUM_RPN_BIN_CLS_LOSS] = 0
+        eval_rpn_stats[KEY_SUM_RPN_REG_LOSS] = 0
+        eval_rpn_stats[KEY_SUM_RPN_TOTAL_LOSS] = 0
+        eval_rpn_stats[KEY_SUM_RPN_SEG_ACC] = 0
 
-        eval_rpn_losses[KEY_SUM_RPN_SEG_ACC] = 0
+        eval_rpn_stats[KEY_SUM_RPN_RECALL_50] = 0
+        eval_rpn_stats[KEY_SUM_RPN_RECALL_70] = 0
+        eval_rpn_stats[KEY_SUM_RPN_LABEL] = 0
+        eval_rpn_stats[KEY_SUM_RPN_PROPOSAL] = 0
+        eval_rpn_stats[KEY_SUM_RPN_IOU2D] = 0
+        eval_rpn_stats[KEY_SUM_RPN_IOU3D] = 0
+        eval_rpn_stats[KEY_SUM_RPN_ANGLE_RES] = 0
+        
 
-        return eval_rpn_losses
+        return eval_rpn_stats
 
     def get_evaluated_ckpts(self,
                             model_config,
@@ -749,31 +803,18 @@ class Evaluator:
 
     def get_cls_accuracy(self,
                          predictions,
-                         eval_avod_losses,
-                         eval_rpn_losses,
+                         eval_stats,
                          global_step):
         """Updates the calculated accuracies for rpn and avod losses.
 
         Args:
             predictions: A dictionary containing the model outputs.
-            eval_avod_losses: A dictionary containing all the avod averaged
+            eval_avod_stats: A dictionary containing all the avod averaged
                 losses.
-            eval_rpn_losses: A dictionary containing all the rpn averaged
+            eval_rpn_stats: A dictionary containing all the rpn averaged
                 losses.
             global_step: Current global step that is being evaluated.
         """
-
-        seg_softmax = predictions[RpnModel.PRED_SEG_SOFTMAX]
-        seg_gt = predictions[RpnModel.PRED_SEG_GT]
-        segmentation_accuracy = self.calculate_cls_accuracy(seg_softmax, seg_gt)
-
-        # get this from the key
-        sum_rpn_seg_accuracy = eval_rpn_losses[KEY_SUM_RPN_SEG_ACC]
-        sum_rpn_seg_accuracy += segmentation_accuracy
-        eval_rpn_losses.update({KEY_SUM_RPN_SEG_ACC:
-                                sum_rpn_seg_accuracy})
-        print("Step {}: RPN Segmentation Accuracy: {}".format(
-            global_step, segmentation_accuracy))
 
         if self.full_model:
             classification_pred = \
@@ -783,13 +824,24 @@ class Evaluator:
             classification_accuracy = self.calculate_cls_accuracy(
                 classification_pred, classification_gt)
 
-            sum_avod_cls_accuracy = eval_avod_losses[KEY_SUM_AVOD_CLS_ACC]
+            sum_avod_cls_accuracy = eval_stats[KEY_SUM_AVOD_CLS_ACC]
             sum_avod_cls_accuracy += classification_accuracy
-            eval_avod_losses.update({KEY_SUM_AVOD_CLS_ACC:
-                                     sum_avod_cls_accuracy})
+            eval_stats.update({KEY_SUM_AVOD_CLS_ACC: sum_avod_cls_accuracy})
 
-            print("Step {}: AVOD Classification Accuracy: {}".format(
+            print("Step {}: AVOD Classification Accuracy: {:.3f}".format(
                 global_step, classification_accuracy))
+        else:
+            seg_softmax = predictions[RpnModel.PRED_SEG_SOFTMAX]
+            seg_gt = predictions[RpnModel.PRED_SEG_GT]
+            segmentation_accuracy = self.calculate_cls_accuracy(seg_softmax, seg_gt)
+
+            # get this from the key
+            sum_rpn_seg_accuracy = eval_stats[KEY_SUM_RPN_SEG_ACC]
+            sum_rpn_seg_accuracy += segmentation_accuracy
+            eval_stats.update({KEY_SUM_RPN_SEG_ACC: sum_rpn_seg_accuracy})
+            print("Step {}: RPN Segmentation Accuracy: {:.3f}".format(
+                global_step, segmentation_accuracy))
+
 
     def calculate_cls_accuracy(self, cls_pred, cls_gt):
         """Calculates accuracy of predicted objectness/classification wrt to
@@ -809,7 +861,7 @@ class Evaluator:
         accuracy = np.mean(correct_prediction)
         return accuracy
 
-    def get_rpn_proposals_and_scores(self, predictions):
+    def save_rpn_proposals_and_scores(self, predictions, rpn_file_paths):
         """Returns the proposals and scores stacked for saving to file.
 
         Args:
@@ -817,18 +869,89 @@ class Evaluator:
 
         Returns:
             proposals_and_scores: A numpy array of shape (number_of_proposals,
-                9), containing the rpn proposal boxes and scores.
+                8), containing the rpn proposal boxes and scores.
         """
+        nms_indices = predictions[RpnModel.PRED_NMS_INDICES]
+        proposals = predictions[RpnModel.PRED_PROPOSALS]
+        softmax_scores = predictions[RpnModel.PRED_OBJECTNESS_SOFTMAX]
+        
+        Batch = nms_indices.shape[0]
+        NMS = nms_indices.shape[1]
+        for b in range(Batch):
+            top_proposals = []
+            top_scores = []
+            for n in range(NMS):
+                idx = nms_indices[b,n]
+                if idx == -1:
+                    break
+                top_proposals.append(proposals[b,idx])
+                top_scores.append(softmax_scores[b,idx])
 
-        top_proposals = np.squeeze(predictions[RpnModel.PRED_TOP_PROPOSALS], 0)
-        softmax_scores = np.squeeze(predictions[RpnModel.PRED_TOP_OBJECTNESS_SOFTMAX], 0)
+            proposals_and_scores = np.column_stack(
+                [np.asarray(top_proposals).reshape((-1,7)), 
+                 np.asarray(top_scores).reshape((-1,1))])
+            np.savetxt(rpn_file_paths[b], proposals_and_scores, fmt='%.3f')
 
-        proposals_and_scores = np.column_stack((top_proposals,
-                                                np.expand_dims(softmax_scores, -1)))
+    def calculate_proposals_info(self, rpn_file_paths, sample_names, prop_info_files, eval_rpn_stats, global_step):
+        assert (len(rpn_file_paths) == len(sample_names))
+        
+        for i in range(len(rpn_file_paths)):
+            rpn_file = rpn_file_paths[i]
+            sample_name = sample_names[i]
+            prop_info_file = prop_info_files[i]
 
-        return proposals_and_scores
+            top_proposals = np.loadtxt(rpn_file).reshape((-1,8))[:,0:7]
+            
+            obj_labels = obj_utils.read_labels(self.model.dataset.label_dir, int(sample_name))
+            # Only use objects that match dataset classes
+            obj_labels = self.model.dataset.kitti_utils.filter_labels(obj_labels)
 
-    def get_avod_predicted_boxes_3d_and_scores(self, predictions):
+            label_boxes_3d = np.asarray(
+                [box_3d_encoder.object_label_to_box_3d(obj_label)
+                 for obj_label in obj_labels])
+            label_classes = [
+                self.model.dataset.kitti_utils.class_str_to_index(obj_label.type)
+                for obj_label in obj_labels]
+            label_classes = np.asarray(label_classes, dtype=np.int32)
+
+            recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = \
+                box_util.compute_recall_iou(top_proposals, label_boxes_3d, label_classes)
+            
+            num_props = top_proposals.shape[0]
+            num_labels = label_boxes_3d.shape[0]
+
+            proposals_info = np.column_stack(
+                [iou2ds.reshape((num_props,1)),
+                 iou3ds.reshape((num_props,1)),
+                 iou3ds_gt_boxes.reshape((num_props,7)),
+                 iou3ds_gt_cls.reshape((num_props,1))])
+            np.savetxt(prop_info_file, proposals_info, fmt='%.3f')
+    
+            sum_rpn_recall_50 = eval_rpn_stats[KEY_SUM_RPN_RECALL_50]
+            sum_rpn_recall_70 = eval_rpn_stats[KEY_SUM_RPN_RECALL_70]
+            sum_rpn_label = eval_rpn_stats[KEY_SUM_RPN_LABEL]
+            sum_rpn_proposal = eval_rpn_stats[KEY_SUM_RPN_PROPOSAL]
+            sum_rpn_iou2d = eval_rpn_stats[KEY_SUM_RPN_IOU2D]
+            sum_rpn_iou3d = eval_rpn_stats[KEY_SUM_RPN_IOU3D]
+            sum_rpn_angle_res = eval_rpn_stats[KEY_SUM_RPN_ANGLE_RES]
+            sum_rpn_recall_50 += recall_50
+            sum_rpn_recall_70 += recall_70
+            sum_rpn_label += num_labels
+            sum_rpn_proposal += num_props
+            sum_rpn_iou2d += np.sum(iou2ds)
+            sum_rpn_iou3d += np.sum(iou3ds)
+            sum_rpn_angle_res += np.sum(np.absolute(top_proposals[:,6] - iou3ds_gt_boxes[:,6]))
+            eval_rpn_stats.update({KEY_SUM_RPN_RECALL_50: sum_rpn_recall_50})
+            eval_rpn_stats.update({KEY_SUM_RPN_RECALL_70: sum_rpn_recall_70})
+            eval_rpn_stats.update({KEY_SUM_RPN_LABEL: sum_rpn_label})
+            eval_rpn_stats.update({KEY_SUM_RPN_PROPOSAL: sum_rpn_proposal})
+            eval_rpn_stats.update({KEY_SUM_RPN_IOU2D: sum_rpn_iou2d})
+            eval_rpn_stats.update({KEY_SUM_RPN_IOU3D: sum_rpn_iou3d})
+            eval_rpn_stats.update({KEY_SUM_RPN_ANGLE_RES: sum_rpn_angle_res})
+            print("Step {}: RPN Recall@3DIoU=0.5: {:.3f}  Recall@3DIoU=0.7: {:.3f}, num proposals: {:.3f}".format(
+                global_step, recall_50 / num_labels, recall_70 / num_labels, num_props))
+
+    def save_avod_predicted_boxes_3d_and_scores(self, predictions, avod_file_path):
         """Returns the predictions and scores stacked for saving to file.
 
         Args:
@@ -864,7 +987,7 @@ class Evaluator:
              final_pred_scores,
              final_pred_types])
 
-        return predictions_and_scores
+        np.savetxt(avod_file_path, predictions_and_scores, fmt='%.5f')
 
     def get_avod_predicted_box_corners_and_scores(self,
                                                   predictions,
