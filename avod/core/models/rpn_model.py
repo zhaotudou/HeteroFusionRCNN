@@ -34,7 +34,6 @@ class RpnModel(model.DetectionModel):
     PRED_SEG_SOFTMAX = 'rpn_seg_softmax'
     PRED_SEG_GT = 'rpn_seg_gt'
     PRED_TOTAL_PTS = 'rpn_total_pts'
-    PRED_FG_MASK = 'rpn_fg_mask'
     
     PRED_FG_CLS = 'rpn_fg_cls'
     PRED_FG_REG = 'rpn_fg_reg'
@@ -207,13 +206,13 @@ class RpnModel(model.DetectionModel):
         mB, mp = tf.meshgrid(Bs, ps)
         Bp = tf.stack([tf.transpose(mB), tf.transpose(mp)], axis=2) # (B,p,2)
 
-        BpK_x = tf.concat([Bp, tf.reshape(bin_x, (B,p,1))], axis=2) # (B,p,3)
+        BpK_x = tf.concat([Bp, tf.reshape(bin_x, [B,p,1])], axis=2) # (B,p,3)
         res_x_norm = tf.gather_nd(res_x_norms, BpK_x) #(B,p)
         
-        BpK_z = tf.concat([Bp, tf.reshape(bin_z, (B,p,1))], axis=2) # (B,p,3)
+        BpK_z = tf.concat([Bp, tf.reshape(bin_z, [B,p,1])], axis=2) # (B,p,3)
         res_z_norm = tf.gather_nd(res_z_norms, BpK_z) #(B,p)
         
-        BpK_theta = tf.concat([Bp, tf.reshape(bin_theta, (B,p,1))], axis=2) # (B,p,3)
+        BpK_theta = tf.concat([Bp, tf.reshape(bin_theta, [B,p,1])], axis=2) # (B,p,3)
         res_theta_norm = tf.gather_nd(res_theta_norms, BpK_theta) #(B,p)
     
 
@@ -251,11 +250,11 @@ class RpnModel(model.DetectionModel):
         mB, mp = tf.meshgrid(Bs, ps)
         Bp = tf.stack([tf.transpose(mB), tf.transpose(mp)], axis=2) # (B,p,2)
 
-        K_mean_sizes = tf.reshape(cluster_sizes, (-1,3))
+        K_mean_sizes = tf.reshape(cluster_sizes, [-1,3])
         pK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [p,1,1])
         BpK_mean_sizes = tf.tile(tf.expand_dims(pK_mean_sizes, 0), [B,1,1,1])
 
-        BpK = tf.concat([Bp, tf.reshape(cls_preds, (B,p,1))], axis=2) # (B,p,3)
+        BpK = tf.concat([Bp, tf.reshape(cls_preds, [B,p,1])], axis=2) # (B,p,3)
         
         mean_sizes = tf.gather_nd(BpK_mean_sizes, BpK)
 
@@ -295,11 +294,11 @@ class RpnModel(model.DetectionModel):
         # foreground point masking
         with tf.variable_scope('foreground_masking'):
             if self._train_val_test in ['train', 'val']:
-                foreground_mask = label_cls > 0 #(B,P)
+                self._foreground_mask = label_cls > 0 #(B,P)
             else:
-                foreground_mask = seg_preds > 0 #(B,P)
+               self._foreground_mask = seg_preds > 0 #(B,P)
             
-            fg_indices = model_util.point_cloud_masking(foreground_mask, self.NUM_FG_POINT) #(B,F,2)
+            fg_indices = model_util.point_cloud_masking(self._foreground_mask, self.NUM_FG_POINT) #(B,F,2)
             foreground_pts = tf.reshape(tf.gather_nd(self._pc_pts, fg_indices),
                                         [self._batch_size, self.NUM_FG_POINT, self._pc_pts.shape[2].value]) #(B,F,3)
             foreground_fts = tf.reshape(tf.gather_nd(self._pc_fts, fg_indices),
@@ -309,10 +308,8 @@ class RpnModel(model.DetectionModel):
             foreground_scores = tf.reshape(tf.gather_nd(seg_scores, fg_indices),
                                            [self._batch_size, self.NUM_FG_POINT]) #(B,F)
             
-            self._foreground_label_cls = tf.reshape(tf.gather_nd(label_cls, fg_indices),
-                                                    [self._batch_size, self.NUM_FG_POINT]) #(B,F)
-            self._foreground_label_boxes_3d = tf.reshape(tf.gather_nd(label_box_3d, fg_indices),
-                                                         [self._batch_size, self.NUM_FG_POINT, 7]) #(B,F,7)
+            foreground_label_boxes_3d = tf.reshape(tf.gather_nd(label_box_3d, fg_indices),
+                                                   [self._batch_size, self.NUM_FG_POINT, 7]) #(B,F,7)
         
         # branch-2: bin-based 3D proposal generation
         #########################################
@@ -369,13 +366,13 @@ class RpnModel(model.DetectionModel):
             # NMS
             if self._train_val_test == 'train':
                 # to speed up training, skip NMS, as we don't care what top_* is during training
-                print('Skip NMS during training')
+                print('Skip RPN-NMS during training')
                 nms_indices = tf.zeros([self._batch_size, self._nms_size], tf.int32)
             else:
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
                 oriented_NMS = True
-                print("oriented_NMS = " + str(oriented_NMS))
+                print("RPN oriented_NMS = " + str(oriented_NMS))
                 # BEV projection
                 with tf.variable_scope('bev_projection'):
                     def sb_project_to_bev_fn(sb_proposals):
@@ -443,7 +440,7 @@ class RpnModel(model.DetectionModel):
                 off_value=0.0)
         
         with tf.variable_scope('segmentation_accuracy'):
-            num_foreground_pts = tf.reduce_sum(tf.cast(foreground_mask, tf.float32)) / self._batch_size
+            num_foreground_pts = tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32)) / self._batch_size
             tf.summary.scalar('foreground_points_num', num_foreground_pts)
             # seg accuracy
             all_ones = tf.ones_like(seg_preds, dtype=tf.float32)
@@ -457,7 +454,7 @@ class RpnModel(model.DetectionModel):
         with tf.variable_scope('box_cls_reg_gt'):
             (bin_x_gt, res_x_gt, bin_z_gt, res_z_gt, 
              bin_theta_gt, res_theta_gt, res_y_gt, res_size_gt) = bin_based_box3d_encoder.tf_encode(
-                foreground_pts, 0, self._foreground_label_boxes_3d, mean_sizes,
+                foreground_pts, 0, foreground_label_boxes_3d, mean_sizes,
                 self.S, self.DELTA, self.R, self.DELTA_THETA)
             
             bin_x_gt_one_hot = tf.one_hot(

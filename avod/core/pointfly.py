@@ -153,7 +153,7 @@ def knn_indices(points, k, sort=True, unique=True):
     if unique:
         prepare_for_unique_top_k(D, points)
     distances, point_indices = tf.nn.top_k(-D, k=k, sorted=sort)
-    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), (-1, 1, 1, 1)), (1, point_num, k, 1))
+    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), [-1, 1, 1, 1]), (1, point_num, k, 1))
     indices = tf.concat([batch_indices, tf.expand_dims(point_indices, axis=3)], axis=3)
     return -distances, indices
 
@@ -168,7 +168,7 @@ def knn_indices_general(queries, points, k, sort=True, unique=True):
     if unique:
         prepare_for_unique_top_k(D, points)
     distances, point_indices = tf.nn.top_k(-D, k=k, sorted=sort)  # (N, P, K)
-    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), (-1, 1, 1, 1)), (1, point_num, k, 1))
+    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), [-1, 1, 1, 1]), (1, point_num, k, 1))
     indices = tf.concat([batch_indices, tf.expand_dims(point_indices, axis=3)], axis=3)
     return -distances, indices
 
@@ -204,8 +204,8 @@ def sort_points(points, indices, sorting_method):
         print('Unknown sorting method!')
         exit()
     _, k_indices = tf.nn.top_k(sorting_data, k=k, sorted=True)  # (N, P, K)
-    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), (-1, 1, 1, 1)), (1, point_num, k, 1))
-    point_indices = tf.tile(tf.reshape(tf.range(point_num), (1, -1, 1, 1)), (batch_size, 1, k, 1))
+    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), [-1, 1, 1, 1]), (1, point_num, k, 1))
+    point_indices = tf.tile(tf.reshape(tf.range(point_num), [1, -1, 1, 1]), (batch_size, 1, k, 1))
     k_indices_4d = tf.expand_dims(k_indices, axis=3)
     sorting_indices = tf.concat([batch_indices, point_indices, k_indices_4d], axis=3)  # (N, P, K, 3)
     return tf.gather_nd(indices, sorting_indices)
@@ -236,8 +236,8 @@ def compute_eigenvals(A):
     p2 = tf.square(A_11 - q) + tf.square(A_22 - q) + tf.square(A_33 - q) + 2 * p1  # (N, P)
     p = tf.sqrt(p2 / 6) + 1e-8  # (N, P)
     N = tf.shape(A)[0]
-    q_4d = tf.reshape(q, (N, -1, 1, 1))  # (N, P, 1, 1)
-    p_4d = tf.reshape(p, (N, -1, 1, 1))
+    q_4d = tf.reshape(q, [N, -1, 1, 1])  # (N, P, 1, 1)
+    p_4d = tf.reshape(p, [N, -1, 1, 1])
     B = (1 / p_4d) * (A - q_4d * I)  # (N, P, 3, 3)
     r = tf.clip_by_value(compute_determinant(B) / 2, -1, 1)  # (N, P)
     phi = tf.acos(r) / 3  # (N, P)
@@ -266,7 +266,7 @@ def curvature_based_sample(nn_pts, k):
 
     pts_shape = tf.shape(nn_pts)
     batch_size = pts_shape[0]
-    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), (-1, 1, 1)), (1, k, 1))
+    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), [-1, 1, 1]), (1, k, 1))
     indices = tf.concat([batch_indices, tf.expand_dims(point_indices, axis=2)], axis=2)
     return indices
 
@@ -289,7 +289,7 @@ def inverse_density_sampling(points, k, sample_num):
     point_indices.set_shape([points.get_shape()[0], sample_num])
 
     batch_size = tf.shape(points)[0]
-    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), (-1, 1, 1)), (1, sample_num, 1))
+    batch_indices = tf.tile(tf.reshape(tf.range(batch_size), [-1, 1, 1]), (1, sample_num, 1))
     indices = tf.concat([batch_indices, tf.expand_dims(point_indices, axis=2)], axis=2)
     return indices
 
