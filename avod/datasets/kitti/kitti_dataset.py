@@ -281,19 +281,23 @@ class KittiDataset:
                 sample_name))
             rgb_image = cv_bgr_image[..., :: -1]
             image_shape = rgb_image.shape[0:2]
-            #image_input = rgb_image
+            image_input = rgb_image
+            
+            # Get calibration
+            stereo_calib_p2 = calib_utils.read_calibration(self.calib_dir,
+                                                           int(sample_name)).p2
             
             point_cloud = self.kitti_utils.get_point_cloud(self.pc_source,
                                                            img_idx,
-                                                           image_shape)
-            point_cloud = point_cloud.T
-
+                                                           image_shape).T
             # Augmentation (Flipping)
             if kitti_aug.AUG_FLIPPING in sample.augs:
                 image_input = kitti_aug.flip_image(image_input)
                 point_cloud = kitti_aug.flip_point_cloud(point_cloud)
                 obj_labels = [kitti_aug.flip_label_in_3d_only(obj)
                               for obj in obj_labels]
+                stereo_calib_p2 = kitti_aug.flip_stereo_calib_p2(
+                    stereo_calib_p2, image_shape)
 
             # Augmentation (Image Jitter)
             if kitti_aug.AUG_PCA_JITTER in sample.augs:
@@ -301,8 +305,10 @@ class KittiDataset:
                     image_input[:, :, 0:3])
 
             sample_dict = {
-                constants.KEY_LABEL_SEG: label_seg,
                 constants.KEY_POINT_CLOUD: point_cloud,
+                constants.KEY_LABEL_SEG: label_seg,
+                constants.KEY_IMAGE_INPUT: image_input,
+                constants.KEY_STEREO_CALIB_P2: stereo_calib_p2,
 
                 constants.KEY_SAMPLE_NAME: sample_name,
                 constants.KEY_SAMPLE_AUGS: sample.augs

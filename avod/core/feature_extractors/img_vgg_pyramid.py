@@ -29,14 +29,12 @@ class ImgVggPyr(img_feature_extractor.ImgFeatureExtractor):
 
     def build(self,
               inputs,
-              input_pixel_size,
               is_training,
               scope='img_vgg_pyr'):
         """ Modified VGG for image feature extraction with pyramid features.
 
         Args:
             inputs: a tensor of size [batch_size, height, width, channels].
-            input_pixel_size: size of the input (H x W)
             is_training: True for training, False for validation/testing.
             scope: Optional scope for the variables.
 

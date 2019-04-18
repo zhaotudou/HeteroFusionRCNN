@@ -272,7 +272,7 @@ class AvodModel(model.DetectionModel):
         prediction_dict = rpn_model.build()
         pc_pts = rpn_model._pc_pts  #(B,P,3)
         pc_fts = rpn_model._pc_fts  #(B,P,C)
-        foreground_mask = rpn_model._foreground_mask #(B,P)
+        fg_mask = rpn_model._fg_mask #(B,P)
         
         self._set_up_input_pls()
         proposals = self.placeholders[self.PL_PROPOSALS]    #(B,n,7)
@@ -334,7 +334,7 @@ class AvodModel(model.DetectionModel):
             crop_pts, crop_fts, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
                 pc_pts,
                 pc_fts,
-                foreground_mask,
+                fg_mask,
                 box_8c_encoder.tf_box_3d_to_box_8co(expanded_proposals),
                 tf_box_indices,
                 self._proposal_roi_crop_size)   #(N,R,3), (N,R,C), (N,R), _, (N)

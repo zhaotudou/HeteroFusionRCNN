@@ -13,19 +13,17 @@ class ImgFeatureExtractor:
     def __init__(self, extractor_config):
         self.config = extractor_config
 
-    def preprocess_input(self, tensor_in, output_size):
+    def preprocess_input(self, tensor_in):
         """Preprocesses the given input.
 
         Args:
             tensor_in: A `Tensor` of shape=(batch_size, height,
                 width, channels) representing an input image.
-            output_size: The size of the input (H x W)
 
         Returns:
-            Preprocessed tensor input, resized to the output_size
+            Preprocessed tensor input
         """
-        image = tf.image.resize_images(tensor_in, output_size)
-        image = tf.to_float(image)
+        image = tf.to_float(tensor_in)
         image_normalized = self._mean_image_subtraction(image,
                                                         [self._R_MEAN,
                                                          self._G_MEAN,

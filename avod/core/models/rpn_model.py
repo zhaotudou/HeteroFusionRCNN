@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 import random
 import tensorflow as tf
 from tensorflow.contrib import slim
@@ -15,6 +16,7 @@ from avod.core import oriented_nms
 from avod.core import constants
 from avod.core import losses
 from avod.core import model
+from avod.core import projection
 from avod.core import pointfly as pf
 from avod.core import summary_utils
 from avod.core.anchor_generators import grid_anchor_3d_generator
@@ -26,8 +28,9 @@ class RpnModel(model.DetectionModel):
     # Keys for Placeholders
     ##############################
     PL_PC_INPUT = 'pc_input_pl'
-    PL_IMG_INPUT = 'img_input_pl'
     PL_LABEL_SEGS = 'label_segs_pl'
+    PL_IMG_INPUT = 'img_input_pl'
+    PL_CALIB_P2 = 'frame_calib_p2'
 
     ##############################
     # Keys for Predictions
@@ -80,8 +83,8 @@ class RpnModel(model.DetectionModel):
         self._pc_sample_pts_clip = input_config.pc_sample_pts_clip
         self.NUM_FG_POINT = 2048
 
-        self._img_pixel_size = np.asarray([input_config.img_dims_h,
-                                           input_config.img_dims_w])
+        self._img_h = input_config.img_dims_h
+        self._img_w = input_config.img_dims_w
         self._img_depth = input_config.img_depth
 
         # Rpn config
@@ -171,16 +174,20 @@ class RpnModel(model.DetectionModel):
             # Take variable size input images
             img_input_placeholder = self._add_placeholder(
                 tf.float32,
-                [self._batch_size, None, None, self._img_depth],
+                [self._batch_size, self._img_h, self._img_w, self._img_depth],
                 self.PL_IMG_INPUT)
 
             self._img_preprocessed = \
-                self._img_feature_extractor.preprocess_input(
-                    img_input_placeholder, self._img_pixel_size)
+                self._img_feature_extractor.preprocess_input(img_input_placeholder)
 
         with tf.variable_scope('pl_labels'):
             self._add_placeholder(tf.float32, [self._batch_size, None, 8], 
                                   self.PL_LABEL_SEGS) #(B,P,8)
+        
+        with tf.variable_scope('sample_info'):
+            # the calib matrix shape is (3 x 4)
+            self._add_placeholder(tf.float32, [self._batch_size, 3, 4], 
+                                  self.PL_CALIB_P2)
 
     def _set_up_feature_extractors(self):
         """Sets up feature extractors and stores feature maps and
@@ -192,12 +199,10 @@ class RpnModel(model.DetectionModel):
                 self._pc_pts_preprocessed,
                 self._pc_fts_preprocessed,
                 self._is_training) #(B,P,3) (B,P,C)
-        tf.summary.histogram('pc_fts', self._pc_fts)
         
         self._img_fts, _ = \
             self._img_feature_extractor.build(
                 self._img_preprocessed,
-                self._img_pixel_size,
                 self._is_training) #(B,H,W,C1)
 
 
@@ -285,6 +290,35 @@ class RpnModel(model.DetectionModel):
         
         return mean_sizes
 
+    def _get_proj_indices(self, proj_pts2d):
+        '''
+        Input:
+            proj_pts2d: (B,P,2) [u,v] int32
+        Output:
+            proj_indices: (B,P,3) [b,u,v] int32
+        '''
+        '''
+        TF version: (if P is not None)
+        ##########
+        '''
+        B = proj_pts2d.shape[0].value
+        P = proj_pts2d.shape[1].value
+        proj_indices = tf.concat(
+                          [tf.expand_dims(tf.tile(tf.reshape(tf.range(0,B), [B,1]), [1,P]), axis=-1), #(B,P,1)
+                           proj_pts2d],   #(B,P,2)
+                          axis=-1)    #(B,P,3)
+        '''
+        NumPy version: if P is None, by using tf.py_func, P should be determined
+        #############
+        B = proj_pts2d.shape[0]
+        P = proj_pts2d.shape[1]
+        proj_indices = np.concatenate(
+                        (np.expand_dims(np.tile(np.arange(0, B).reshape((B,1)), (1,P)), axis=-1),
+                         proj_pts2d),
+                        axis=-1)
+        '''
+        return proj_indices
+
     def build(self):
 
         # Setup input placeholders
@@ -292,7 +326,7 @@ class RpnModel(model.DetectionModel):
 
         # Setup feature extractors
         self._set_up_feature_extractors()
-
+        
         # branch-1: foreground point segmentation
         #########################################
         with tf.variable_scope('foreground_segmentation'):
@@ -306,31 +340,74 @@ class RpnModel(model.DetectionModel):
         label_segs = self.placeholders[self.PL_LABEL_SEGS] #(B,P,8)
         label_cls = label_segs[:,:,0]
         label_box_3d = label_segs[:,:,1:]
-        # foreground point masking
-        with tf.variable_scope('foreground_masking'):
-            if self._train_val_test in ['train', 'val']:
-                self._foreground_mask = label_cls > 0 #(B,P)
-            else:
-               self._foreground_mask = seg_preds > 0 #(B,P)
-            
-            fg_indices = model_util.point_cloud_masking(self._foreground_mask, self.NUM_FG_POINT) #(B,F,2)
-            foreground_pts = tf.reshape(tf.gather_nd(self._pc_pts, fg_indices),
-                                        [self._batch_size, self.NUM_FG_POINT, self._pc_pts.shape[2].value]) #(B,F,3)
-            foreground_fts = tf.reshape(tf.gather_nd(self._pc_fts, fg_indices),
-                                        [self._batch_size, self.NUM_FG_POINT, self._pc_fts.shape[2].value]) #(B,F,C)
-            foreground_preds = tf.reshape(tf.gather_nd(seg_preds, fg_indices),
-                                          [self._batch_size, self.NUM_FG_POINT])  #(B,F)
-            foreground_scores = tf.reshape(tf.gather_nd(seg_scores, fg_indices),
-                                           [self._batch_size, self.NUM_FG_POINT]) #(B,F)
-            
-            foreground_label_boxes_3d = tf.reshape(tf.gather_nd(label_box_3d, fg_indices),
-                                                   [self._batch_size, self.NUM_FG_POINT, 7]) #(B,F,7)
         
+        # foreground point masking
+        with tf.variable_scope('fg_masking'):
+            if self._train_val_test in ['train', 'val']:
+                self._fg_mask = label_cls > 0 #(B,P)
+            else:
+               self._fg_mask = seg_preds > 0 #(B,P)
+            
+            fg_indices = model_util.point_cloud_masking(self._fg_mask, self.NUM_FG_POINT) #(B,F,2)
+            fg_pts = tf.reshape(tf.gather_nd(self._pc_pts, fg_indices),
+                                [self._batch_size, self.NUM_FG_POINT, self._pc_pts.shape[2].value]) #(B,F,3)
+            fg_fts = tf.reshape(tf.gather_nd(self._pc_fts, fg_indices),
+                                [self._batch_size, self.NUM_FG_POINT, self._pc_fts.shape[2].value]) #(B,F,C+C1)
+            fg_preds = tf.reshape(tf.gather_nd(seg_preds, fg_indices),
+                                  [self._batch_size, self.NUM_FG_POINT])  #(B,F)
+            fg_scores = tf.reshape(tf.gather_nd(seg_scores, fg_indices),
+                                   [self._batch_size, self.NUM_FG_POINT]) #(B,F)
+            fg_label_boxes_3d = tf.reshape(tf.gather_nd(label_box_3d, fg_indices),
+                                           [self._batch_size, self.NUM_FG_POINT, 7]) #(B,F,7)
+
+        # fuse fg pc + img features
+        #########################################
+        with tf.variable_scope('fts_fuse'):
+            proj_pts2d = projection.tf_rect_to_image(fg_pts, self.placeholders[self.PL_CALIB_P2]) #(B,F,2)
+            proj_pts2d = tf.cast(proj_pts2d, tf.int32) #(B,F,2)
+            proj_indices = self._get_proj_indices(proj_pts2d) #(B,F,3)
+            self._proj_indices = tf.gather(proj_indices, [0,2,1], axis=-1) # (B,F,3), image's shape is (y,x)
+            proj_img_fts = tf.gather_nd(self._img_fts, self._proj_indices) # (B,F,C1)
+            
+            fusion_mean_div_factor = 2.0
+            # If both img and pc probabilites are set to 1.0, don't do
+            # path drop.
+            if not (self._path_drop_probabilities[0] ==
+                    self._path_drop_probabilities[1] == 1.0):
+                with tf.variable_scope('rpn_path_drop'):
+
+                    random_values = tf.random_uniform(shape=[3],
+                                                      minval=0.0,
+                                                      maxval=1.0)
+
+                    img_mask, pc_mask = self.create_path_drop_masks(
+                        self._path_drop_probabilities[0],
+                        self._path_drop_probabilities[1],
+                        random_values)
+
+                    fg_fts = tf.multiply(fg_fts, pc_mask)
+                    proj_img_fts = tf.multiply(proj_img_fts, img_mask)
+
+                    self.img_path_drop_mask = img_mask
+                    self.pc_path_drop_mask = pc_mask
+
+                    # Overwrite the division factor
+                    fusion_mean_div_factor = img_mask + pc_mask
+
+            if self._fusion_method == 'mean':
+                assert(self._pc_fts.shape[-1].value == self._img_fts.shape[-1].value)
+                tf_features_sum = tf.add(fg_fts, proj_img_fts)
+                fg_fuse_fts = tf.divide(tf_features_sum, fusion_mean_div_factor) #(B,F,C)
+            elif self._fusion_method == 'concat':
+                fg_fuse_fts = tf.concat([fg_fts, proj_img_fts], axis=-1) #(B,F,C+C1)
+            else:
+                raise ValueError('Invalid fusion method', self._fusion_method)
+
         # branch-2: bin-based 3D proposal generation
         #########################################
         with tf.variable_scope('bin_based_rpn'):
             # Parse rpn layers config
-            fc_layers = [foreground_fts]
+            fc_layers = [fg_fuse_fts]
             layers_config = self._config.layers_config.rpn_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
                 C = layer_param.C
@@ -367,11 +444,11 @@ class RpnModel(model.DetectionModel):
                 res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta)
             
             mean_sizes = self._gather_mean_sizes(
-                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)), foreground_preds)
+                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)), fg_preds)
             
             with tf.variable_scope('decoding'):
                 proposals = bin_based_box3d_encoder.tf_decode(
-                        foreground_pts, 0,
+                        fg_pts, 0,
                         bin_x, res_x_norm,
                         bin_z, res_z_norm,
                         bin_theta, res_theta_norm,
@@ -438,7 +515,7 @@ class RpnModel(model.DetectionModel):
                     bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
                     bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
                     bin_theta_scores = tf.reduce_max(tf.nn.softmax(bin_theta_logits), axis=-1)
-                    confidence = foreground_scores * bin_x_scores * bin_z_scores * bin_theta_scores
+                    confidence = fg_scores * bin_x_scores * bin_z_scores * bin_theta_scores
                     nms_indices = tf.map_fn(
                         sb_nms_fn,
                         elems=[bev_proposal_boxes, confidence],
@@ -455,8 +532,8 @@ class RpnModel(model.DetectionModel):
                 off_value=0.0)
         
         with tf.variable_scope('segmentation_accuracy'):
-            num_foreground_pts = tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32)) / self._batch_size
-            tf.summary.scalar('foreground_points_num', num_foreground_pts)
+            num_fg_pts = tf.reduce_sum(tf.cast(self._fg_mask, tf.float32)) / self._batch_size
+            tf.summary.scalar('foreground_points_num', num_fg_pts)
             # seg accuracy
             all_ones = tf.ones_like(seg_preds, dtype=tf.float32)
             num_total_pts = tf.reduce_sum(all_ones)
@@ -469,7 +546,7 @@ class RpnModel(model.DetectionModel):
         with tf.variable_scope('box_cls_reg_gt'):
             (bin_x_gt, res_x_gt, bin_z_gt, res_z_gt, 
              bin_theta_gt, res_theta_gt, res_y_gt, res_size_gt) = bin_based_box3d_encoder.tf_encode(
-                foreground_pts, 0, foreground_label_boxes_3d, mean_sizes,
+                fg_pts, 0, fg_label_boxes_3d, mean_sizes,
                 self.S, self.DELTA, self.R, self.DELTA_THETA)
             
             bin_x_gt_one_hot = tf.one_hot(
@@ -507,13 +584,13 @@ class RpnModel(model.DetectionModel):
             # Proposals after nms
             predictions[self.PRED_NMS_INDICES] = nms_indices
             predictions[self.PRED_PROPOSALS] = proposals
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = foreground_scores
+            predictions[self.PRED_OBJECTNESS_SOFTMAX] = fg_scores
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_NMS_INDICES] = nms_indices
             predictions[self.PRED_PROPOSALS] = proposals
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = foreground_scores
+            predictions[self.PRED_OBJECTNESS_SOFTMAX] = fg_scores
         return predictions
 
     def _parse_rpn_output(self, rpn_output):
@@ -597,16 +674,16 @@ class RpnModel(model.DetectionModel):
         
         batch_pc_inputs = []
         batch_label_segs = []
-        #batch_label_boxes_3d = []
+        batch_img_inputs = []
+        batch_calib_inputs = []
         self._samples_info.clear()
         for sample in samples:
             # Network input data
-            # image_input = sample.get(constants.KEY_IMAGE_INPUT)
-            # Image shape (h, w)
-            # image_shape = [image_input.shape[0], image_input.shape[1]]
             pc_input = sample.get(constants.KEY_POINT_CLOUD)
             label_seg = sample.get(constants.KEY_LABEL_SEG)
-            pool_size = pc_input.shape[0]
+            img_input = sample.get(constants.KEY_IMAGE_INPUT)
+            stereo_calib_p2 = sample.get(constants.KEY_STEREO_CALIB_P2)
+            sample_name = sample.get(constants.KEY_SAMPLE_NAME)
             
             def random_sample(pool_size, sample_num):
                 if pool_size > sample_num:
@@ -616,6 +693,7 @@ class RpnModel(model.DetectionModel):
                                               np.random.choice(pool_size, sample_num - pool_size, replace=True)))
                 return choices
             
+            pool_size = pc_input.shape[0]
             while True: 
                 choices = random_sample(pool_size, pc_sample_pts)
                 pc_input_sampled = pc_input[choices]
@@ -627,23 +705,24 @@ class RpnModel(model.DetectionModel):
             
             batch_pc_inputs.append(pc_input_sampled)
             batch_label_segs.append(label_seg_sampled)
+            img_input_resized = cv2.resize(img_input, (self._img_w, self._img_h))
+            batch_img_inputs.append(img_input_resized)
+            stereo_calib_p2[0,:] *= (self._img_w / img_input.shape[1])
+            stereo_calib_p2[1,:] *= (self._img_h / img_input.shape[0])
+            batch_calib_inputs.append(stereo_calib_p2)
             
             # Temporary sample info for debugging
-            sample_name = sample.get(constants.KEY_SAMPLE_NAME)
             self._samples_info.append(sample_name)
 
         # this is a list to match the explicit shape for the placeholder
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
 
         # Fill in the rest
-        # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
         self._placeholder_inputs[self.PL_PC_INPUT] = np.asarray(batch_pc_inputs)
         self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(batch_label_segs)
+        self._placeholder_inputs[self.PL_IMG_INPUT] = np.asarray(batch_img_inputs)
+        self._placeholder_inputs[self.PL_CALIB_P2] = np.asarray(batch_calib_inputs)
         
-        # Sample Info
-        # img_idx is a list to match the placeholder shape
-        # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
-
         # Create a feed_dict and fill it with input values
         feed_dict = dict()
         for key, value in self.placeholders.items():
@@ -681,8 +760,8 @@ class RpnModel(model.DetectionModel):
                                                     weight=cls_loss_weight)
                 with tf.variable_scope('cls_norm'):
                     # normalize by the number of foreground pts
-                    num_foreground_pts = self._batch_size * self.NUM_FG_POINT
-                    bin_classification_loss /= num_foreground_pts
+                    num_fg_pts = self._batch_size * self.NUM_FG_POINT
+                    bin_classification_loss /= num_fg_pts
                     tf.summary.scalar('bin_classification', bin_classification_loss)
 
             with tf.variable_scope('regression'):
@@ -696,7 +775,7 @@ class RpnModel(model.DetectionModel):
                                                 weight=reg_loss_weight)
                 with tf.variable_scope('reg_norm'):
                     # normalize by the number of foreground pts
-                    regression_loss /= num_foreground_pts
+                    regression_loss /= num_fg_pts
                     tf.summary.scalar('regression', regression_loss)
             
             with tf.variable_scope('rpn_loss'):
@@ -709,3 +788,66 @@ class RpnModel(model.DetectionModel):
         }
 
         return loss_dict, rpn_loss
+    
+    def create_path_drop_masks(self,
+                               p_img,
+                               p_bev,
+                               random_values):
+        """Determines global path drop decision based on given probabilities.
+
+        Args:
+            p_img: A tensor of float32, probability of keeping image branch
+            p_bev: A tensor of float32, probability of keeping bev branch
+            random_values: A tensor of float32 of shape [3], the results
+                of coin flips, values should range from 0.0 - 1.0.
+
+        Returns:
+            final_img_mask: A constant tensor mask containing either one or zero
+                depending on the final coin flip probability.
+            final_bev_mask: A constant tensor mask containing either one or zero
+                depending on the final coin flip probability.
+        """
+
+        def keep_branch(): return tf.constant(1.0)
+
+        def kill_branch(): return tf.constant(0.0)
+
+        # The logic works as follows:
+        # We have flipped 3 coins, first determines the chance of keeping
+        # the image branch, second determines keeping bev branch, the third
+        # makes the final decision in the case where both branches were killed
+        # off, otherwise the initial img and bev chances are kept.
+
+        img_chances = tf.case([(tf.less(random_values[0], p_img),
+                                keep_branch)], default=kill_branch)
+
+        bev_chances = tf.case([(tf.less(random_values[1], p_bev),
+                                keep_branch)], default=kill_branch)
+
+        # Decision to determine whether both branches were killed off
+        third_flip = tf.logical_or(tf.cast(img_chances, dtype=tf.bool),
+                                   tf.cast(bev_chances, dtype=tf.bool))
+        third_flip = tf.cast(third_flip, dtype=tf.float32)
+
+        # Make a second choice, for the third case
+        # Here we use a 50/50 chance to keep either image or bev
+        # If its greater than 0.5, keep the image
+        img_second_flip = tf.case([(tf.greater(random_values[2], 0.5),
+                                    keep_branch)],
+                                  default=kill_branch)
+        # If its less than or equal to 0.5, keep bev
+        bev_second_flip = tf.case([(tf.less_equal(random_values[2], 0.5),
+                                    keep_branch)],
+                                  default=kill_branch)
+
+        # Use lambda since this returns another condition and it needs to
+        # be callable
+        final_img_mask = tf.case([(tf.equal(third_flip, 1),
+                                   lambda: img_chances)],
+                                 default=lambda: img_second_flip)
+
+        final_bev_mask = tf.case([(tf.equal(third_flip, 1),
+                                   lambda: bev_chances)],
+                                 default=lambda: bev_second_flip)
+
+        return final_img_mask, final_bev_mask
