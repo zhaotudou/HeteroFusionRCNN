@@ -333,7 +333,7 @@ class Evaluator:
                 total_feed_dict_time, total_inference_time)
 
         print("Step {}: Finished evaluation, results saved to {}".format(
-            global_step, prop_score_predictions_dir))
+            global_step, avod_predictions_dir if self.full_model else prop_score_predictions_dir))
 
     def run_latest_checkpoints(self):
         """Evaluation function for evaluating all the existing checkpoints.
