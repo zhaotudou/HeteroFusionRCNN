@@ -229,7 +229,7 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
                       to filter the point cloud [w, h]
     :param min_intensity: (optional) minimum intensity required to keep a point
 
-    :return: (3, N) point_cloud in the form [[x,...][y,...][z,...]]
+    :return: (4, N) point_cloud in the form [[x,...][y,...][z,...][i,...]]
     """
 
     # Read calibration info
@@ -242,12 +242,13 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
 
     # The given image is assumed to be a 2D image
     if not im_size:
-        point_cloud = pts.T
+        point_cloud = np.vstack((pts, np.reshape(i, (-1,1)))).T
         return point_cloud
 
     else:
         # Only keep points in front of camera (positive z)
-        pts = pts[pts[:, 2] > 0]
+        range_filter = pts[:, 2] > 0
+        pts = pts[range_filter]
         point_cloud = pts.T
 
         # Project to image frame
@@ -258,6 +259,10 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
                        (point_in_im[:, 0] < im_size[0]) & \
                        (point_in_im[:, 1] > 0) & \
                        (point_in_im[:, 1] < im_size[1])
+
+    # add intensity to pts
+    i_filtered = i[range_filter]
+    pts = np.hstack((pts, np.reshape(i_filtered,(-1,1))))
 
     if not min_intensity:
         return pts[image_filter].T

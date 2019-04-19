@@ -57,8 +57,6 @@ message InputConfig {
     // PC dimensions
     optional int32 pc_sample_pts = 2 [default = 16384];
     optional int32 pc_data_dim = 3 [default = 3];
-    required bool use_extra_features = 4;
-    required bool with_normal_feature = 5;
 
     optional float pc_sample_pts_variance = 6 [default = 0.125];
     optional float pc_sample_pts_clip = 7 [default = 0.25];
@@ -92,6 +90,9 @@ message RpnConfig {
     // in fraction of PI
     required float rpn_theta_search_range = 9;
     required int32 rpn_theta_bin_num = 10;
+
+    // Whether to use intensity feature
+    required bool rpn_use_intensity_feature = 11;
 }
 
 message AvodConfig {
@@ -120,6 +121,9 @@ message AvodConfig {
     required float avod_pooling_context_length = 11; 
     
     optional MiniBatchConfig mini_batch_config = 12;
+
+    // Whether to use intensity feature along with mask and distance to sensor features
+    required bool avod_use_intensity_feature = 13;
 }
 
 message LossConfig {

@@ -84,6 +84,7 @@ class RpnModel(model.DetectionModel):
 
         # Rpn config
         rpn_config = self._config.rpn_config
+        self._use_intensity_feature = rpn_config.rpn_use_intensity_feature
         self._proposal_roi_crop_size = rpn_config.rpn_proposal_roi_crop_size
         self._fusion_method = rpn_config.rpn_fusion_method
 
@@ -161,13 +162,14 @@ class RpnModel(model.DetectionModel):
             pc_input_placeholder = self._add_placeholder(
                                         tf.float32, 
                                         (self._batch_size, None, self._pc_data_dim),
-                                        self.PL_PC_INPUTS) #(B,P,3)
+                                        self.PL_PC_INPUTS) #(B,P,C)
 
             self._pc_pts_preprocessed, self._pc_fts_preprocessed = \
                 self._pc_feature_extractor.preprocess_input(
                     pc_input_placeholder, 
                     self._config.input_config,
                     self._is_training)
+            self._pc_intensities = self._pc_fts_preprocessed
         
         with tf.variable_scope('pl_labels'):
             self._add_placeholder(tf.float32, [self._batch_size, None, 8], 
@@ -177,8 +179,9 @@ class RpnModel(model.DetectionModel):
         """Sets up feature extractors and stores feature maps and
         bottlenecks as member variables.
         """
+        if not self._use_intensity_feature:
+            self._pc_fts_preprocessed = None
 
-        #self.bev_feature_maps, self.bev_end_points = \
         self._pc_pts, self._pc_fts = \
             self._pc_feature_extractor.build(
                 self._pc_pts_preprocessed,
@@ -504,7 +507,7 @@ class RpnModel(model.DetectionModel):
     def _parse_rpn_output(self, rpn_output):
         '''
         Input:
-            rpn_output: (B, p, NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4
+            rpn_output: (B, p, NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4)
         Output:
             bin_x_logits
             res_x_norms

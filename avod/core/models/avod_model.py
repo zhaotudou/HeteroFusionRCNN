@@ -96,6 +96,7 @@ class AvodModel(model.DetectionModel):
 
         # AVOD config
         avod_config = self._config.avod_config
+        self._use_intensity_feature = avod_config.avod_use_intensity_feature
         self._proposal_roi_crop_size = avod_config.avod_proposal_roi_crop_size
         self._positive_selection = avod_config.avod_positive_selection
         self._nms_size = avod_config.avod_nms_size
@@ -273,6 +274,7 @@ class AvodModel(model.DetectionModel):
         pc_pts = rpn_model._pc_pts  #(B,P,3)
         pc_fts = rpn_model._pc_fts  #(B,P,C)
         foreground_mask = rpn_model._foreground_mask #(B,P)
+        pc_intensities = rpn_model._pc_intensities # (B,P,1)
         
         self._set_up_input_pls()
         proposals = self.placeholders[self.PL_PROPOSALS]    #(B,n,7)
@@ -331,13 +333,15 @@ class AvodModel(model.DetectionModel):
             proposals = tf.reshape(proposals, [-1,7]) #(N=Bn,7)
             expanded_proposals = tf.reshape(expanded_proposals, [-1,7]) #(N=Bn,7)
             from cropping import tf_cropping
-            crop_pts, crop_fts, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
-                pc_pts,
-                pc_fts,
-                foreground_mask,
-                box_8c_encoder.tf_box_3d_to_box_8co(expanded_proposals),
-                tf_box_indices,
-                self._proposal_roi_crop_size)   #(N,R,3), (N,R,C), (N,R), _, (N)
+            crop_pts, crop_fts, crop_intensities, crop_mask, _, non_empty_box_mask = \
+                tf_cropping.pc_crop_and_sample(
+                    pc_pts,
+                    pc_fts,
+                    pc_intensities,
+                    foreground_mask,
+                    box_8c_encoder.tf_box_3d_to_box_8co(expanded_proposals),
+                    tf_box_indices,
+                    self._proposal_roi_crop_size)   #(N,R,3), (N,R,C), (N,R,1) (N,R), _, (N)
             tf.summary.histogram('non_empty_box_mask', tf.cast(non_empty_box_mask, tf.int8))
 
             '''
@@ -360,10 +364,17 @@ class AvodModel(model.DetectionModel):
                                     tf.square(crop_pts[:,:,2])
                                 )
 
-            local_feature_input = tf.concat([crop_pts_ct, 
+            if self._use_intensity_feature:
+                local_feature_input = tf.concat([crop_pts_ct, 
+                                            crop_intensities,
                                             tf.expand_dims(tf.to_float(crop_mask), -1), 
                                             tf.expand_dims(crop_distance, -1)], 
-                                           axis=-1)
+                                            axis=-1)
+            else:    
+                local_feature_input = tf.concat([crop_pts_ct, 
+                                            tf.expand_dims(tf.to_float(crop_mask), -1), 
+                                            tf.expand_dims(crop_distance, -1)], 
+                                            axis=-1)
             
             with tf.variable_scope('mlp'):
                 fc_layers = [local_feature_input]

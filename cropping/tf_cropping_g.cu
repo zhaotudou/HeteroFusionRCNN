@@ -43,9 +43,9 @@ __device__ bool is_point_inside(float px, float py, float pz,
 }
 
 __global__ void pccropandsampleKernel(
-    const float* pts_data, const float* fts_data, const bool* mask_data, const float* boxes_data, const int* box_ind_data,
-    int num_boxes, int batch, int npts, int resize, int channel,
-    float* crop_pts_data, float* crop_fts_data, bool* crop_mask_data, int* crop_ind_data, bool* non_empty_box_data) {
+    const float* pts_data, const float* fts_data, const float* intensities_data, const bool* mask_data, const float* boxes_data, const int* box_ind_data,
+    int num_boxes, int batch, int npts, int resize, int channel, int intensity_channel,
+    float* crop_pts_data, float* crop_fts_data, float* crop_intensities_data, bool* crop_mask_data, int* crop_ind_data, bool* non_empty_box_data) {
   
   __shared__ unsigned int box_pts_num;
   for (int b=blockIdx.x; b<num_boxes; b+=gridDim.x) {
@@ -72,9 +72,11 @@ __global__ void pccropandsampleKernel(
     int bch = box_ind_data[b];
     const float *pts = pts_data + bch * npts * 3;
     const float *fts = fts_data + bch * npts * channel;
+    const float *intensities = intensities_data + bch * npts * intensity_channel;
     const bool *mask = mask_data + bch * npts;
     float *crop_pts = crop_pts_data + b * resize * 3;
     float *crop_fts = crop_fts_data + b * resize * channel;
+    float *crop_intensities = crop_intensities_data + b * resize * intensity_channel;
     bool *crop_mask = crop_mask_data + b * resize;
     int *crop_ind = crop_ind_data + b * resize;
     for (int p=threadIdx.x; p<npts; p+=blockDim.x) {
@@ -89,6 +91,9 @@ __global__ void pccropandsampleKernel(
           crop_pts[pos*3 + 2] = pz; 
           for (int c=0; c < channel; c++) {
             crop_fts[pos * channel + c] = fts[p * channel + c];
+          }
+          for (int c=0; c < intensity_channel; c++) {
+            crop_intensities[pos * intensity_channel + c] = intensities[p * intensity_channel + c];
           }
           crop_mask[pos] = mask[p];
           crop_ind[pos] = p;
@@ -116,6 +121,9 @@ __global__ void pccropandsampleKernel(
           crop_pts[box_pts_num*3 + 2] = crop_pts[idx*3 + 2];
           for(int c=0; c < channel; c++) {
             crop_fts[box_pts_num * channel + c] = crop_fts[idx * channel + c];
+          }
+          for(int c=0; c < intensity_channel; c++) {
+            crop_intensities[box_pts_num * intensity_channel + c] = crop_intensities[idx * intensity_channel + c];
           }
           crop_mask[box_pts_num] = crop_mask[idx];
           crop_ind[box_pts_num] = crop_ind[idx];
@@ -147,12 +155,12 @@ __global__ void pccropandsamplegradftsKernel(
 }
 
 void pccropandsample_gpu(
-    const float* pts_data, const float* fts_data, const bool* mask_data, const float* boxes_data, const int* box_ind_data,
-    int num_boxes, int batch, int npts, int resize, int channel,
-    float* crop_pts_data, float* crop_fts_data, bool* crop_mask_data, int* crop_ind_data, bool* non_empty_box_data) {
-  pccropandsampleKernel<<<32, 512>>>(pts_data, fts_data, mask_data, boxes_data, box_ind_data, 
-                                   num_boxes, batch, npts, resize, channel,
-                                   crop_pts_data, crop_fts_data, crop_mask_data, crop_ind_data, non_empty_box_data);
+    const float* pts_data, const float* fts_data, const float* intensities_data, const bool* mask_data, const float* boxes_data, const int* box_ind_data,
+    int num_boxes, int batch, int npts, int resize, int channel, int intensity_channel,
+    float* crop_pts_data, float* crop_fts_data, float* crop_intensities_data, bool* crop_mask_data, int* crop_ind_data, bool* non_empty_box_data) {
+  pccropandsampleKernel<<<32, 512>>>(pts_data, fts_data, intensities_data, mask_data, boxes_data, box_ind_data, 
+                                   num_boxes, batch, npts, resize, channel, intensity_channel,
+                                   crop_pts_data, crop_fts_data, crop_intensities_data, crop_mask_data, crop_ind_data, non_empty_box_data);
 }
 
 void pccropandsamplegradfts_gpu(

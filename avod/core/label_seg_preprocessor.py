@@ -75,7 +75,7 @@ class LabelSegPreprocessor(object):
 
             image = Image.open(dataset.get_rgb_image_path(sample_name))
             image_shape = [image.size[1], image.size[0]]
-            point_cloud = dataset_utils.get_point_cloud(dataset.pc_source,
+            point_cloud, _ = dataset_utils.get_point_cloud(dataset.pc_source,
                                                            img_idx,
                                                            image_shape)
             point_cloud = point_cloud.T

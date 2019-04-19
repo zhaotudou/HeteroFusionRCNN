@@ -9,11 +9,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 cropping_module=tf.load_op_library(os.path.join(BASE_DIR, 'tf_cropping_so.so'))
 
-def pc_crop_and_sample(pts, fts, mask, boxes, box_ind, resize):
+def pc_crop_and_sample(pts, fts, intensities, mask, boxes, box_ind, resize):
     '''
     input:
         pts:    (B, P, 3), [x, y, z],   float32
         fts:    (B, P, C), [c1,c2,...]  float32
+        intensities: (B, P, 1), [i] float32
         mask:   (B, P) point mask label, bool
         boxes:  (N, 3, 8), 8 corners (x,y,z), float32
         box_ind:(N)        [b]  which batch that box belongs to, int32
@@ -21,11 +22,12 @@ def pc_crop_and_sample(pts, fts, mask, boxes, box_ind, resize):
     output:
         crop_pts:   (N, R, 3)   float32
         crop_fts:   (N, R, C)   float32
+        crop_intensity: (N, R, 1) float32
         crop_mask:  (N, R)      bool
         crop_ind:   (N, R)      int32,  which point to crop, complementary to box_ind
         non_empty_box_mask:  (N)         bool
     '''
-    return cropping_module.pc_crop_and_sample(pts, fts, mask, boxes, box_ind, resize)
+    return cropping_module.pc_crop_and_sample(pts, fts, intensities, mask, boxes, box_ind, resize)
 ops.NoGradient('PcCropAndSample')
 '''
 @ops.RegisterGradient("PcCropAndSample")
@@ -49,6 +51,7 @@ if __name__=='__main__':
     batch_size = 1
     pts = np.asarray([[[1.0, 0, 0.1],[-0.3, -0.5, -0.3]]], dtype=np.float32)
     fts = np.random.rand(batch_size,2,1).astype('float32')
+    intensities = np.arange(batch_size*2).reshape(batch_size,2,1).astype('float32')
     mask = np.random.rand(batch_size,2).astype('bool')
     boxes_3d = np.asarray([0, 0, 0, 1, 1, 1, 3.14/4], dtype=np.float32)
     boxes= box_8c_encoder.np_box_3d_to_box_8co(boxes_3d).reshape(-1,3,8).astype('float32')
@@ -58,21 +61,24 @@ if __name__=='__main__':
 
     pts = tf.constant(pts)
     fts = tf.constant(fts)
+    intensities = tf.constant(intensities)
     mask = tf.constant(mask)
     boxes = tf.constant(boxes)
     box_ind = tf.constant(box_ind)
-    crop_pts, crop_fts, crop_mask, crop_ind, non_empty_box_mask = pc_crop_and_sample(pts, fts, mask, boxes, box_ind, 1)
+    crop_pts, crop_fts, crop_intensities, crop_mask, crop_ind, non_empty_box_mask = pc_crop_and_sample(pts, fts, intensities, mask, boxes, box_ind, 1)
     
     non_empty_fts = tf.boolean_mask(crop_fts, non_empty_box_mask)
 
     with tf.Session() as sess:
-        crop_pts, crop_fts, crop_mask, crop_ind, non_empty_box_mask, non_empty_fts = sess.run(
-        [crop_pts, crop_fts, crop_mask, crop_ind, non_empty_box_mask, non_empty_fts])
+        crop_pts, crop_fts, crop_intensities, crop_mask, crop_ind, non_empty_box_mask, non_empty_fts = sess.run(
+        [crop_pts, crop_fts, crop_intensities, crop_mask, crop_ind, non_empty_box_mask, non_empty_fts])
 
     print("crop_pts:")
     print(crop_pts)
     print("crop_fts:")
     print(crop_fts)
+    print("crop_intensities:")
+    print(crop_intensities)
     print("crop_mask:")
     print(crop_mask)
     print("crop_ind:")
