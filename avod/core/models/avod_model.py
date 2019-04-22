@@ -162,7 +162,8 @@ class AvodModel(model.DetectionModel):
              self._add_placeholder(tf.float32, [self._batch_size, None, 7], self.PL_PROPOSALS)
              self._add_placeholder(tf.float32, [self._batch_size, None, 9], self.PL_PROPOSALS_INFO)
     
-    def _canonical_transform(self, pts, boxes_3d):
+    @classmethod
+    def _canonical_transform(cls, pts, boxes_3d):
         '''
         Canonical Coordinate Transform
         Input:
@@ -171,6 +172,8 @@ class AvodModel(model.DetectionModel):
         Output:
             pts_ct: (N,R,3) [x',y',z'] float32
         '''
+        pts_shift = pts - tf.expand_dims(boxes_3d[:,0:3], 1)
+        
         all_rys = boxes_3d[:, 6] * -1
         ry_sin = tf.sin(all_rys)
         ry_cos = tf.cos(all_rys)
@@ -183,15 +186,8 @@ class AvodModel(model.DetectionModel):
                              tf.stack([zeros, ones, zeros], axis=1),
                              tf.stack([-ry_sin, zeros, ry_cos], axis=1)],
                             axis=2)
-        pts_rot = tf.matmul(rot_mats, pts, transpose_a=True, transpose_b=True)
-        
-        pts_ct_x = pts_rot[:,0] - tf.reshape(boxes_3d[:,0], [-1,1])
-        pts_ct_y = pts_rot[:,1] - tf.reshape(boxes_3d[:,1], [-1,1])
-        pts_ct_z = pts_rot[:,2] - tf.reshape(boxes_3d[:,2], [-1,1])
-
-        pts_ct = tf.stack([pts_ct_x, pts_ct_y, pts_ct_z], axis=1)
-
-        return tf.matrix_transpose(pts_ct)
+        pts_rot = tf.matmul(rot_mats, pts_shift, transpose_a=True, transpose_b=True)
+        return tf.matrix_transpose(pts_rot)
 
     def _gather_residuals(self, res_x_norms, res_z_norms, res_theta_norms,
                                 bin_x, bin_z, bin_theta):
@@ -358,7 +354,7 @@ class AvodModel(model.DetectionModel):
                                     tf.square(crop_pts[:,:,0]) + \
                                     tf.square(crop_pts[:,:,1]) + \
                                     tf.square(crop_pts[:,:,2])
-                                )
+                                ) / self._bev_extents[1,1] - 0.5
 
             local_feature_input = tf.concat([crop_pts_ct, 
                                             tf.expand_dims(tf.to_float(crop_mask), -1), 

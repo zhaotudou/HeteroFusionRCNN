@@ -40,6 +40,30 @@ class AvodModelTest(tf.test.TestCase):
             sess.run(init)
             loss_dict_out = sess.run(loss, feed_dict=feed_dict)
             print('Losses ', loss_dict_out)
+    
+    def test_canonical_transform(self):
+        pts = np.array([[[2.0, 0.0, 2.0],
+                         [2.0, 0.0, 3.0]],
+                        [[3.5, 0.0, 0.5],
+                         [4.0, 0.0, 1.0]]])
+        boxes_3d = np.array([[2.0, 0.0, 2.0, 1.414, 1.414, 1.0, -np.pi/4],
+                             [3.0, 0.0, 0.5, 2.000, 1.000, 1.0, 0.0]])
+        
+        pts_tensor = tf.convert_to_tensor(pts, dtype=tf.float32)
+        boxes_3d_tensor = tf.convert_to_tensor(boxes_3d, dtype=tf.float32)
+
+        pts_ct = AvodModel._canonical_transform(pts_tensor, boxes_3d_tensor)
+        '''
+        expceted output:
+
+        [[[0.         0.         0.        ]
+          [0.70710677 0.         0.70710677]]
+         [[0.5        0.         0.        ]
+         [1.         0.         0.5       ]]]
+        '''
+        with self.test_session() as sess:
+            pts_ct = sess.run(pts_ct)
+            print(pts_ct)
 
     def test_avod_loss_correct_class_mask(self):
         # since its not easy to test the loss function directly

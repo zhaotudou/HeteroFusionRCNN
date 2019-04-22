@@ -84,7 +84,6 @@ class RpnModel(model.DetectionModel):
 
         # Rpn config
         rpn_config = self._config.rpn_config
-        self._proposal_roi_crop_size = rpn_config.rpn_proposal_roi_crop_size
         self._fusion_method = rpn_config.rpn_fusion_method
 
         if self._train_val_test in ["train", "val"]:

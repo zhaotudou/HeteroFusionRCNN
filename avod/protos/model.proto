@@ -69,9 +69,6 @@ message InputConfig {
 }
 
 message RpnConfig {
-    // RPN proposal ROI crop size
-    required int32 rpn_proposal_roi_crop_size = 1;
-
     // RPN proposal ROI fusion method, one of ['mean', 'concat']
     required string rpn_fusion_method = 2;
 
