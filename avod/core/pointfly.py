@@ -130,10 +130,6 @@ def batch_distance_matrix_general(A, B):
     r_B = tf.reduce_sum(B * B, axis=2, keep_dims=True) # (N, P_B, 1)
     m = tf.matmul(A, tf.transpose(B, perm=(0, 2, 1)))  # (N, P_A, P_B)
     D = r_A - 2 * m + tf.transpose(r_B, perm=(0, 2, 1))# (N, P_A, P_B)
-    r_A = tf.reduce_sum(A * A, axis=2, keep_dims=True)
-    r_B = tf.reduce_sum(B * B, axis=2, keep_dims=True)
-    m = tf.matmul(A, tf.transpose(B, perm=(0, 2, 1)))
-    D = r_A - 2 * m + tf.transpose(r_B, perm=(0, 2, 1))
     return D
 
 
