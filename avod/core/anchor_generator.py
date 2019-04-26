@@ -37,6 +37,7 @@ import tensorflow as tf
 
 class AnchorGenerator(object):
     """Abstract base class for anchor generators."""
+
     __metaclass__ = ABCMeta
 
     @abstractmethod

@@ -41,11 +41,9 @@ def np_box_3d_to_box_4c(box_3d, ground_plane):
     half_dim_z = dim_z / 2
 
     # Box corners
-    x_corners = np.asarray([half_dim_x, half_dim_x,
-                            -half_dim_x, -half_dim_x])
+    x_corners = np.asarray([half_dim_x, half_dim_x, -half_dim_x, -half_dim_x])
 
-    z_corners = np.array([half_dim_z, -half_dim_z,
-                          -half_dim_z, half_dim_z])
+    z_corners = np.array([half_dim_z, -half_dim_z, -half_dim_z, half_dim_z])
 
     ry = box_3d[6]
 
@@ -57,9 +55,13 @@ def np_box_3d_to_box_4c(box_3d, ground_plane):
     ry_diff = ry - ortho_ry
 
     # Create transformation matrix, including rotation and translation
-    tr_mat = np.array([[np.cos(ry_diff), np.sin(ry_diff), centroid_x],
-                       [-np.sin(ry_diff), np.cos(ry_diff), centroid_z],
-                       [0, 0, 1]])
+    tr_mat = np.array(
+        [
+            [np.cos(ry_diff), np.sin(ry_diff), centroid_x],
+            [-np.sin(ry_diff), np.cos(ry_diff), centroid_z],
+            [0, 0, 1],
+        ]
+    )
 
     # Create a ones row
     ones_row = np.ones(x_corners.shape)
@@ -73,7 +75,8 @@ def np_box_3d_to_box_4c(box_3d, ground_plane):
 
     # Calculate height off ground plane
     ground_y = geometry_utils.calculate_plane_point(
-        ground_plane, [centroid_x, None, centroid_z])[1]
+        ground_plane, [centroid_x, None, centroid_z]
+    )[1]
     h1 = ground_y - centroid_y
     h2 = h1 + dim_y
 
@@ -108,11 +111,9 @@ def tf_box_3d_to_box_4c(boxes_3d, ground_plane):
     half_dim_z = dim_z / 2
 
     # Box corners
-    x_corners = tf.stack([half_dim_x, half_dim_x,
-                          -half_dim_x, -half_dim_x], axis=1)
+    x_corners = tf.stack([half_dim_x, half_dim_x, -half_dim_x, -half_dim_x], axis=1)
 
-    z_corners = tf.stack([half_dim_z, -half_dim_z,
-                          -half_dim_z, half_dim_z], axis=1)
+    z_corners = tf.stack([half_dim_z, -half_dim_z, -half_dim_z, half_dim_z], axis=1)
 
     # Rotations from boxes_3d
     all_rys = boxes_3d[:, 6]
@@ -128,19 +129,20 @@ def tf_box_3d_to_box_4c(boxes_3d, ground_plane):
 
     # Create transformation matrix, including rotation and translation
     tr_mat = tf.stack(
-        [tf.stack([tf.cos(ry_diffs), tf.sin(ry_diffs), centroid_x], axis=1),
-         tf.stack([-tf.sin(ry_diffs), tf.cos(ry_diffs), centroid_z], axis=1),
-         tf.stack([zeros, zeros, ones], axis=1)],
-        axis=2)
+        [
+            tf.stack([tf.cos(ry_diffs), tf.sin(ry_diffs), centroid_x], axis=1),
+            tf.stack([-tf.sin(ry_diffs), tf.cos(ry_diffs), centroid_z], axis=1),
+            tf.stack([zeros, zeros, ones], axis=1),
+        ],
+        axis=2,
+    )
 
     # Create a ones row
     ones_row = tf.ones_like(x_corners)
 
     # Append the column of ones to be able to multiply
     points_stacked = tf.stack([x_corners, z_corners, ones_row], axis=1)
-    corners = tf.matmul(tr_mat, points_stacked,
-                        transpose_a=True,
-                        transpose_b=False)
+    corners = tf.matmul(tr_mat, points_stacked, transpose_a=True, transpose_b=False)
 
     # Discard the last row (ones)
     corners = corners[:, 0:2]
@@ -237,8 +239,9 @@ def np_box_4c_to_box_3d(box_4c, ground_plane):
         ry_out = -np.arctan2(vec_34_12[1], vec_34_12[0])
 
         # New centroid
-        centroid = midpoint_34 + vec_34_12_norm * (min_l + max_l) / 2.0 + \
-            ortho_norm * w_diff
+        centroid = (
+            midpoint_34 + vec_34_12_norm * (min_l + max_l) / 2.0 + ortho_norm * w_diff
+        )
 
     else:
         # vec_23_14_mag longer
@@ -275,8 +278,9 @@ def np_box_4c_to_box_3d(box_4c, ground_plane):
         ry_out = -np.arctan2(vec_23_14[1], vec_23_14[0])
 
         # New centroid
-        centroid = midpoint_23 + vec_23_14_norm * (min_l + max_l) / 2.0 + \
-            ortho_norm * w_diff
+        centroid = (
+            midpoint_23 + vec_23_14_norm * (min_l + max_l) / 2.0 + ortho_norm * w_diff
+        )
 
     # Find new centroid y
     a = ground_plane[0]
@@ -296,14 +300,14 @@ def np_box_4c_to_box_3d(box_4c, ground_plane):
     centroid_y = ground_y - h1
     height_out = h2 - h1
 
-    box_3d_out = np.stack([centroid_x, centroid_y, centroid_z,
-                           length_out, width_out, height_out, ry_out])
+    box_3d_out = np.stack(
+        [centroid_x, centroid_y, centroid_z, length_out, width_out, height_out, ry_out]
+    )
 
     return box_3d_out
 
 
-def calculate_box_3d_info(vec_dir, vec_dir_mag,
-                          p1, p2, p3, p4, midpoint):
+def calculate_box_3d_info(vec_dir, vec_dir_mag, p1, p2, p3, p4, midpoint):
     """Calculates the box_3d centroid xz, l, w, and ry from the 4 points of
     a box_4c. To calculate length and width, points are projected onto the
     direction vector, and its normal. The centroid is calculated by adding
@@ -339,16 +343,11 @@ def calculate_box_3d_info(vec_dir, vec_dir_mag,
     max_l = tf.reduce_max(all_lengths, axis=1, keep_dims=True)
     length_out = max_l - min_l
 
-    vec_dir_ortho_norm = tf.stack([-vec_dir_norm[:, 1],
-                                   vec_dir_norm[:, 0]], axis=1)
-    w1 = tf.reduce_sum(tf.multiply(vec_mid_p1,
-                                   vec_dir_ortho_norm), axis=1)
-    w2 = tf.reduce_sum(tf.multiply(vec_mid_p2,
-                                   vec_dir_ortho_norm), axis=1)
-    w3 = tf.reduce_sum(tf.multiply(vec_mid_p3,
-                                   vec_dir_ortho_norm), axis=1)
-    w4 = tf.reduce_sum(tf.multiply(vec_mid_p4,
-                                   vec_dir_ortho_norm), axis=1)
+    vec_dir_ortho_norm = tf.stack([-vec_dir_norm[:, 1], vec_dir_norm[:, 0]], axis=1)
+    w1 = tf.reduce_sum(tf.multiply(vec_mid_p1, vec_dir_ortho_norm), axis=1)
+    w2 = tf.reduce_sum(tf.multiply(vec_mid_p2, vec_dir_ortho_norm), axis=1)
+    w3 = tf.reduce_sum(tf.multiply(vec_mid_p3, vec_dir_ortho_norm), axis=1)
+    w4 = tf.reduce_sum(tf.multiply(vec_mid_p4, vec_dir_ortho_norm), axis=1)
     all_widths = tf.stack([w1, w2, w3, w4], axis=1)
 
     min_w = tf.reduce_min(all_widths, axis=1)
@@ -359,9 +358,9 @@ def calculate_box_3d_info(vec_dir, vec_dir_mag,
     ry_out = tf.reshape(-tf.atan2(vec_dir[:, 1], vec_dir[:, 0]), [-1, 1])
 
     # New centroid
-    centroid = midpoint +\
-        vec_dir_norm * (min_l + max_l) / 2.0 + \
-        vec_dir_ortho_norm * w_diff
+    centroid = (
+        midpoint + vec_dir_norm * (min_l + max_l) / 2.0 + vec_dir_ortho_norm * w_diff
+    )
 
     return centroid, length_out, width_out, ry_out
 
@@ -403,31 +402,33 @@ def tf_box_4c_to_box_3d(boxes_4c, ground_plane):
     # then mask out the values from the shorter direction
 
     # vec_34_12_mag longer
-    vec_34_12_centroid, vec_34_12_length, vec_34_12_width, vec_34_12_ry = \
-        calculate_box_3d_info(vec_34_12, vec_34_12_mag,
-                              p1, p2, p3, p4, midpoint=midpoint_34)
+    vec_34_12_centroid, vec_34_12_length, vec_34_12_width, vec_34_12_ry = calculate_box_3d_info(
+        vec_34_12, vec_34_12_mag, p1, p2, p3, p4, midpoint=midpoint_34
+    )
 
     # vec_23_14_mag longer
-    vec_23_14_centroid, vec_23_14_length, vec_23_14_width, vec_23_14_ry = \
-        calculate_box_3d_info(vec_23_14, vec_23_14_mag,
-                              p1, p2, p3, p4, midpoint=midpoint_23)
+    vec_23_14_centroid, vec_23_14_length, vec_23_14_width, vec_23_14_ry = calculate_box_3d_info(
+        vec_23_14, vec_23_14_mag, p1, p2, p3, p4, midpoint=midpoint_23
+    )
 
     vec_34_12_mask = tf.greater(vec_34_12_mag, vec_23_14_mag)
     vec_23_14_mask = tf.logical_not(vec_34_12_mask)
 
-    vec_34_12_float_mask = tf.reshape(
-        tf.cast(vec_34_12_mask, tf.float32), [-1, 1])
-    vec_23_14_float_mask = tf.reshape(
-        tf.cast(vec_23_14_mask, tf.float32), [-1, 1])
+    vec_34_12_float_mask = tf.reshape(tf.cast(vec_34_12_mask, tf.float32), [-1, 1])
+    vec_23_14_float_mask = tf.reshape(tf.cast(vec_23_14_mask, tf.float32), [-1, 1])
 
-    centroid_xz = vec_34_12_centroid * vec_34_12_float_mask + \
-        vec_23_14_centroid * vec_23_14_float_mask
-    length_out = vec_34_12_length * vec_34_12_float_mask + \
-        vec_23_14_length * vec_23_14_float_mask
-    width_out = vec_34_12_width * vec_34_12_float_mask + \
-        vec_23_14_width * vec_23_14_float_mask
-    ry_out = vec_34_12_ry * vec_34_12_float_mask + \
-        vec_23_14_ry * vec_23_14_float_mask
+    centroid_xz = (
+        vec_34_12_centroid * vec_34_12_float_mask
+        + vec_23_14_centroid * vec_23_14_float_mask
+    )
+    length_out = (
+        vec_34_12_length * vec_34_12_float_mask
+        + vec_23_14_length * vec_23_14_float_mask
+    )
+    width_out = (
+        vec_34_12_width * vec_34_12_float_mask + vec_23_14_width * vec_23_14_float_mask
+    )
+    ry_out = vec_34_12_ry * vec_34_12_float_mask + vec_23_14_ry * vec_23_14_float_mask
 
     # Find new centroid y
     a = ground_plane[0]
@@ -452,8 +453,10 @@ def tf_box_4c_to_box_3d(boxes_4c, ground_plane):
     centroid_y = ground_y - h1
     height_out = h2 - h1
 
-    box_3d_out = tf.stack([centroid_x, centroid_y, centroid_z,
-                           length_out, width_out, height_out, ry_out], axis=1)
+    box_3d_out = tf.stack(
+        [centroid_x, centroid_y, centroid_z, length_out, width_out, height_out, ry_out],
+        axis=1,
+    )
 
     return box_3d_out
 

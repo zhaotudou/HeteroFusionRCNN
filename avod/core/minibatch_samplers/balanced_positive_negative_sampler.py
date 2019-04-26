@@ -44,8 +44,10 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
           ValueError: if positive_fraction < 0, or positive_fraction > 1
         """
         if positive_fraction < 0 or positive_fraction > 1:
-            raise ValueError('positive_fraction should be in range [0,1]. '
-                             'Received: %s.' % positive_fraction)
+            raise ValueError(
+                "positive_fraction should be in range [0,1]. "
+                "Received: %s." % positive_fraction
+            )
         self._positive_fraction = positive_fraction
 
     def subsample(self, indicator, batch_size, labels):
@@ -69,17 +71,22 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         """
         if len(indicator.get_shape().as_list()) != 1:
             raise ValueError(
-                'indicator must be 1 dimensional, got a tensor of '
-                'shape %s' % indicator.get_shape())
+                "indicator must be 1 dimensional, got a tensor of "
+                "shape %s" % indicator.get_shape()
+            )
         if len(labels.get_shape().as_list()) != 1:
-            raise ValueError('labels must be 1 dimensional, got a tensor of '
-                             'shape %s' % labels.get_shape())
+            raise ValueError(
+                "labels must be 1 dimensional, got a tensor of "
+                "shape %s" % labels.get_shape()
+            )
         if labels.dtype != tf.bool:
-            raise ValueError('labels should be of type bool. Received: %s' %
-                             labels.dtype)
+            raise ValueError(
+                "labels should be of type bool. Received: %s" % labels.dtype
+            )
         if indicator.dtype != tf.bool:
-            raise ValueError('indicator should be of type bool. Received: %s' %
-                             indicator.dtype)
+            raise ValueError(
+                "indicator should be of type bool. Received: %s" % indicator.dtype
+            )
 
         # Only sample from indicated samples
         negative_idx = tf.logical_not(labels)
@@ -89,8 +96,7 @@ class BalancedPositiveNegativeSampler(minibatch_sampler.MinibatchSampler):
         # Sample positive and negative samples separately
         max_num_pos = int(self._positive_fraction * batch_size)
         sampled_pos_idx = self.subsample_indicator(positive_idx, max_num_pos)
-        max_num_neg = batch_size - tf.reduce_sum(
-            tf.cast(sampled_pos_idx, tf.int32))
+        max_num_neg = batch_size - tf.reduce_sum(tf.cast(sampled_pos_idx, tf.int32))
         sampled_neg_idx = self.subsample_indicator(negative_idx, max_num_neg)
 
         sampled_idx = tf.logical_or(sampled_pos_idx, sampled_neg_idx)

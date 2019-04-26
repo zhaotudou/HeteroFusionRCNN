@@ -13,11 +13,11 @@ def calculate_plane_point(plane, point):
     x, y, z = point
 
     if x is None:
-        x = -(b*y + c*z + d) / a
+        x = -(b * y + c * z + d) / a
     elif y is None:
-        y = -(a*x + c*z + d) / b
+        y = -(a * x + c * z + d) / b
     elif z is None:
-        z = -(a*x + b*y + d) / c
+        z = -(a * x + b * y + d) / c
 
     return [x, y, z]
 
@@ -37,4 +37,4 @@ def dist_to_plane(plane, points):
     y = points[:, 1]
     z = points[:, 2]
 
-    return (a*x + b*y + c*z + d) / np.sqrt(a**2 + b**2 + c**2)
+    return (a * x + b * y + c * z + d) / np.sqrt(a ** 2 + b ** 2 + c ** 2)

@@ -37,12 +37,9 @@ def anchor_to_offset(anchors, ground_truth):
     t_dy_gt = np.log(ground_truth[4] / anchors[:, 4])
     # t_dz_gt = log(dim_z_gt/dim_z_anch)
     t_dz_gt = np.log(ground_truth[5] / anchors[:, 5])
-    anchor_offsets = np.stack((t_x_gt,
-                               t_y_gt,
-                               t_z_gt,
-                               t_dx_gt,
-                               t_dy_gt,
-                               t_dz_gt), axis=1)
+    anchor_offsets = np.stack(
+        (t_x_gt, t_y_gt, t_z_gt, t_dx_gt, t_dy_gt, t_dz_gt), axis=1
+    )
     return anchor_offsets
 
 
@@ -86,12 +83,9 @@ def tf_anchor_to_offset(anchors, ground_truth):
         t_dx_gt = tf.log(ground_truth[:, 3] / anchors[:, 3])
         t_dy_gt = tf.log(ground_truth[:, 4] / anchors[:, 4])
         t_dz_gt = tf.log(ground_truth[:, 5] / anchors[:, 5])
-        anchor_offsets = tf.stack((t_x_gt,
-                                   t_y_gt,
-                                   t_z_gt,
-                                   t_dx_gt,
-                                   t_dy_gt,
-                                   t_dz_gt), axis=1)
+        anchor_offsets = tf.stack(
+            (t_x_gt, t_y_gt, t_z_gt, t_dx_gt, t_dy_gt, t_dz_gt), axis=1
+        )
 
         return anchor_offsets
 
@@ -130,21 +124,11 @@ def offset_to_anchor(anchors, offsets):
         dy_pred = tf.exp(tf.log(anchors[:, 4]) + offsets[:, 4])
         # dim_z = exp(log(dim_z) + dz)
         dz_pred = tf.exp(tf.log(anchors[:, 5]) + offsets[:, 5])
-        anchors = tf.stack((x_pred,
-                            y_pred,
-                            z_pred,
-                            dx_pred,
-                            dy_pred,
-                            dz_pred), axis=1)
+        anchors = tf.stack((x_pred, y_pred, z_pred, dx_pred, dy_pred, dz_pred), axis=1)
     else:
         dx_pred = np.exp(np.log(anchors[:, 3]) + offsets[:, 3])
         dy_pred = np.exp(np.log(anchors[:, 4]) + offsets[:, 4])
         dz_pred = np.exp(np.log(anchors[:, 5]) + offsets[:, 5])
-        anchors = np.stack((x_pred,
-                            y_pred,
-                            z_pred,
-                            dx_pred,
-                            dy_pred,
-                            dz_pred), axis=1)
+        anchors = np.stack((x_pred, y_pred, z_pred, dx_pred, dy_pred, dz_pred), axis=1)
 
     return anchors

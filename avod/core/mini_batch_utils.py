@@ -14,8 +14,9 @@ class MiniBatchUtils:
 
         self._dataset = dataset
 
-        self._mini_batch_sampler = \
+        self._mini_batch_sampler = (
             balanced_positive_negative_sampler.BalancedPositiveNegativeSampler()
+        )
 
         ##############################
         # Parse KittiUtils config
@@ -23,7 +24,8 @@ class MiniBatchUtils:
         self.kitti_utils_config = dataset.config.kitti_utils_config
         self._area_extents = self.kitti_utils_config.area_extents
         self._anchor_strides = np.reshape(
-            self.kitti_utils_config.anchor_strides, (-1, 2))
+            self.kitti_utils_config.anchor_strides, (-1, 2)
+        )
 
         ##############################
         # Parse MiniBatchUtils config
@@ -34,39 +36,53 @@ class MiniBatchUtils:
         # RPN mini batches
         rpn_config = self.config.rpn_config
 
-        rpn_iou_type = rpn_config.WhichOneof('iou_type')
-        if rpn_iou_type == 'iou_2d_thresholds':
-            self.rpn_iou_type = '2d'
+        rpn_iou_type = rpn_config.WhichOneof("iou_type")
+        if rpn_iou_type == "iou_2d_thresholds":
+            self.rpn_iou_type = "2d"
             self.rpn_iou_thresholds = rpn_config.iou_2d_thresholds
 
-        elif rpn_iou_type == 'iou_3d_thresholds':
-            self.rpn_iou_type = '3d'
+        elif rpn_iou_type == "iou_3d_thresholds":
+            self.rpn_iou_type = "3d"
             self.rpn_iou_thresholds = rpn_config.iou_3d_thresholds
 
-        self.rpn_neg_iou_range = [self.rpn_iou_thresholds.neg_iou_lo,
-                                  self.rpn_iou_thresholds.neg_iou_hi]
-        self.rpn_pos_iou_range = [self.rpn_iou_thresholds.pos_iou_lo,
-                                  self.rpn_iou_thresholds.pos_iou_hi]
+        self.rpn_neg_iou_range = [
+            self.rpn_iou_thresholds.neg_iou_lo,
+            self.rpn_iou_thresholds.neg_iou_hi,
+        ]
+        self.rpn_pos_iou_range = [
+            self.rpn_iou_thresholds.pos_iou_lo,
+            self.rpn_iou_thresholds.pos_iou_hi,
+        ]
 
         self.rpn_mini_batch_size = rpn_config.mini_batch_size
 
         # AVOD mini batches
         avod_config = self.config.avod_config
-        self.avod_iou_type = '2d'
+        self.avod_iou_type = "2d"
         self.avod_iou_thresholds = avod_config.iou_2d_thresholds
 
-        self.avod_neg_iou_range = [self.avod_iou_thresholds.neg_iou_lo,
-                                   self.avod_iou_thresholds.neg_iou_hi]
-        self.avod_pos_iou_range = [self.avod_iou_thresholds.pos_iou_lo,
-                                   self.avod_iou_thresholds.pos_iou_hi]
+        self.avod_neg_iou_range = [
+            self.avod_iou_thresholds.neg_iou_lo,
+            self.avod_iou_thresholds.neg_iou_hi,
+        ]
+        self.avod_pos_iou_range = [
+            self.avod_iou_thresholds.pos_iou_lo,
+            self.avod_iou_thresholds.pos_iou_hi,
+        ]
 
         self.avod_mini_batch_size = avod_config.mini_batch_size
 
         # Setup paths
-        self.mini_batch_dir = avod.root_dir() + '/data/mini_batches/' + \
-            'iou_{}/'.format(self.rpn_iou_type) + \
-            dataset.name + '/' + dataset.cluster_split + '/' + \
-            dataset.pc_source
+        self.mini_batch_dir = (
+            avod.root_dir()
+            + "/data/mini_batches/"
+            + "iou_{}/".format(self.rpn_iou_type)
+            + dataset.name
+            + "/"
+            + dataset.cluster_split
+            + "/"
+            + dataset.pc_source
+        )
 
         # Array column indices for saving to files
         self.col_length = 9
@@ -86,13 +102,14 @@ class MiniBatchUtils:
 
         clusters, _ = self._dataset.get_cluster_info()
 
-        mini_batch_preprocessor = \
-            MiniBatchPreprocessor(self._dataset,
-                                  self.mini_batch_dir,
-                                  self._anchor_strides,
-                                  self._density_threshold,
-                                  self.rpn_neg_iou_range,
-                                  self.rpn_pos_iou_range)
+        mini_batch_preprocessor = MiniBatchPreprocessor(
+            self._dataset,
+            self.mini_batch_dir,
+            self._anchor_strides,
+            self._density_threshold,
+            self.rpn_neg_iou_range,
+            self.rpn_pos_iou_range,
+        )
 
         mini_batch_preprocessor.preprocess(indices)
 
@@ -112,16 +129,23 @@ class MiniBatchUtils:
         # Round values for nicer folder names
         anchor_strides = np.round(anchor_strides[:, 0], 3)
 
-        anchor_strides_str = \
-            ' '.join(str(stride) for stride in anchor_strides)
+        anchor_strides_str = " ".join(str(stride) for stride in anchor_strides)
 
         if sample_name:
-            return self.mini_batch_dir + '/' + classes_name + \
-                '[ ' + anchor_strides_str + ']/' + \
-                sample_name + ".npy"
+            return (
+                self.mini_batch_dir
+                + "/"
+                + classes_name
+                + "[ "
+                + anchor_strides_str
+                + "]/"
+                + sample_name
+                + ".npy"
+            )
 
-        return self.mini_batch_dir + '/' + classes_name + \
-            '[ ' + anchor_strides_str + ']'
+        return (
+            self.mini_batch_dir + "/" + classes_name + "[ " + anchor_strides_str + "]"
+        )
 
     def get_anchors_info(self, classes_name, anchor_strides, sample_name):
         """Reads in the file containing the information matrix
@@ -140,27 +164,24 @@ class MiniBatchUtils:
 
             [] if the file contains an empty array
         """
-        file_name = self.get_file_path(classes_name, anchor_strides,
-                                       sample_name)
+        file_name = self.get_file_path(classes_name, anchor_strides, sample_name)
 
         if not os.path.exists(file_name):
             raise FileNotFoundError(
                 "{} not found for sample {} in {}, "
                 "run the preprocessing script first".format(
-                    file_name,
-                    sample_name,
-                    self.mini_batch_dir))
+                    file_name, sample_name, self.mini_batch_dir
+                )
+            )
 
         anchors_info = np.load(file_name)
         if anchors_info.any():
             return self._parse_anchors_info(anchors_info)
         return []
 
-    def sample_mini_batch(self,
-                          max_ious,
-                          mini_batch_size,
-                          negative_iou_range,
-                          positive_iou_range):
+    def sample_mini_batch(
+        self, max_ious, mini_batch_size, negative_iou_range, positive_iou_range
+    ):
         """
         Samples a mini batch based on anchor ious with ground truth
 
@@ -185,8 +206,8 @@ class MiniBatchUtils:
             # If neg_iou_lo is > 0.0, the mini batch may be empty.
             # In that case, use all background and negative labels
             neg_labels = tf.logical_and(
-                bkg_and_neg_labels,
-                tf.greater_equal(max_ious, negative_iou_range[0]))
+                bkg_and_neg_labels, tf.greater_equal(max_ious, negative_iou_range[0])
+            )
 
             new_indicator = tf.logical_or(pos_labels, neg_labels)
 
@@ -194,11 +215,13 @@ class MiniBatchUtils:
             indicator = tf.cond(
                 tf.greater(num_valid, 0),
                 true_fn=lambda: tf.identity(new_indicator),
-                false_fn=lambda: tf.identity(bkg_and_neg_labels))
+                false_fn=lambda: tf.identity(bkg_and_neg_labels),
+            )
 
         sampler = self._mini_batch_sampler
         mb_sampled, mb_pos_sampled = sampler.subsample(
-            indicator, mini_batch_size, pos_labels)
+            indicator, mini_batch_size, pos_labels
+        )
 
         return mb_sampled, mb_pos_sampled
 
@@ -215,10 +238,12 @@ class MiniBatchUtils:
                 for the mini batch
             mb_pos_sampled: a boolean mask where True indicates positive anchors
         """
-        return self.sample_mini_batch(anchor_ious,
-                                      self.rpn_mini_batch_size,
-                                      self.rpn_neg_iou_range,
-                                      self.rpn_pos_iou_range)
+        return self.sample_mini_batch(
+            anchor_ious,
+            self.rpn_mini_batch_size,
+            self.rpn_neg_iou_range,
+            self.rpn_pos_iou_range,
+        )
 
     def sample_avod_mini_batch(self, anchor_ious):
         """ Samples a mini batch to train AVOD with preconfigured
@@ -233,10 +258,12 @@ class MiniBatchUtils:
                 for the mini batch
             mb_pos_sampled: a boolean mask where True indicates positive anchors
         """
-        return self.sample_mini_batch(anchor_ious,
-                                      self.avod_mini_batch_size,
-                                      self.avod_neg_iou_range,
-                                      self.avod_pos_iou_range)
+        return self.sample_mini_batch(
+            anchor_ious,
+            self.avod_mini_batch_size,
+            self.avod_neg_iou_range,
+            self.avod_pos_iou_range,
+        )
 
     def _parse_anchors_info(self, anchors_info):
         """
@@ -254,25 +281,23 @@ class MiniBatchUtils:
                 (e.g. 0 or 1, for "Background" or "Car")
         """
         anchor_indices = np.asarray(
-            anchors_info[:, self.col_anchor_indices], dtype=np.int32)
+            anchors_info[:, self.col_anchor_indices], dtype=np.int32
+        )
 
-        anchor_ious = np.asarray(
-            anchors_info[:, self.col_ious], dtype=np.float32)
+        anchor_ious = np.asarray(anchors_info[:, self.col_ious], dtype=np.float32)
 
         anchor_offsets = np.asarray(
-            anchors_info[:, self.col_offsets_lo:self.col_offsets_hi],
-            dtype=np.float32)
+            anchors_info[:, self.col_offsets_lo : self.col_offsets_hi], dtype=np.float32
+        )
         anchor_classes = np.asarray(
-            anchors_info[:, self.col_class_idx], dtype=np.float32)
+            anchors_info[:, self.col_class_idx], dtype=np.float32
+        )
 
-        return anchor_indices, anchor_ious, \
-            anchor_offsets, anchor_classes
+        return anchor_indices, anchor_ious, anchor_offsets, anchor_classes
 
-    def mask_class_label_indices(self,
-                                 mb_pos_mask,
-                                 mb_mask,
-                                 max_iou_indices,
-                                 class_indices):
+    def mask_class_label_indices(
+        self, mb_pos_mask, mb_mask, max_iou_indices, class_indices
+    ):
         """
         Samples a mini batch based on anchor ious with ground truth
 
@@ -295,23 +320,21 @@ class MiniBatchUtils:
         """
 
         # mask the indices by the all_mask which is the mini_batch mask
-        masked_argmax = tf.boolean_mask(max_iou_indices,
-                                        mb_mask)
+        masked_argmax = tf.boolean_mask(max_iou_indices, mb_mask)
 
         # get the corresponding class indices that had high IoUs
-        masked_labels = tf.gather(class_indices,
-                                  masked_argmax)
+        masked_labels = tf.gather(class_indices, masked_argmax)
 
         # mask the positives by the total mask again
         # this gives us the 'True' entries
-        mask_pos_mask = tf.boolean_mask(mb_pos_mask,
-                                        mb_mask)
+        mask_pos_mask = tf.boolean_mask(mb_pos_mask, mb_mask)
 
         # multiply the masked label entries by this positives only
         # this will keep the positive class labels and sets everything else
         # to zero ('Background' class).
         # cast these to int as the class labels are in floats
-        mb_class_indices = tf.multiply(tf.cast(masked_labels, tf.int32),
-                                       tf.cast(mask_pos_mask, tf.int32))
+        mb_class_indices = tf.multiply(
+            tf.cast(masked_labels, tf.int32), tf.cast(mask_pos_mask, tf.int32)
+        )
 
         return mb_class_indices

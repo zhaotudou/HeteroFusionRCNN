@@ -42,10 +42,9 @@ def main():
         pixels_sum += pixel_means
 
         if get_bev_mean:
-            bev_images = dataset_utils.create_bev_maps(sample_name,
-                                                       source='lidar')
-            height_maps = np.asarray(bev_images['height_maps'])
-            density_map = np.asarray(bev_images['density_map'])
+            bev_images = dataset_utils.create_bev_maps(sample_name, source="lidar")
+            height_maps = np.asarray(bev_images["height_maps"])
+            density_map = np.asarray(bev_images["density_map"])
 
             height_means = [np.mean(height_map) for height_map in height_maps]
             density_mean = np.mean(density_map)
@@ -54,10 +53,11 @@ def main():
             bev_sum += bev_means
 
         if debug_print:
-            debug_string = '{} / {}, Sample {}, pixel_means {}'.format(
-                sample_idx + 1, num_samples, sample_name, pixel_means)
+            debug_string = "{} / {}, Sample {}, pixel_means {}".format(
+                sample_idx + 1, num_samples, sample_name, pixel_means
+            )
             if get_bev_mean:
-                debug_string += ' density_means {}'.format(bev_means)
+                debug_string += " density_means {}".format(bev_means)
 
             print(debug_string)
 
@@ -68,5 +68,5 @@ def main():
         print("BEV mean: {}".format(bev_sum / num_samples))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

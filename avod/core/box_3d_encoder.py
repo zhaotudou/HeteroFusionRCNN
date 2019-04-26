@@ -9,7 +9,7 @@ import avod.core.format_checker as fc
 from wavedata.tools.obj_detection import obj_utils
 
 
-def box_3d_to_object_label(box_3d, obj_type='Car'):
+def box_3d_to_object_label(box_3d, obj_type="Car"):
     """Turns a box_3d into an ObjectLabel
 
     Args:
@@ -143,9 +143,10 @@ def tf_box_3d_to_anchor(boxes_3d):
     anchors_dimy = box_h
     anchors_dimz = box_w * cos_ry + box_l * sin_ry
 
-    anchors = tf.stack([anchors_x, anchors_y, anchors_z,
-                        anchors_dimx, anchors_dimy, anchors_dimz],
-                       axis=1)
+    anchors = tf.stack(
+        [anchors_x, anchors_y, anchors_z, anchors_dimx, anchors_dimy, anchors_dimz],
+        axis=1,
+    )
 
     return anchors
 
@@ -185,10 +186,10 @@ def anchors_to_box_3d(anchors, fix_lw=False):
         if fix_lw:
             # Swap the width and length
             swapped_indices = box_3d_w[:] > box_3d_l[:]
-            swap_idx_booleans = tf.cast(swapped_indices,
-                                        dtype=tf.float32)
-            swap_idx_booleans_neg = tf.cast(tf.logical_not(swapped_indices),
-                                            dtype=tf.float32)
+            swap_idx_booleans = tf.cast(swapped_indices, dtype=tf.float32)
+            swap_idx_booleans_neg = tf.cast(
+                tf.logical_not(swapped_indices), dtype=tf.float32
+            )
 
             masked_dimx_p = tf.multiply(box_3d_l, swap_idx_booleans)
             masked_dimx_n = tf.multiply(box_3d_w, swap_idx_booleans_neg)
@@ -198,12 +199,11 @@ def anchors_to_box_3d(anchors, fix_lw=False):
             masked_dimz_p = tf.multiply(box_3d_w, swap_idx_booleans)
             masked_dimz = tf.add(masked_dimz_n, masked_dimz_p)
 
-            new_orientation = tf.ones(tf.shape(box_3d_ry),
-                                      dtype=tf.float32)
+            new_orientation = tf.ones(tf.shape(box_3d_ry), dtype=tf.float32)
             # Assign 90 degrees orienation
-            new_orientation = tf.multiply(new_orientation,
-                                          tf.constant(-np.pi/2,
-                                                      dtype=tf.float32))
+            new_orientation = tf.multiply(
+                new_orientation, tf.constant(-np.pi / 2, dtype=tf.float32)
+            )
 
             masked_new_ry = tf.multiply(new_orientation, swap_idx_booleans)
             masked_original_ry = tf.multiply(box_3d_ry, swap_idx_booleans)
@@ -213,9 +213,10 @@ def anchors_to_box_3d(anchors, fix_lw=False):
             box_3d_w = tf.squeeze(masked_dimx)
             box_3d_ry = tf.squeeze(masked_orientation)
 
-        box_3d = tf.stack([box_3d_x, box_3d_y, box_3d_z,
-                           box_3d_l, box_3d_w, box_3d_h, box_3d_ry],
-                          axis=1)
+        box_3d = tf.stack(
+            [box_3d_x, box_3d_y, box_3d_z, box_3d_l, box_3d_w, box_3d_h, box_3d_ry],
+            axis=1,
+        )
 
     else:
 
@@ -239,7 +240,7 @@ def anchors_to_box_3d(anchors, fix_lw=False):
             modified_box_3d = np.copy(box_3d)
             modified_box_3d[swapped_indices, 3] = box_3d[swapped_indices, 4]
             modified_box_3d[swapped_indices, 4] = box_3d[swapped_indices, 3]
-            modified_box_3d[swapped_indices, 6] = -np.pi/2
+            modified_box_3d[swapped_indices, 6] = -np.pi / 2
             return modified_box_3d
 
     return box_3d

@@ -21,10 +21,11 @@ def main():
     modifications to the stereo p2 matrix.
     """
 
-    dataset = DatasetBuilder.build_kitti_dataset(DatasetBuilder.KITTI_TRAINVAL,
-                                                 use_defaults=True)
+    dataset = DatasetBuilder.build_kitti_dataset(
+        DatasetBuilder.KITTI_TRAINVAL, use_defaults=True
+    )
 
-    np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
+    np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
     all_samples = dataset.sample_names
 
@@ -35,8 +36,7 @@ def main():
 
     for sample_idx in range(dataset.num_samples):
 
-        sys.stdout.write('\r{} / {}'.format(sample_idx,
-                                            dataset.num_samples - 1))
+        sys.stdout.write("\r{} / {}".format(sample_idx, dataset.num_samples - 1))
 
         sample_name = all_samples[sample_idx]
 
@@ -44,13 +44,14 @@ def main():
 
         # Run the main loop to run throughout the images
         frame_calibration_info = calib_utils.read_calibration(
-            dataset.calib_dir,
-            img_idx)
+            dataset.calib_dir, img_idx
+        )
 
         # Load labels
         gt_labels = obj_utils.read_labels(dataset.label_dir, img_idx)
         gt_labels = dataset.kitti_utils.filter_labels(
-            gt_labels, ['Car', 'Van', 'Pedestrian', 'Cyclist'])
+            gt_labels, ["Car", "Van", "Pedestrian", "Cyclist"]
+        )
 
         image = cv2.imread(dataset.get_rgb_image_path(sample_name))
         image_size = [image.shape[1], image.shape[0]]
@@ -68,7 +69,8 @@ def main():
             # Get original 2D bounding boxes
             orig_box_3d = box_3d_encoder.object_label_to_box_3d(obj)
             orig_bbox_2d = box_3d_projector.project_to_image_space(
-                orig_box_3d, calib_p2, truncate=True, image_size=image_size)
+                orig_box_3d, calib_p2, truncate=True, image_size=image_size
+            )
 
             # Skip boxes outside image
             if orig_bbox_2d is None:
@@ -84,8 +86,8 @@ def main():
 
             box_3d_flipped = box_3d_encoder.object_label_to_box_3d(flipped_obj)
             new_bbox_2d_flipped = box_3d_projector.project_to_image_space(
-                box_3d_flipped, flipped_p2, truncate=True,
-                image_size=image_size)
+                box_3d_flipped, flipped_p2, truncate=True, image_size=image_size
+            )
 
             pixel_errors = new_bbox_2d_flipped - orig_bbox_2d_flipped
             max_pixel_error = np.amax(np.abs(pixel_errors))
@@ -94,11 +96,12 @@ def main():
             all_max_pixel_errors.append(max_pixel_error)
 
             if max_pixel_error > 5:
-                print(' Error > 5px', sample_idx, max_pixel_error)
-                print(np.round(orig_bbox_2d_flipped, 3),
-                      np.round(new_bbox_2d_flipped, 3))
+                print(" Error > 5px", sample_idx, max_pixel_error)
+                print(
+                    np.round(orig_bbox_2d_flipped, 3), np.round(new_bbox_2d_flipped, 3)
+                )
 
-    print('Avg flip time:', total_flip_time / dataset.num_samples)
+    print("Avg flip time:", total_flip_time / dataset.num_samples)
 
     # Convert to ndarrays
     all_pixel_errors = np.asarray(all_pixel_errors)
@@ -111,9 +114,9 @@ def main():
     fig, axes = plt.subplots(nrows=3, ncols=1)
     ax0, ax1, ax2 = axes.flatten()
 
-    ax0.hist(all_pixel_errors[:, 0], 50, histtype='bar', facecolor='green')
-    ax1.hist(all_pixel_errors[:, 2], 50, histtype='bar', facecolor='green')
-    ax2.hist(all_max_pixel_errors, 50, histtype='bar', facecolor='green')
+    ax0.hist(all_pixel_errors[:, 0], 50, histtype="bar", facecolor="green")
+    ax1.hist(all_pixel_errors[:, 2], 50, histtype="bar", facecolor="green")
+    ax2.hist(all_max_pixel_errors, 50, histtype="bar", facecolor="green")
 
     plt.show()
 
@@ -147,5 +150,5 @@ def flip_box_2d(box_2d, im_size):
     return flipped_box_2d
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -14,5 +14,5 @@ def main():
     gen_mini_batches.main(unittest_dataset)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

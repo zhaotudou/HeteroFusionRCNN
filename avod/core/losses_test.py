@@ -7,16 +7,20 @@ from avod.core import losses
 
 
 class WeightedL2LocalizationLossTest(tf.test.TestCase):
-
     def testReturnsCorrectLoss(self):
         batch_size = 3
         num_anchors = 10
         code_size = 4
         prediction_tensor = tf.ones([batch_size, num_anchors, code_size])
         target_tensor = tf.zeros([batch_size, num_anchors, code_size])
-        weights = tf.constant([[1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
-                               [1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
-                               [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]], tf.float32)
+        weights = tf.constant(
+            [
+                [1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+            ],
+            tf.float32,
+        )
         loss_op = losses.WeightedL2LocalizationLoss()
         loss = loss_op(prediction_tensor, target_tensor, weights=weights)
 
@@ -46,38 +50,41 @@ class WeightedL2LocalizationLossTest(tf.test.TestCase):
         num_anchors = 10
         code_size = 4
         prediction_tensor = tf.ones([batch_size, num_anchors, code_size])
-        target_tensor = tf.concat([
-            tf.zeros([batch_size, num_anchors, code_size / 2]),
-            tf.ones([batch_size, num_anchors, code_size / 2]) * np.nan
+        target_tensor = tf.concat(
+            [
+                tf.zeros([batch_size, num_anchors, code_size / 2]),
+                tf.ones([batch_size, num_anchors, code_size / 2]) * np.nan,
             ],
-            axis=2)
+            axis=2,
+        )
         weights = tf.ones([batch_size, num_anchors])
         loss_op = losses.WeightedL2LocalizationLoss()
-        loss = loss_op(prediction_tensor, target_tensor, weights=weights,
-                       ignore_nan_targets=True)
+        loss = loss_op(
+            prediction_tensor, target_tensor, weights=weights, ignore_nan_targets=True
+        )
 
         expected_loss = (3 * 5 * 4) / 2.0
         with self.test_session() as sess:
             loss_output = sess.run(loss)
             self.assertAllClose(loss_output, expected_loss)
 
-class WeightedFocalLossTest(tf.test.TestCase):
 
+class WeightedFocalLossTest(tf.test.TestCase):
     def testReturnsCorrectLoss(self):
-        y_pred = tf.constant([[[0.1, 0.7, 0.2],
-                               [0.6, 0.2, 0.2]],
-                              [[0.1, 0.7, 0.2],
-                               [0.6, 0.2, 0.2]]], tf.float32)
-        y_label = tf.constant([[[0, 1, 0],
-                                [1, 0, 0]],
-                               [[0, 1, 0],
-                                [1, 0, 0]]], tf.float32)
+        y_pred = tf.constant(
+            [[[0.1, 0.7, 0.2], [0.6, 0.2, 0.2]], [[0.1, 0.7, 0.2], [0.6, 0.2, 0.2]]],
+            tf.float32,
+        )
+        y_label = tf.constant(
+            [[[0, 1, 0], [1, 0, 0]], [[0, 1, 0], [1, 0, 0]]], tf.float32
+        )
         loss_op = losses.WeightedFocalLoss()
         loss = loss_op(y_pred, y_label, weight=1.0)
-    
+
         with self.test_session() as sess:
             loss = sess.run(loss)
             print(loss)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     tf.test.main()

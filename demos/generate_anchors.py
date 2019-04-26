@@ -20,8 +20,7 @@ def main():
     Visualization of 3D grid anchor generation, showing 2D projections
         in BEV and image space, and a 3D display of the anchors
     """
-    dataset_config = DatasetBuilder.copy_config(
-        DatasetBuilder.KITTI_TRAIN)
+    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_TRAIN)
     dataset_config.num_clusters[0] = 1
     dataset = DatasetBuilder.build_kitti_dataset(dataset_config)
 
@@ -47,17 +46,18 @@ def main():
         area_3d=dataset.kitti_utils.area_extents,
         anchor_3d_sizes=fake_clusters,
         anchor_stride=fake_anchor_stride,
-        ground_plane=ground_plane)
+        ground_plane=ground_plane,
+    )
     all_anchors = box_3d_encoder.box_3d_to_anchor(anchor_boxes_3d)
     end_time = time.time()
     print("Anchors generated in {} s".format(end_time - start_time))
 
     # Project into bev
-    bev_boxes, bev_normalized_boxes = \
-        anchor_projector.project_to_bev(all_anchors, area_extents[[0, 2]])
+    bev_boxes, bev_normalized_boxes = anchor_projector.project_to_bev(
+        all_anchors, area_extents[[0, 2]]
+    )
 
-    bev_fig, (bev_axes, bev_normalized_axes) = \
-        plt.subplots(1, 2, figsize=(16, 7))
+    bev_fig, (bev_axes, bev_normalized_axes) = plt.subplots(1, 2, figsize=(16, 7))
     bev_axes.set_xlim(0, 80)
     bev_axes.set_ylim(70, 0)
     bev_normalized_axes.set_xlim(0, 1.0)
@@ -69,11 +69,9 @@ def main():
         box_w = box[2] - box[0]
         box_h = box[3] - box[1]
 
-        rect = patches.Rectangle((box[0], box[1]),
-                                 box_w, box_h,
-                                 linewidth=2,
-                                 edgecolor='b',
-                                 facecolor='none')
+        rect = patches.Rectangle(
+            (box[0], box[1]), box_w, box_h, linewidth=2, edgecolor="b", facecolor="none"
+        )
 
         bev_axes.add_patch(rect)
 
@@ -81,29 +79,31 @@ def main():
         box_w = normalized_box[2] - normalized_box[0]
         box_h = normalized_box[3] - normalized_box[1]
 
-        rect = patches.Rectangle((normalized_box[0], normalized_box[1]),
-                                 box_w, box_h,
-                                 linewidth=2,
-                                 edgecolor='b',
-                                 facecolor='none')
+        rect = patches.Rectangle(
+            (normalized_box[0], normalized_box[1]),
+            box_w,
+            box_h,
+            linewidth=2,
+            edgecolor="b",
+            facecolor="none",
+        )
 
         bev_normalized_axes.add_patch(rect)
 
-    rgb_fig, rgb_2d_axes, rgb_3d_axes = \
-        vis_utils.visualization(dataset.rgb_image_dir, img_idx)
+    rgb_fig, rgb_2d_axes, rgb_3d_axes = vis_utils.visualization(
+        dataset.rgb_image_dir, img_idx
+    )
     plt.show(block=False)
 
     image_path = dataset.get_rgb_image_path(dataset.sample_names[img_idx])
     image_shape = np.array(Image.open(image_path)).shape
 
-    stereo_calib_p2 = calib_utils.read_calibration(dataset.calib_dir,
-                                                   img_idx).p2
+    stereo_calib_p2 = calib_utils.read_calibration(dataset.calib_dir, img_idx).p2
 
     start_time = time.time()
-    rgb_boxes, rgb_normalized_boxes = \
-        anchor_projector.project_to_image_space(all_anchors,
-                                                stereo_calib_p2,
-                                                image_shape)
+    rgb_boxes, rgb_normalized_boxes = anchor_projector.project_to_image_space(
+        all_anchors, stereo_calib_p2, image_shape
+    )
     end_time = time.time()
     print("Anchors projected in {} s".format(end_time - start_time))
 
@@ -129,11 +129,9 @@ def main():
         box_w = rgb_box_2d[2] - box_x1
         box_h = rgb_box_2d[3] - box_y1
 
-        rect = patches.Rectangle((box_x1, box_y1),
-                                 box_w, box_h,
-                                 linewidth=2,
-                                 edgecolor='b',
-                                 facecolor='none')
+        rect = patches.Rectangle(
+            (box_x1, box_y1), box_w, box_h, linewidth=2, edgecolor="b", facecolor="none"
+        )
 
         rgb_2d_axes.add_patch(rect)
 
@@ -143,5 +141,5 @@ def main():
     plt.show(block=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

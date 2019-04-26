@@ -2,8 +2,8 @@ from abc import abstractmethod
 
 import tensorflow as tf
 
-class BevFeatureExtractor:
 
+class BevFeatureExtractor:
     def __init__(self, extractor_config):
         self.config = extractor_config
 

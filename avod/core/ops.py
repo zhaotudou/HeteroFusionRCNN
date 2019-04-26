@@ -3,11 +3,9 @@
 import tensorflow as tf
 
 
-def indices_to_dense_vector(indices,
-                            size,
-                            indices_value=1.,
-                            default_value=0,
-                            dtype=tf.float32):
+def indices_to_dense_vector(
+    indices, size, indices_value=1.0, default_value=0, dtype=tf.float32
+):
     """Creates dense vector with indices set to specific value
        and rest to zeros.
 
@@ -33,5 +31,4 @@ def indices_to_dense_vector(indices,
     zeros = tf.ones([size], dtype=dtype) * default_value
     values = tf.ones_like(indices, dtype=dtype) * indices_value
 
-    return tf.dynamic_stitch([tf.range(size), tf.to_int32(indices)],
-                             [zeros, values])
+    return tf.dynamic_stitch([tf.range(size), tf.to_int32(indices)], [zeros, values])

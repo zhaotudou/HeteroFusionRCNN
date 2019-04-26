@@ -26,16 +26,12 @@ def fill_feed_dict(dataset: KittiDataset, input_pl, batch_size):
 
     label_pl = tf.placeholder(tf.float32, [None, 1])
 
-    feed_dict = {
-        input_pl: bev_input,
-        label_pl: labels
-    }
+    feed_dict = {input_pl: bev_input, label_pl: labels}
 
     return feed_dict, label_pl
 
 
 class BevVggTest(tf.test.TestCase):
-
     @classmethod
     def setUpClass(cls):
         # Initialize the Kitti dataset
@@ -44,9 +40,10 @@ class BevVggTest(tf.test.TestCase):
         # Get the unittest-kitti dataset
         dataset_builder = DatasetBuilder()
         cls.dataset = dataset_builder.build_kitti_dataset(
-            dataset_builder.KITTI_UNITTEST)
+            dataset_builder.KITTI_UNITTEST
+        )
 
-        cls.log_dir = test_dir + '/logs'
+        cls.log_dir = test_dir + "/logs"
         cls.bev_vgg_cls = vgg.BevVggClassification()
 
     def test_vgg_layers_build(self):
@@ -67,38 +64,40 @@ class BevVggTest(tf.test.TestCase):
         batch_size = 1
 
         with tf.Graph().as_default():
-            with tf.name_scope('input'):
+            with tf.name_scope("input"):
                 # BEV image placeholder
-                image_placeholder = tf.placeholder(
-                    tf.float32, (None, 700, 800, 6))
+                image_placeholder = tf.placeholder(tf.float32, (None, 700, 800, 6))
                 image_summary = tf.expand_dims(image_placeholder, axis=0)
                 tf.summary.image("image", image_summary, max_outputs=5)
 
             # Check invalid BEV shape
             bev_shape = (300, 300)
             processed_image = self.bev_vgg_cls.preprocess_input(
-                image_placeholder, bev_shape)
+                image_placeholder, bev_shape
+            )
 
             predictions, end_points = self.bev_vgg_cls.build(
-                processed_image, num_classes=1, is_training=True)
+                processed_image, num_classes=1, is_training=True
+            )
 
             feed_dict, label_pl = fill_feed_dict(
-                self.dataset, image_placeholder, batch_size)
+                self.dataset, image_placeholder, batch_size
+            )
 
             ###########################
             # Loss Function
             ###########################
             cross_entropy = tf.nn.weighted_cross_entropy_with_logits(
-                label_pl,
-                predictions,
-                1.0)
+                label_pl, predictions, 1.0
+            )
             loss = tf.reduce_mean(cross_entropy)
 
             ###########################
             # Optimizer
             ###########################
             training_optimizer = optimizer_builder.build(
-                train_config.optimizer, global_summaries)
+                train_config.optimizer, global_summaries
+            )
 
             ###########################
             # Train-op
@@ -112,8 +111,8 @@ class BevVggTest(tf.test.TestCase):
             loss = sess.run(train_op, feed_dict=feed_dict)
 
             self.assertLess(loss, 1)
-            print('Loss ', loss)
+            print("Loss ", loss)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     tf.test.main()

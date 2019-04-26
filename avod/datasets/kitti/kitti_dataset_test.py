@@ -15,8 +15,7 @@ class KittiDatasetTest(unittest.TestCase):
         cls.fake_kitti_dir = tests.test_path() + "/datasets/Kitti/object"
 
     def get_fake_dataset(self, data_split, directory):
-        dataset_config = DatasetBuilder.copy_config(
-            DatasetBuilder.KITTI_UNITTEST)
+        dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_UNITTEST)
 
         # Overwrite config values
         dataset_config.data_split = data_split
@@ -27,7 +26,7 @@ class KittiDatasetTest(unittest.TestCase):
         return dataset
 
     def test_data_loading(self):
-        dataset = self.get_fake_dataset('train', self.fake_kitti_dir)
+        dataset = self.get_fake_dataset("train", self.fake_kitti_dir)
 
         indices_to_load = [1, 2, 3]
         expected_samples = ["000003", "000007", "000009"]
@@ -77,46 +76,45 @@ class KittiDatasetTest(unittest.TestCase):
         self.assertRaises(ValueError, KittiDataset, bad_config)
 
         # Train split
-        train_dataset = self.get_fake_dataset('train', self.fake_kitti_dir)
+        train_dataset = self.get_fake_dataset("train", self.fake_kitti_dir)
         self.assertEqual(train_dataset.num_samples, 7)
 
         # Validation split
-        validation_dataset = self.get_fake_dataset('val', self.fake_kitti_dir)
+        validation_dataset = self.get_fake_dataset("val", self.fake_kitti_dir)
         self.assertEqual(validation_dataset.num_samples, 6)
 
         # Train + validation split
-        trainval_dataset = self.get_fake_dataset('trainval',
-                                                 self.fake_kitti_dir)
+        trainval_dataset = self.get_fake_dataset("trainval", self.fake_kitti_dir)
         self.assertEqual(trainval_dataset.num_samples, 13)
 
         # Test split
-        test_dataset = self.get_fake_dataset('test', self.fake_kitti_dir)
+        test_dataset = self.get_fake_dataset("test", self.fake_kitti_dir)
         self.assertEqual(test_dataset.num_samples, 10)
 
     def test_batch_loading(self):
         # Training split
-        dataset = self.get_fake_dataset('train', self.fake_kitti_dir)
+        dataset = self.get_fake_dataset("train", self.fake_kitti_dir)
 
         batch = dataset.next_batch(3)
         self.assertEqual(len(batch), 3)
 
         # Validation split
-        dataset = self.get_fake_dataset('val', self.fake_kitti_dir)
+        dataset = self.get_fake_dataset("val", self.fake_kitti_dir)
 
         batch = dataset.next_batch(3)
         self.assertEqual(len(batch), 3)
 
         # Testing split
-        dataset = self.get_fake_dataset('test', self.fake_kitti_dir)
+        dataset = self.get_fake_dataset("test", self.fake_kitti_dir)
 
         batch = dataset.next_batch(3)
         self.assertEqual(len(batch), 3)
 
         # Test split should not return any labels
-        self.assertIsNone(batch[0].get('label'))
+        self.assertIsNone(batch[0].get("label"))
 
     def test_batch_wrapping(self):
-        dataset = self.get_fake_dataset('train', self.fake_kitti_dir)
+        dataset = self.get_fake_dataset("train", self.fake_kitti_dir)
 
         batch = dataset.next_batch(7)
         self.assertEqual(len(batch), 7)
@@ -134,5 +132,5 @@ class KittiDatasetTest(unittest.TestCase):
         self.assertEqual(dataset._index_in_epoch, 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

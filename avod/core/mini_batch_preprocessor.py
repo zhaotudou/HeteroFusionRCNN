@@ -15,13 +15,15 @@ from avod.core.anchor_generators import grid_anchor_3d_generator
 
 
 class MiniBatchPreprocessor(object):
-    def __init__(self,
-                 dataset,
-                 mini_batch_dir,
-                 anchor_strides,
-                 density_threshold,
-                 neg_iou_3d_range,
-                 pos_iou_3d_range):
+    def __init__(
+        self,
+        dataset,
+        mini_batch_dir,
+        anchor_strides,
+        density_threshold,
+        neg_iou_3d_range,
+        pos_iou_3d_range,
+    ):
         """Preprocesses anchors and saves info to files for RPN training
 
         Args:
@@ -46,10 +48,9 @@ class MiniBatchPreprocessor(object):
         self._negative_iou_range = neg_iou_3d_range
         self._positive_iou_range = pos_iou_3d_range
 
-    def _calculate_anchors_info(self,
-                                all_anchor_boxes_3d,
-                                empty_anchor_filter,
-                                gt_labels):
+    def _calculate_anchors_info(
+        self, all_anchor_boxes_3d, empty_anchor_filter, gt_labels
+    ):
         """Calculates the list of anchor information in the format:
             N x 8 [max_gt_2d_iou, max_gt_3d_iou, (6 x offsets), class_index]
                 max_gt_out - highest 3D iou with any ground truth box
@@ -82,34 +83,32 @@ class MiniBatchPreprocessor(object):
 
         # Convert gt to boxes_3d -> anchors -> iou format
         gt_boxes_3d = np.asarray(
-            [box_3d_encoder.object_label_to_box_3d(gt_obj)
-             for gt_obj in gt_labels])
-        gt_anchors = box_3d_encoder.box_3d_to_anchor(gt_boxes_3d,
-                                                     ortho_rotate=True)
+            [box_3d_encoder.object_label_to_box_3d(gt_obj) for gt_obj in gt_labels]
+        )
+        gt_anchors = box_3d_encoder.box_3d_to_anchor(gt_boxes_3d, ortho_rotate=True)
 
         rpn_iou_type = self.mini_batch_utils.rpn_iou_type
-        if rpn_iou_type == '2d':
+        if rpn_iou_type == "2d":
             # Convert anchors to 2d iou format
-            anchors_for_2d_iou, _ = np.asarray(anchor_projector.project_to_bev(
-                anchors, kitti_utils.bev_extents))
+            anchors_for_2d_iou, _ = np.asarray(
+                anchor_projector.project_to_bev(anchors, kitti_utils.bev_extents)
+            )
 
             gt_boxes_for_2d_iou, _ = anchor_projector.project_to_bev(
-                gt_anchors, kitti_utils.bev_extents)
+                gt_anchors, kitti_utils.bev_extents
+            )
 
-        elif rpn_iou_type == '3d':
+        elif rpn_iou_type == "3d":
             # Convert anchors to 3d iou format for calculation
-            anchors_for_3d_iou = box_3d_encoder.box_3d_to_3d_iou_format(
-                anchor_boxes_3d)
+            anchors_for_3d_iou = box_3d_encoder.box_3d_to_3d_iou_format(anchor_boxes_3d)
 
-            gt_boxes_for_3d_iou = \
-                box_3d_encoder.box_3d_to_3d_iou_format(gt_boxes_3d)
+            gt_boxes_for_3d_iou = box_3d_encoder.box_3d_to_3d_iou_format(gt_boxes_3d)
         else:
-            raise ValueError('Invalid rpn_iou_type {}', rpn_iou_type)
+            raise ValueError("Invalid rpn_iou_type {}", rpn_iou_type)
 
         # Initialize sample and offset lists
         num_anchors = len(anchor_boxes_3d)
-        all_info = np.zeros((num_anchors,
-                             self.mini_batch_utils.col_length))
+        all_info = np.zeros((num_anchors, self.mini_batch_utils.col_length))
 
         # Update anchor indices
         all_info[:, self.mini_batch_utils.col_anchor_indices] = anchor_indices
@@ -121,42 +120,38 @@ class MiniBatchPreprocessor(object):
             gt_box_3d = gt_boxes_3d[gt_idx]
 
             # Get 2D or 3D IoU for every anchor
-            if self.mini_batch_utils.rpn_iou_type == '2d':
+            if self.mini_batch_utils.rpn_iou_type == "2d":
                 gt_box_for_2d_iou = gt_boxes_for_2d_iou[gt_idx]
-                ious = evaluation.two_d_iou(gt_box_for_2d_iou,
-                                            anchors_for_2d_iou)
-            elif self.mini_batch_utils.rpn_iou_type == '3d':
+                ious = evaluation.two_d_iou(gt_box_for_2d_iou, anchors_for_2d_iou)
+            elif self.mini_batch_utils.rpn_iou_type == "3d":
                 gt_box_for_3d_iou = gt_boxes_for_3d_iou[gt_idx]
-                ious = evaluation.three_d_iou(gt_box_for_3d_iou,
-                                              anchors_for_3d_iou)
+                ious = evaluation.three_d_iou(gt_box_for_3d_iou, anchors_for_3d_iou)
 
             # Only update indices with a higher iou than before
             update_indices = np.greater(
-                ious, all_info[:, self.mini_batch_utils.col_ious])
+                ious, all_info[:, self.mini_batch_utils.col_ious]
+            )
 
             # Get ious to update
             ious_to_update = ious[update_indices]
 
             # Calculate offsets, use 3D iou to get highest iou
             anchors_to_update = anchors[update_indices]
-            gt_anchor = box_3d_encoder.box_3d_to_anchor(gt_box_3d,
-                                                        ortho_rotate=True)
-            offsets = anchor_encoder.anchor_to_offset(anchors_to_update,
-                                                      gt_anchor)
+            gt_anchor = box_3d_encoder.box_3d_to_anchor(gt_box_3d, ortho_rotate=True)
+            offsets = anchor_encoder.anchor_to_offset(anchors_to_update, gt_anchor)
 
             # Convert gt type to index
             class_idx = kitti_utils.class_str_to_index(gt_obj.type)
 
             # Update anchors info (indices already updated)
             # [index, iou, (offsets), class_index]
-            all_info[update_indices,
-                     self.mini_batch_utils.col_ious] = ious_to_update
+            all_info[update_indices, self.mini_batch_utils.col_ious] = ious_to_update
 
-            all_info[update_indices,
-                     self.mini_batch_utils.col_offsets_lo:
-                     self.mini_batch_utils.col_offsets_hi] = offsets
-            all_info[update_indices,
-                     self.mini_batch_utils.col_class_idx] = class_idx
+            all_info[
+                update_indices,
+                self.mini_batch_utils.col_offsets_lo : self.mini_batch_utils.col_offsets_hi,
+            ] = offsets
+            all_info[update_indices, self.mini_batch_utils.col_class_idx] = class_idx
 
         return all_info
 
@@ -175,9 +170,9 @@ class MiniBatchPreprocessor(object):
         classes_name = dataset.classes_name
 
         # Make folder if it doesn't exist yet
-        output_dir = self.mini_batch_utils.get_file_path(classes_name,
-                                                         anchor_strides,
-                                                         sample_name=None)
+        output_dir = self.mini_batch_utils.get_file_path(
+            classes_name, anchor_strides, sample_name=None
+        )
         os.makedirs(output_dir, exist_ok=True)
 
         # Get clusters for class
@@ -199,15 +194,16 @@ class MiniBatchPreprocessor(object):
             img_idx = int(sample_name)
 
             # Check for existing files and skip to the next
-            if self._check_for_existing(classes_name, anchor_strides,
-                                        sample_name):
-                print("{} / {}: Sample already preprocessed".format(
-                    sample_idx + 1, num_samples, sample_name))
+            if self._check_for_existing(classes_name, anchor_strides, sample_name):
+                print(
+                    "{} / {}: Sample already preprocessed".format(
+                        sample_idx + 1, num_samples, sample_name
+                    )
+                )
                 continue
 
             # Get ground truth and filter based on difficulty
-            ground_truth_list = obj_utils.read_labels(dataset.label_dir,
-                                                      img_idx)
+            ground_truth_list = obj_utils.read_labels(dataset.label_dir, img_idx)
 
             # Filter objects to dataset classes
             filtered_gt_list = dataset_utils.filter_labels(ground_truth_list)
@@ -215,27 +211,27 @@ class MiniBatchPreprocessor(object):
 
             # Filtering by class has no valid ground truth, skip this image
             if len(filtered_gt_list) == 0:
-                print("{} / {} No {}s for sample {} "
-                      "(Ground Truth Filter)".format(
-                          sample_idx + 1, num_samples,
-                          classes_name, sample_name))
+                print(
+                    "{} / {} No {}s for sample {} "
+                    "(Ground Truth Filter)".format(
+                        sample_idx + 1, num_samples, classes_name, sample_name
+                    )
+                )
 
                 # Output an empty file and move on to the next image.
                 self._save_to_file(classes_name, anchor_strides, sample_name)
                 continue
 
             # Get ground plane
-            ground_plane = obj_utils.get_road_plane(img_idx,
-                                                    dataset.planes_dir)
+            ground_plane = obj_utils.get_road_plane(img_idx, dataset.planes_dir)
 
             image = Image.open(dataset.get_rgb_image_path(sample_name))
             image_shape = [image.size[1], image.size[0]]
 
             # Generate sliced 2D voxel grid for filtering
             vx_grid_2d = dataset_utils.create_sliced_voxel_grid_2d(
-                sample_name,
-                source=dataset.pc_source,
-                image_shape=image_shape)
+                sample_name, source=dataset.pc_source, image_shape=image_shape
+            )
 
             # List for merging all anchors
             all_anchor_boxes_3d = []
@@ -247,7 +243,8 @@ class MiniBatchPreprocessor(object):
                     area_3d=self._area_extents,
                     anchor_3d_sizes=all_clusters_sizes[class_idx],
                     anchor_stride=self._anchor_strides[class_idx],
-                    ground_plane=ground_plane)
+                    ground_plane=ground_plane,
+                )
 
                 all_anchor_boxes_3d.extend(grid_anchor_boxes_3d)
 
@@ -255,29 +252,35 @@ class MiniBatchPreprocessor(object):
             all_anchor_boxes_3d = np.asarray(all_anchor_boxes_3d)
             anchors = box_3d_encoder.box_3d_to_anchor(all_anchor_boxes_3d)
             empty_anchor_filter = anchor_filter.get_empty_anchor_filter_2d(
-                anchors, vx_grid_2d, self._density_threshold)
+                anchors, vx_grid_2d, self._density_threshold
+            )
 
             # Calculate anchor info
             anchors_info = self._calculate_anchors_info(
-                all_anchor_boxes_3d, empty_anchor_filter, filtered_gt_list)
+                all_anchor_boxes_3d, empty_anchor_filter, filtered_gt_list
+            )
 
             anchor_ious = anchors_info[:, self.mini_batch_utils.col_ious]
 
             valid_iou_indices = np.where(anchor_ious > 0.0)[0]
 
-            print("{} / {}:"
-                  "{:>6} anchors, "
-                  "{:>6} iou > 0.0, "
-                  "for {:>3} {}(s) for sample {}".format(
-                      sample_idx + 1, num_samples,
-                      len(anchors_info),
-                      len(valid_iou_indices),
-                      len(filtered_gt_list), classes_name, sample_name
-                  ))
+            print(
+                "{} / {}:"
+                "{:>6} anchors, "
+                "{:>6} iou > 0.0, "
+                "for {:>3} {}(s) for sample {}".format(
+                    sample_idx + 1,
+                    num_samples,
+                    len(anchors_info),
+                    len(valid_iou_indices),
+                    len(filtered_gt_list),
+                    classes_name,
+                    sample_name,
+                )
+            )
 
             # Save anchors info
-            self._save_to_file(classes_name, anchor_strides,
-                               sample_name, anchors_info)
+            self._save_to_file(classes_name, anchor_strides, sample_name, anchors_info)
 
     def _check_for_existing(self, classes_name, anchor_strides, sample_name):
         """
@@ -293,16 +296,17 @@ class MiniBatchPreprocessor(object):
             True if the anchors info file already exists
         """
 
-        file_name = self.mini_batch_utils.get_file_path(classes_name,
-                                                        anchor_strides,
-                                                        sample_name)
+        file_name = self.mini_batch_utils.get_file_path(
+            classes_name, anchor_strides, sample_name
+        )
         if os.path.exists(file_name):
             return True
 
         return False
 
-    def _save_to_file(self, classes_name, anchor_strides, sample_name,
-                      anchors_info=np.array([])):
+    def _save_to_file(
+        self, classes_name, anchor_strides, sample_name, anchors_info=np.array([])
+    ):
         """
         Saves the anchors info matrix to a file
 
@@ -316,9 +320,9 @@ class MiniBatchPreprocessor(object):
                 an empty array
         """
 
-        file_name = self.mini_batch_utils.get_file_path(classes_name,
-                                                        anchor_strides,
-                                                        sample_name)
+        file_name = self.mini_batch_utils.get_file_path(
+            classes_name, anchor_strides, sample_name
+        )
 
         # Save to npy file
         anchors_info = np.asarray(anchors_info, dtype=np.float32)
