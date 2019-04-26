@@ -14,7 +14,7 @@ def flip_image(image):
 
 
 def flip_points(points):
-    """Flips a list of points (N, 3)
+    """Flips a list of points (N, 4)
     """
     flipped_points = np.copy(points)
     flipped_points[:, 0] = -points[:, 0]
@@ -22,7 +22,7 @@ def flip_points(points):
 
 
 def flip_point_cloud(point_cloud):
-    """Flips a point cloud (3, N)
+    """Flips a point cloud (4, N)
     """
     flipped_point_cloud = np.copy(point_cloud)
     flipped_point_cloud[0] = -point_cloud[0]

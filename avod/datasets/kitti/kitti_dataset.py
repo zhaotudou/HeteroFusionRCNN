@@ -96,7 +96,7 @@ class KittiDataset:
             self._data_split_dir = split_dir
         else:
             raise ValueError(
-                "Invalid data split dir: {}, possible dirs".format(
+                "Invalid data split dir: {}, possible dirs: {}".format(
                     data_split_dir, possible_split_dirs))
 
         # Batch pointers
@@ -125,6 +125,7 @@ class KittiDataset:
 
         self.sample_list = np.asarray(aug_sample_list)
         self.num_samples = len(self.sample_list)
+        print("Number of samples in dataset: ", self.num_samples)
 
         self._set_up_directories()
 
@@ -283,9 +284,10 @@ class KittiDataset:
             image_shape = rgb_image.shape[0:2]
             #image_input = rgb_image
             
-            point_cloud = self.kitti_utils.get_point_cloud(self.pc_source,
+            point_xyz, point_intensity = self.kitti_utils.get_point_cloud(self.pc_source,
                                                            img_idx,
                                                            image_shape)
+            point_cloud = np.vstack((point_xyz, point_intensity))
             point_cloud = point_cloud.T
 
             # Augmentation (Flipping)

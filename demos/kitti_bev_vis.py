@@ -105,7 +105,7 @@ def main():
     image_shape = image.shape[0:2]
 
     kitti_utils = dataset.kitti_utils
-    point_cloud = kitti_utils.get_point_cloud(
+    point_cloud, _ = kitti_utils.get_point_cloud(
         point_cloud_source, img_idx, image_shape)
     ground_plane = kitti_utils.get_ground_plane(sample_name)
     bev_images = kitti_utils.create_bev_maps(point_cloud, ground_plane)

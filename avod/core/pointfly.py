@@ -119,10 +119,17 @@ def batch_distance_matrix(A):
 # A shape is (N, P_A, C), B shape is (N, P_B, C)
 # D shape is (N, P_A, P_B)
 def batch_distance_matrix_general(A, B):
-    r_A = tf.reduce_sum(A * A, axis=2, keep_dims=True)
-    r_B = tf.reduce_sum(B * B, axis=2, keep_dims=True)
-    m = tf.matmul(A, tf.transpose(B, perm=(0, 2, 1)))
-    D = r_A - 2 * m + tf.transpose(r_B, perm=(0, 2, 1))
+    ''' Calculate the distance matrix between two point batches.
+    Input:
+      A: (B, NUM_P_A, C)
+      B: (B, NUM_P_B, C)
+    Returns:
+      D: (B, NUM_P_A, NUM_P_B)
+    '''
+    r_A = tf.reduce_sum(A * A, axis=2, keep_dims=True) # (N, P_A, 1)
+    r_B = tf.reduce_sum(B * B, axis=2, keep_dims=True) # (N, P_B, 1)
+    m = tf.matmul(A, tf.transpose(B, perm=(0, 2, 1)))  # (N, P_A, P_B)
+    D = r_A - 2 * m + tf.transpose(r_B, perm=(0, 2, 1))# (N, P_A, P_B)
     return D
 
 
@@ -160,6 +167,20 @@ def knn_indices(points, k, sort=True, unique=True):
 
 # return shape is (N, P, K, 2)
 def knn_indices_general(queries, points, k, sort=True, unique=True):
+    '''Find indices of k-nearest neighbors given query points.
+
+    Inputs:
+      queries: (B, P, 3). Query points.
+      points: (B, N, 3). The whole set of points.
+      K: The number of k-nearest points.
+      sort: bool. If true, the neighbors will be sorted by their distances in ascending order.
+      unique: bool. 
+    Return:
+      distances: (B, P, K). The distances of each query point to its k neighbors.
+      indices: (B, P, K, 2). The indices of each query point's K neighbors.
+          It can be used with tf.gather_nd(points, indices) to retrieve these neighbors.
+
+    '''
     queries_shape = tf.shape(queries)
     batch_size = queries_shape[0]
     point_num = queries_shape[1]
@@ -167,7 +188,7 @@ def knn_indices_general(queries, points, k, sort=True, unique=True):
     D = batch_distance_matrix_general(queries, points)
     if unique:
         prepare_for_unique_top_k(D, points)
-    distances, point_indices = tf.nn.top_k(-D, k=k, sorted=sort)  # (N, P, K)
+    distances, point_indices = tf.nn.top_k(-D, k=k, sorted=sort)  # (B, P, K)
     batch_indices = tf.tile(tf.reshape(tf.range(batch_size), [-1, 1, 1, 1]), (1, point_num, k, 1))
     indices = tf.concat([batch_indices, tf.expand_dims(point_indices, axis=3)], axis=3)
     return -distances, indices
@@ -176,6 +197,17 @@ def knn_indices_general(queries, points, k, sort=True, unique=True):
 # indices is (N, P, K, 2)
 # return shape is (N, P, K, 2)
 def sort_points(points, indices, sorting_method):
+    '''Sort points
+
+    Inputs:
+      points: (B, N, 3). The whole set of points
+      indices: (B, P, K, 2). The indices of selected points that need to 
+        be sorted.
+      sorting_method: string. 
+    Returns: 
+      sorted_indices: (B, P, K, 2). 
+    
+    '''
     indices_shape = tf.shape(indices)
     batch_size = indices_shape[0]
     point_num = indices_shape[1]

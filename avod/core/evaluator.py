@@ -177,6 +177,7 @@ class Evaluator:
                 "/proposals_and_scores/{}/{}".format(
                     data_split, global_step)
             trainer_utils.create_dir(prop_score_predictions_dir)
+            os.system("ln -snf {} {}".format(prop_score_predictions_dir, self.model.dataset.proposal_dir))
             
             if validation:
                 eval_rpn_stats = self._create_rpn_stats_dict()
@@ -185,6 +186,7 @@ class Evaluator:
                     "/proposals_info/{}/{}".format(
                         data_split, global_step)
                 trainer_utils.create_dir(prop_info_dir)
+                os.system("ln -snf {} {}".format(prop_info_dir, self.model.dataset.proposal_info_dir))
 
         num_valid_samples = 0
 

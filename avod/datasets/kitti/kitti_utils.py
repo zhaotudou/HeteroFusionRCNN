@@ -128,7 +128,8 @@ class KittiUtils(object):
                 source is 'lidar' or 'depth'
 
         Returns:
-            The set of points in the shape (3, N)
+            points_xyz: (3, N). The set of points
+            points_intensity: (1, N). The intensity values of the point
         """
 
         if source == 'lidar':
@@ -142,7 +143,8 @@ class KittiUtils(object):
         else:
             raise ValueError("Invalid source {}".format(source))
 
-        return point_cloud
+        points_xyz, points_intensity = point_cloud[:-1,:], point_cloud[-1,:].reshape(1,-1)
+        return points_xyz, points_intensity
 
     def get_ground_plane(self, sample_name):
         """Reads the ground plane for the sample
@@ -226,7 +228,7 @@ class KittiUtils(object):
         ground_plane = obj_utils.get_road_plane(img_idx,
                                                 self.dataset.planes_dir)
         if isinstance(source, str):
-            point_cloud = self.get_point_cloud(source, img_idx,
+            point_cloud, _ = self.get_point_cloud(source, img_idx,
                                            image_shape=image_shape)
         elif isinstance(source, np.ndarray):
             point_cloud = source
@@ -264,7 +266,7 @@ class KittiUtils(object):
         """
         img_idx = int(sample_name)
 
-        points = self.get_point_cloud(source, img_idx)
+        points, _ = self.get_point_cloud(source, img_idx)
 
         if filter_type == 'slice':
             filtered_points = self._apply_slice_filter(points, ground_plane)
