@@ -18,7 +18,6 @@ from avod.protos import model_pb2
 
 
 class FakeBatchNormClassifier(model.DetectionModel):
-
     def __init__(self, model_config, num_classes=1):
         # Sets model configs (_config and _num_classes)
         super(FakeBatchNormClassifier, self).__init__(model_config)
@@ -36,9 +35,7 @@ class FakeBatchNormClassifier(model.DetectionModel):
         np.random.seed(0)
 
         inputs = np.zeros((16, 4))
-        labels = np.random.randint(
-                0, 2, size=(16, 1)).astype(
-                np.float32)
+        labels = np.random.randint(0, 2, size=(16, 1)).astype(np.float32)
 
         for i in range(16):
             j = int(2 * labels[i] + np.random.randint(0, 2))
@@ -63,19 +60,18 @@ class FakeBatchNormClassifier(model.DetectionModel):
         tf_predictions = self.BatchNormClassifier(self.tf_inputs)
         return tf_predictions
 
-    def loss(self,  tf_predictions):
+    def loss(self, tf_predictions):
         """Compute scalar loss tensors with respect to provided groundtruth.
         """
         # trainer expects two losses, pass in a dummy one
         dummy_loss_dict = {}
-        total_loss = tf.losses.log_loss(self.tf_labels,
-                                        tf_predictions,
-                                        scope='BatchNormLoss')
+        total_loss = tf.losses.log_loss(
+            self.tf_labels, tf_predictions, scope="BatchNormLoss"
+        )
         return dummy_loss_dict, total_loss
 
 
 class ClassifierTrainerTest(tf.test.TestCase):
-
     def test_batch_norm_class(self):
         # This tests the model and trainer set up
         train_config_text_proto = """
@@ -99,16 +95,15 @@ class ClassifierTrainerTest(tf.test.TestCase):
         model_config = model_pb2.ModelConfig()
         text_format.Merge(model_config_text_proto, model_config)
         train_config.overwrite_checkpoints = True
-        test_root_dir = '/tmp/avod_unit_test/'
+        test_root_dir = "/tmp/avod_unit_test/"
 
         paths_config = model_config.paths_config
-        paths_config.logdir = test_root_dir + 'logs/'
+        paths_config.logdir = test_root_dir + "logs/"
         paths_config.checkpoint_dir = test_root_dir
 
         classifier = FakeBatchNormClassifier(model_config)
-        trainer.train(classifier,
-                      train_config)
+        trainer.train(classifier, train_config)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     tf.test.main()

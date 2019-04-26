@@ -14,20 +14,20 @@ ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
 def main():
     # Start of the Kitti demo code
-    print('=== Python Kitti Wrapper Demo ===')
+    print("=== Python Kitti Wrapper Demo ===")
 
     # Setting Paths
-    data_set = 'training'
+    data_set = "training"
     cam = 2
 
-    root_dir = os.path.expanduser('~') + '/Kitti/object/'
+    root_dir = os.path.expanduser("~") + "/Kitti/object/"
 
-    image_dir = os.path.join(root_dir, data_set) + '/image_' + str(cam)
-    label_dir = os.path.join(root_dir, data_set) + '/label_' + str(cam)
-    calib_dir = os.path.join(root_dir, data_set) + '/calib'
+    image_dir = os.path.join(root_dir, data_set) + "/image_" + str(cam)
+    label_dir = os.path.join(root_dir, data_set) + "/label_" + str(cam)
+    calib_dir = os.path.join(root_dir, data_set) + "/calib"
 
-    img_idx = int(random.random()*100)
-    print('img_idx', img_idx)
+    img_idx = int(random.random() * 100)
+    print("img_idx", img_idx)
 
     # Run Visualization Function
     f, ax1, ax2 = vis_utils.visualization(image_dir, img_idx)

@@ -29,16 +29,15 @@ class BalancedPositiveNegativeSamplerTest(tf.test.TestCase):
 
         labels = tf.constant(numpy_labels)
 
-        sampler = (balanced_positive_negative_sampler.
-                   BalancedPositiveNegativeSampler())
+        sampler = balanced_positive_negative_sampler.BalancedPositiveNegativeSampler()
         is_sampled, _ = sampler.subsample(indicator, 64, labels)
         with self.test_session() as sess:
             is_sampled = sess.run(is_sampled)
             self.assertTrue(sum(is_sampled) == 64)
+            self.assertTrue(sum(np.logical_and(numpy_labels, is_sampled)) == 32)
             self.assertTrue(
-                sum(np.logical_and(numpy_labels, is_sampled)) == 32)
-            self.assertTrue(sum(np.logical_and(
-                np.logical_not(numpy_labels), is_sampled)) == 32)
+                sum(np.logical_and(np.logical_not(numpy_labels), is_sampled)) == 32
+            )
 
     def test_subsample_selection(self):
         # Test random sampling when only some examples can be sampled:
@@ -50,35 +49,31 @@ class BalancedPositiveNegativeSamplerTest(tf.test.TestCase):
 
         labels = tf.constant(numpy_labels)
 
-        sampler = (balanced_positive_negative_sampler.
-                   BalancedPositiveNegativeSampler())
+        sampler = balanced_positive_negative_sampler.BalancedPositiveNegativeSampler()
         is_sampled, _ = sampler.subsample(indicator, 64, labels)
         with self.test_session() as sess:
             is_sampled = sess.run(is_sampled)
             self.assertTrue(sum(is_sampled) == 64)
+            self.assertTrue(sum(np.logical_and(numpy_labels, is_sampled)) == 10)
             self.assertTrue(
-                sum(np.logical_and(numpy_labels, is_sampled)) == 10)
-            self.assertTrue(sum(np.logical_and(
-                np.logical_not(numpy_labels), is_sampled)) == 54)
-            self.assertAllEqual(is_sampled, np.logical_and(is_sampled,
-                                                           numpy_indicator))
+                sum(np.logical_and(np.logical_not(numpy_labels), is_sampled)) == 54
+            )
+            self.assertAllEqual(is_sampled, np.logical_and(is_sampled, numpy_indicator))
 
     def test_raises_error_with_incorrect_label_shape(self):
         labels = tf.constant([[True, False, False]])
         indicator = tf.constant([True, False, True])
-        sampler = (balanced_positive_negative_sampler.
-                   BalancedPositiveNegativeSampler())
+        sampler = balanced_positive_negative_sampler.BalancedPositiveNegativeSampler()
         with self.assertRaises(ValueError):
             sampler.subsample(indicator, 64, labels)
 
     def test_raises_error_with_incorrect_indicator_shape(self):
         labels = tf.constant([True, False, False])
         indicator = tf.constant([[True, False, True]])
-        sampler = (balanced_positive_negative_sampler.
-                   BalancedPositiveNegativeSampler())
+        sampler = balanced_positive_negative_sampler.BalancedPositiveNegativeSampler()
         with self.assertRaises(ValueError):
             sampler.subsample(indicator, 64, labels)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     tf.test.main()

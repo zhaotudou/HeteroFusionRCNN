@@ -4,17 +4,21 @@ from avod.core.avod_fc_layers import basic_fc_layers
 from avod.core.avod_fc_layers import fusion_fc_layers
 
 
-KEY_CLS_LOGITS = 'classification_logits'
-KEY_OFFSETS = 'offsets'
-KEY_ANGLE_VECTORS = 'angle_vectors'
-KEY_ENDPOINTS = 'end_points'
+KEY_CLS_LOGITS = "classification_logits"
+KEY_OFFSETS = "offsets"
+KEY_ANGLE_VECTORS = "angle_vectors"
+KEY_ENDPOINTS = "end_points"
 
 
-def build(layers_config,
-          input_rois, input_weights,
-          num_final_classes, box_rep,
-          ground_plane,
-          is_training):
+def build(
+    layers_config,
+    input_rois,
+    input_weights,
+    num_final_classes,
+    box_rep,
+    ground_plane,
+    is_training,
+):
     """Builds second stage fully connected layers
 
     Args:
@@ -33,39 +37,39 @@ def build(layers_config,
     # Default all output layers to None
     cls_logits = offsets = angle_vectors = end_points = None
 
-    with tf.variable_scope('box_predictor') as sc:
-        end_points_collection = sc.name + '_end_points'
+    with tf.variable_scope("box_predictor") as sc:
+        end_points_collection = sc.name + "_end_points"
 
-        fc_layers_type = layers_config.WhichOneof('fc_layers')
+        fc_layers_type = layers_config.WhichOneof("fc_layers")
 
-        if fc_layers_type == 'basic_fc_layers':
+        if fc_layers_type == "basic_fc_layers":
             fc_layers_config = layers_config.basic_fc_layers
 
-            cls_logits, offsets, angle_vectors, end_points = \
-                basic_fc_layers.build(
-                    fc_layers_config=fc_layers_config,
-                    input_rois=input_rois,
-                    input_weights=input_weights,
-                    num_final_classes=num_final_classes,
-                    box_rep=box_rep,
-                    is_training=is_training,
-                    end_points_collection=end_points_collection)
+            cls_logits, offsets, angle_vectors, end_points = basic_fc_layers.build(
+                fc_layers_config=fc_layers_config,
+                input_rois=input_rois,
+                input_weights=input_weights,
+                num_final_classes=num_final_classes,
+                box_rep=box_rep,
+                is_training=is_training,
+                end_points_collection=end_points_collection,
+            )
 
-        elif fc_layers_type == 'fusion_fc_layers':
+        elif fc_layers_type == "fusion_fc_layers":
             fc_layers_config = layers_config.fusion_fc_layers
 
-            cls_logits, offsets, angle_vectors, end_points = \
-                fusion_fc_layers.build(
-                    fc_layers_config=fc_layers_config,
-                    input_rois=input_rois,
-                    input_weights=input_weights,
-                    num_final_classes=num_final_classes,
-                    box_rep=box_rep,
-                    is_training=is_training,
-                    end_points_collection=end_points_collection)
+            cls_logits, offsets, angle_vectors, end_points = fusion_fc_layers.build(
+                fc_layers_config=fc_layers_config,
+                input_rois=input_rois,
+                input_weights=input_weights,
+                num_final_classes=num_final_classes,
+                box_rep=box_rep,
+                is_training=is_training,
+                end_points_collection=end_points_collection,
+            )
 
         else:
-            raise ValueError('Invalid fc layers config')
+            raise ValueError("Invalid fc layers config")
 
     # # Histogram summaries
     # with tf.variable_scope('histograms_avod'):

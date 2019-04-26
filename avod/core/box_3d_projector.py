@@ -52,9 +52,9 @@ def project_to_bev(boxes_3d, bev_extents):
     for box_idx in range(len(boxes_3d)):
         rot = ry[box_idx]
 
-        rot_mat = np.reshape([[np.cos(rot), np.sin(rot)],
-                              [-np.sin(rot), np.cos(rot)]],
-                             (2, 2))
+        rot_mat = np.reshape(
+            [[np.cos(rot), np.sin(rot)], [-np.sin(rot), np.cos(rot)]], (2, 2)
+        )
 
         box_x = x[box_idx]
         box_z = z[box_idx]
@@ -83,9 +83,9 @@ def project_to_bev(boxes_3d, bev_extents):
     return box_points, box_points_norm
 
 
-def project_to_image_space(box_3d, calib_p2,
-                           truncate=False, image_size=None,
-                           discard_before_truncation=True):
+def project_to_image_space(
+    box_3d, calib_p2, truncate=False, image_size=None, discard_before_truncation=True
+):
     """ Projects a box_3d into image space
 
     Args:
@@ -120,16 +120,18 @@ def project_to_image_space(box_3d, calib_p2,
 
     if truncate:
         if not image_size:
-            raise ValueError('Image size must be provided')
+            raise ValueError("Image size must be provided")
 
         image_w = image_size[0]
         image_h = image_size[1]
 
         # Discard invalid boxes (outside image space)
-        if img_box[0] > image_w or \
-                img_box[1] > image_h or \
-                img_box[2] < 0 or \
-                img_box[3] < 0:
+        if (
+            img_box[0] > image_w
+            or img_box[1] > image_h
+            or img_box[2] < 0
+            or img_box[3] < 0
+        ):
             return None
 
         # Discard boxes that are larger than 80% of the image width OR height

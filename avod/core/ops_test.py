@@ -6,14 +6,13 @@ from avod.core import ops
 
 
 class OpsTestIndicesToDenseVector(tf.test.TestCase):
-
     def test_indices_to_dense_vector(self):
         size = 10000
         num_indices = np.random.randint(size)
         rand_indices = np.random.permutation(np.arange(size))[0:num_indices]
 
         expected_output = np.zeros(size, dtype=np.float32)
-        expected_output[rand_indices] = 1.
+        expected_output[rand_indices] = 1.0
 
         tf_rand_indices = tf.constant(rand_indices)
         indicator = ops.indices_to_dense_vector(tf_rand_indices, size)
@@ -30,12 +29,13 @@ class OpsTestIndicesToDenseVector(tf.test.TestCase):
         rand_indices = np.random.permutation(all_indices)[0:num_indices]
 
         expected_output = np.zeros(size, dtype=np.float32)
-        expected_output[rand_indices] = 1.
+        expected_output[rand_indices] = 1.0
 
         tf_all_indices = tf.placeholder(tf.int32)
         tf_rand_indices = tf.constant(rand_indices)
-        indicator = ops.indices_to_dense_vector(tf_rand_indices,
-                                                tf.shape(tf_all_indices)[0])
+        indicator = ops.indices_to_dense_vector(
+            tf_rand_indices, tf.shape(tf_all_indices)[0]
+        )
         feed_dict = {tf_all_indices: all_indices}
 
         with self.test_session() as sess:
@@ -53,7 +53,8 @@ class OpsTestIndicesToDenseVector(tf.test.TestCase):
 
         tf_rand_indices = tf.constant(rand_indices)
         indicator = ops.indices_to_dense_vector(
-            tf_rand_indices, size, 1, dtype=tf.int64)
+            tf_rand_indices, size, 1, dtype=tf.int64
+        )
 
         with self.test_session() as sess:
             output = sess.run(indicator)
@@ -75,7 +76,8 @@ class OpsTestIndicesToDenseVector(tf.test.TestCase):
             tf_rand_indices,
             size,
             indices_value=indices_value,
-            default_value=default_value)
+            default_value=default_value,
+        )
 
         with self.test_session() as sess:
             output = sess.run(indicator)
@@ -112,5 +114,5 @@ class OpsTestIndicesToDenseVector(tf.test.TestCase):
             self.assertEqual(output.dtype, expected_output.dtype)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     tf.test.main()

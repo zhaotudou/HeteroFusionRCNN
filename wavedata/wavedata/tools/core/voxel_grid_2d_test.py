@@ -9,29 +9,30 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
 
 class VoxelGrid2DTest(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls):
-        cls.test_points = np.array([[-39.99, 4.99, 0],
-                                    [39.99, 4.99, 0],
-                                    [-39.99, -4.99, 0],
-                                    [39.99, -4.99, 0],
-                                    [-39.99, 4.99, 69.99],
-                                    [39.99, 4.99, 69.99],
-                                    [-39.99, -4.99, 69.99],
-                                    [39.99, -4.99, 69.99],
-                                    [-39.99, 4.99, 69.99],
-                                    [39.99, 4.99, 69.99],
-                                    [-39.99, -4.99, 69.99],
-                                    [39.99, -4.99, 69.99]])
+        cls.test_points = np.array(
+            [
+                [-39.99, 4.99, 0],
+                [39.99, 4.99, 0],
+                [-39.99, -4.99, 0],
+                [39.99, -4.99, 0],
+                [-39.99, 4.99, 69.99],
+                [39.99, 4.99, 69.99],
+                [-39.99, -4.99, 69.99],
+                [39.99, -4.99, 69.99],
+                [-39.99, 4.99, 69.99],
+                [39.99, 4.99, 69.99],
+                [-39.99, -4.99, 69.99],
+                [39.99, -4.99, 69.99],
+            ]
+        )
 
         # Expected leaf layout for voxelization at size 0.1
         # y-axis for filled_indices should be 0
-        filled_indices = \
-            np.floor((cls.test_points * 10) + [400, 0, 0]).astype(np.int32)
+        filled_indices = np.floor((cls.test_points * 10) + [400, 0, 0]).astype(np.int32)
         filled_indices[:, 1] = 0
-        cls.expected_leaf_layout = VoxelGrid2D.VOXEL_EMPTY * \
-            np.ones((800, 1, 700))
+        cls.expected_leaf_layout = VoxelGrid2D.VOXEL_EMPTY * np.ones((800, 1, 700))
         for idx in filled_indices:
             cls.expected_leaf_layout[tuple(idx)] = VoxelGrid2D.VOXEL_FILLED
 
@@ -55,8 +56,7 @@ class VoxelGrid2DTest(unittest.TestCase):
         self.assertTrue((voxel_grid.num_divisions == [800, 1, 700]).all())
 
         # Test every entry of out put leafs
-        self.assertTrue((voxel_grid.leaf_layout_2d ==
-                         self.expected_leaf_layout).all())
+        self.assertTrue((voxel_grid.leaf_layout_2d == self.expected_leaf_layout).all())
 
     def test_voxel_grid_2d_extents(self):
 
@@ -67,8 +67,7 @@ class VoxelGrid2DTest(unittest.TestCase):
 
         # Test bad extents
         bad_extents = np.array([[-30, 30], [-3, 3], [10, 60]])
-        self.assertRaises(ValueError, voxel_grid.voxelize_2d, points, 0.1,
-                          bad_extents)
+        self.assertRaises(ValueError, voxel_grid.voxelize_2d, points, 0.1, bad_extents)
 
         extents = np.array([[-50, 50], [-5, 5], [0, 70]])
         voxel_grid.voxelize_2d(points, 0.1, extents)
@@ -90,33 +89,28 @@ class VoxelGrid2DTest(unittest.TestCase):
         coordinates = np.array([[0, 0]])
         # Map spans from [-500, 500], [0, 700]
         expected = np.array([500, 0])
-        self.assertTrue(
-            (voxel_grid.map_to_index(coordinates) == expected).all())
+        self.assertTrue((voxel_grid.map_to_index(coordinates) == expected).all())
 
         coordinates = np.array([[0, 0]]) + 0.1
         # Increment of 1 grid size
         expected = np.array([501, 1])
-        self.assertTrue(
-            (voxel_grid.map_to_index(coordinates) == expected).all())
+        self.assertTrue((voxel_grid.map_to_index(coordinates) == expected).all())
 
         # Start of Grid
         coordinates = np.array([[-50, 0]])
         expected = np.array([0, 0])
-        self.assertTrue(
-            (voxel_grid.map_to_index(coordinates) == expected).all())
+        self.assertTrue((voxel_grid.map_to_index(coordinates) == expected).all())
 
         # End of Grid
         coordinates = np.array([[50, 70]])
         expected = np.array([1000, 700])
-        self.assertTrue(
-            (voxel_grid.map_to_index(coordinates) == expected).all())
+        self.assertTrue((voxel_grid.map_to_index(coordinates) == expected).all())
 
         # Outside the grid
         coordinates = coordinates + 10
         expected = np.array([1000, 700])
-        self.assertTrue(
-            (voxel_grid.map_to_index(coordinates) == expected).all())
+        self.assertTrue((voxel_grid.map_to_index(coordinates) == expected).all())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

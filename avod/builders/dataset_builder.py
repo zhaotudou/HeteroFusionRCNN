@@ -32,7 +32,7 @@ class DatasetBuilder(object):
         has_labels=True,
         cluster_split="train",
         classes=["Car"],
-        num_clusters=[2]
+        num_clusters=[2],
     )
 
     KITTI_VAL = KittiDatasetConfig(
@@ -94,8 +94,7 @@ class DatasetBuilder(object):
         num_clusters=[2],
     )
 
-    CONFIG_DEFAULTS_PROTO = \
-        """
+    CONFIG_DEFAULTS_PROTO = """
         pc_source: 'lidar'
 
         kitti_utils_config {
@@ -104,15 +103,15 @@ class DatasetBuilder(object):
             anchor_strides: [0.5, 0.5]
         }
         """
+
     @staticmethod
     def load_dataset_from_config(dataset_config_path):
 
         dataset_config = kitti_dataset_pb2.KittiDatasetConfig()
-        with open(dataset_config_path, 'r') as f:
+        with open(dataset_config_path, "r") as f:
             text_format.Merge(f.read(), dataset_config)
 
-        return DatasetBuilder.build_kitti_dataset(dataset_config,
-                                                  use_defaults=False)
+        return DatasetBuilder.build_kitti_dataset(dataset_config, use_defaults=False)
 
     @staticmethod
     def copy_config(cfg):
@@ -125,9 +124,7 @@ class DatasetBuilder(object):
         return cfg_copy
 
     @staticmethod
-    def build_kitti_dataset(base_cfg,
-                            use_defaults=True,
-                            new_cfg=None) -> KittiDataset:
+    def build_kitti_dataset(base_cfg, use_defaults=True, new_cfg=None) -> KittiDataset:
         """Builds a KittiDataset object using the provided configurations
 
         Args:
@@ -156,5 +153,5 @@ def main():
     DatasetBuilder.build_kitti_dataset(DatasetBuilder.KITTI_TRAIN_MINI)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

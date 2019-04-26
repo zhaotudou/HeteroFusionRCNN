@@ -62,11 +62,10 @@ class LabelClusterUtils:
         Returns: str Unique file path to text file
         """
 
-        file_path = "{}/{}/{}/".format(self.data_dir,
-                                       dataset.name,
-                                       dataset.cluster_split,
-                                       dataset.data_split)
-        file_path += '{}_{}.txt'.format(cls, num_clusters)
+        file_path = "{}/{}/{}/".format(
+            self.data_dir, dataset.name, dataset.cluster_split, dataset.data_split
+        )
+        file_path += "{}_{}.txt".format(cls, num_clusters)
 
         return file_path
 
@@ -84,12 +83,11 @@ class LabelClusterUtils:
         if not os.path.exists(file_dir):
             os.makedirs(file_dir)
 
-        new_file = open(file_path, 'w+')
+        new_file = open(file_path, "w+")
 
-        all_data = np.vstack([clusters,
-                              std_devs])
+        all_data = np.vstack([clusters, std_devs])
 
-        np.savetxt(file_path, all_data, fmt='%.3f')
+        np.savetxt(file_path, all_data, fmt="%.3f")
 
         new_file.close()
 
@@ -105,7 +103,7 @@ class LabelClusterUtils:
 
         file_path = self._get_cluster_file_path(dataset, cls, num_clusters)
         if os.path.isfile(file_path):
-            cluster_file = open(file_path, 'r')
+            cluster_file = open(file_path, "r")
 
             data = np.loadtxt(file_path)
 
@@ -163,7 +161,8 @@ class LabelClusterUtils:
         # Try to read from file first
         for class_idx in range(len(classes)):
             clusters, std_devs = self._read_clusters_from_file(
-                self._dataset, classes[class_idx], num_clusters[class_idx])
+                self._dataset, classes[class_idx], num_clusters[class_idx]
+            )
 
             if clusters is not None:
                 all_clusters[class_idx].extend(np.asarray(clusters))
@@ -183,17 +182,18 @@ class LabelClusterUtils:
         num_samples = len(sample_list)
         for sample_idx in range(num_samples):
 
-            sys.stdout.write("\rClustering labels {} / {}".format(
-                sample_idx + 1, num_samples))
+            sys.stdout.write(
+                "\rClustering labels {} / {}".format(sample_idx + 1, num_samples)
+            )
             sys.stdout.flush()
 
             sample_name = sample_list[sample_idx]
             img_idx = int(sample_name)
 
-            obj_labels = obj_utils.read_labels(self._dataset.label_dir,
-                                               img_idx)
+            obj_labels = obj_utils.read_labels(self._dataset.label_dir, img_idx)
             filtered_labels = LabelClusterUtils._filter_labels_by_class(
-                obj_labels, self._dataset.classes)
+                obj_labels, self._dataset.classes
+            )
 
             for class_idx in range(len(classes)):
                 all_labels[class_idx].extend(filtered_labels[class_idx])
@@ -208,11 +208,12 @@ class LabelClusterUtils:
             if len(labels_for_class) < n_clusters_for_class:
                 raise ValueError(
                     "Number of samples is less than number of clusters "
-                    "{} < {}".format(len(labels_for_class),
-                                     n_clusters_for_class))
+                    "{} < {}".format(len(labels_for_class), n_clusters_for_class)
+                )
 
-            k_means = KMeans(n_clusters=n_clusters_for_class,
-                             random_state=0).fit(labels_for_class)
+            k_means = KMeans(n_clusters=n_clusters_for_class, random_state=0).fit(
+                labels_for_class
+            )
 
             clusters_for_class = []
             std_devs_for_class = []
@@ -220,27 +221,25 @@ class LabelClusterUtils:
             for cluster_idx in range(len(k_means.cluster_centers_)):
                 cluster_centre = k_means.cluster_centers_[cluster_idx]
 
-                labels_in_cluster = labels_for_class[
-                    k_means.labels_ == cluster_idx]
+                labels_in_cluster = labels_for_class[k_means.labels_ == cluster_idx]
 
                 # Calculate std. dev
                 std_dev = np.std(labels_in_cluster, axis=0)
 
-                formatted_cluster = [float('%.3f' % value)
-                                     for value in cluster_centre]
-                formatted_std_dev = [float('%.3f' % value)
-                                     for value in std_dev]
+                formatted_cluster = [float("%.3f" % value) for value in cluster_centre]
+                formatted_std_dev = [float("%.3f" % value) for value in std_dev]
 
                 clusters_for_class.append(formatted_cluster)
                 std_devs_for_class.append(formatted_std_dev)
 
             # Write to files
-            file_path = self._get_cluster_file_path(self._dataset,
-                                                    classes[class_idx],
-                                                    num_clusters[class_idx])
+            file_path = self._get_cluster_file_path(
+                self._dataset, classes[class_idx], num_clusters[class_idx]
+            )
 
-            self._write_clusters_to_file(file_path, clusters_for_class,
-                                         std_devs_for_class)
+            self._write_clusters_to_file(
+                file_path, clusters_for_class, std_devs_for_class
+            )
 
             # Add to full list
             all_clusters[class_idx].extend(np.asarray(clusters_for_class))

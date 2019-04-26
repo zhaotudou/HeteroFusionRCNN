@@ -17,8 +17,7 @@ class LabelClusterUtilsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fake_kitti_dir = tests.test_path() + "/datasets/Kitti/object"
-        cls.dataset = DatasetBuilder.build_kitti_dataset(
-            DatasetBuilder.KITTI_UNITTEST)
+        cls.dataset = DatasetBuilder.build_kitti_dataset(DatasetBuilder.KITTI_UNITTEST)
 
     def test_get_clusters(self):
 
@@ -37,17 +36,16 @@ class LabelClusterUtilsTest(unittest.TestCase):
 
         # Check that text files were saved
         txt_folder_exists = os.path.isdir(
-            avod.root_dir() + "/data/label_clusters/unittest-kitti")
+            avod.root_dir() + "/data/label_clusters/unittest-kitti"
+        )
         self.assertTrue(txt_folder_exists)
 
         # Calling get_clusters again should read from files
         read_clusters, read_std_devs = label_cluster_utils.get_clusters()
 
         # Check that read values are the same as generated ones
-        np.testing.assert_allclose(np.vstack(clusters),
-                                   np.vstack(read_clusters))
-        np.testing.assert_allclose(np.vstack(std_devs),
-                                   np.vstack(read_std_devs))
+        np.testing.assert_allclose(np.vstack(clusters), np.vstack(read_clusters))
+        np.testing.assert_allclose(np.vstack(std_devs), np.vstack(read_std_devs))
 
     def test_flatten_data(self):
         data_to_reshape = list()
@@ -56,15 +54,13 @@ class LabelClusterUtilsTest(unittest.TestCase):
         data_to_reshape.append([[7, 8, 9]])
         data_to_reshape.append([[10, 11, 12], [13, 14, 15]])
 
-        expected_output = np.array([[1, 2, 3],
-                                    [4, 5, 6],
-                                    [7, 8, 9],
-                                    [10, 11, 12],
-                                    [13, 14, 15]])
+        expected_output = np.array(
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12], [13, 14, 15]]
+        )
 
         label_cluster_utils = LabelClusterUtils(self.dataset)
 
         flattened = label_cluster_utils._flatten_data(data_to_reshape)
-        np.testing.assert_array_equal(flattened,
-                                      expected_output,
-                                      err_msg='Wrong flattened array')
+        np.testing.assert_array_equal(
+            flattened, expected_output, err_msg="Wrong flattened array"
+        )

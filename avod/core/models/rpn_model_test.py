@@ -11,12 +11,11 @@ from avod.protos import pipeline_pb2
 
 
 class RpnModelTest(tf.test.TestCase):
-
     @classmethod
     def setUpClass(cls):
         pipeline_config = pipeline_pb2.NetworkPipelineConfig()
         dataset_config = pipeline_config.dataset_config
-        config_path = avod.root_dir() + '/configs/unittest_model.config'
+        config_path = avod.root_dir() + "/configs/unittest_model.config"
 
         cls.model_config = config_build.get_model_config_from_file(config_path)
 
@@ -25,9 +24,9 @@ class RpnModelTest(tf.test.TestCase):
 
     def test_rpn_loss(self):
         # Use "val" so that the first sample is loaded each time
-        rpn_model = RpnModel(self.model_config,
-                             train_val_test="val",
-                             dataset=self.dataset)
+        rpn_model = RpnModel(
+            self.model_config, train_val_test="val", dataset=self.dataset
+        )
 
         predictions = rpn_model.build()
 
@@ -39,8 +38,9 @@ class RpnModelTest(tf.test.TestCase):
             init = tf.global_variables_initializer()
             sess.run(init)
             loss_dict_out = sess.run(loss, feed_dict=feed_dict)
-            print('Losses ', loss_dict_out)
-    '''
+            print("Losses ", loss_dict_out)
+
+    """
     def test_create_path_drop_masks(self):
         # Tests creating path drop choices
         # based on the given probabilities
@@ -209,7 +209,8 @@ class RpnModelTest(tf.test.TestCase):
                                           exp_img_input)
             np.testing.assert_array_equal(final_bev_input_out,
                                           exp_bev_input)
-        '''
+        """
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     tf.test.main()

@@ -62,20 +62,20 @@ def check_object_label_format(input_data):
     # Check if it is a ObjectLabel format or a list of Object Label format
     if isinstance(input_data, list):
         if not all(isinstance(x, obj_utils.ObjectLabel) for x in input_data):
-            raise TypeError('Given input is not consistent ObjectLabel type.')
+            raise TypeError("Given input is not consistent ObjectLabel type.")
 
         for label in input_data:
             # Check for range of values
             if len(label.t) != 3:
-                raise TypeError('Object Label centroid size is wrong.')
+                raise TypeError("Object Label centroid size is wrong.")
 
     elif isinstance(input_data, obj_utils.ObjectLabel):
         # is a single instance of object label
         if len(input_data.t) != 3:
-            raise TypeError('Object Label translation size is wrong.')
+            raise TypeError("Object Label translation size is wrong.")
     else:
         # not a list of object labels nor a single instance of object label
-        raise TypeError('Given input is not an ObjectLabel.')
+        raise TypeError("Given input is not an ObjectLabel.")
 
 
 def check_anchor_format(input_data):
@@ -90,21 +90,28 @@ def check_anchor_format(input_data):
         # Check for size for numpy array form (N x 6)
         if input_data.ndim == 2:
             if input_data.shape[1] != 6:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 6 for anchor.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 6 for anchor."
+                )
         elif input_data.ndim == 1:
             if input_data.shape[0] != 6:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be 6 for anchor.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be 6 for anchor."
+                )
     elif isinstance(input_data, tf.Tensor):
         # if tensor, check the shape
         if isinstance(input_data, tf.Tensor):
             if input_data.shape[1] != 6:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 6 for box_3d.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 6 for box_3d."
+                )
     else:
-        raise TypeError('Given input is not of valid types.'
-                        '(i.e. np.ndarray or tf.Tensor)')
+        raise TypeError(
+            "Given input is not of valid types." "(i.e. np.ndarray or tf.Tensor)"
+        )
 
 
 def check_box_3d_format(input_data):
@@ -119,22 +126,29 @@ def check_box_3d_format(input_data):
         # Check for size for numpy array form (N x 7)
         if input_data.ndim == 2:
             if input_data.shape[1] != 7:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 7 for box_3d.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 7 for box_3d."
+                )
         elif input_data.ndim == 1:
             if input_data.shape[0] != 7:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be 7 for box_3d.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be 7 for box_3d."
+                )
 
     elif isinstance(input_data, tf.Tensor):
         # if tensor, check the shape
         if isinstance(input_data, tf.Tensor):
             if input_data.shape[1] != 7:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 7 for box_3d.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 7 for box_3d."
+                )
     else:
-        raise TypeError('Given input is not of valid types.'
-                        '(i.e. np.ndarray or tf.Tensor)')
+        raise TypeError(
+            "Given input is not of valid types." "(i.e. np.ndarray or tf.Tensor)"
+        )
 
 
 def check_box_8c_format(input_data):
@@ -152,21 +166,28 @@ def check_box_8c_format(input_data):
         # Check for size for numpy array form (N x 3 x 8)
         if input_data.ndim == 3:
             if input_data.shape[1:] != (3, 8):
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 3 x 8 for box_8c.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 3 x 8 for box_8c."
+                )
         elif input_data.ndim == 2:
             if input_data.shape != (3, 8):
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be 3 x 8 for box_8c.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be 3 x 8 for box_8c."
+                )
     elif isinstance(input_data, tf.Tensor):
         # if tensor, check the shape
         if isinstance(input_data, tf.Tensor):
             if input_data.shape[1:] != (3, 8):
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 3 x 8 for box_8c.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 3 x 8 for box_8c."
+                )
     else:
-        raise TypeError('Given input is not of valid types.'
-                        '(i.e. np.ndarray or tf.Tensor)')
+        raise TypeError(
+            "Given input is not of valid types." "(i.e. np.ndarray or tf.Tensor)"
+        )
 
 
 def check_box_4c_format(input_data):
@@ -183,14 +204,19 @@ def check_box_4c_format(input_data):
     if isinstance(input_data, np.ndarray):
         # Check for size for numpy array
         if input_data.ndim > 2 or input_data.shape[-1] != 10:
-            raise TypeError('Given input does not have valid number of '
-                            'attributes. Should be N x 10 for box_4c.')
+            raise TypeError(
+                "Given input does not have valid number of "
+                "attributes. Should be N x 10 for box_4c."
+            )
     elif isinstance(input_data, tf.Tensor):
         # if tensor, check the shape
         if isinstance(input_data, tf.Tensor):
             if input_data.shape[1] != 10:
-                raise TypeError('Given input does not have valid number of '
-                                'attributes. Should be N x 10 for box_4c.')
+                raise TypeError(
+                    "Given input does not have valid number of "
+                    "attributes. Should be N x 10 for box_4c."
+                )
     else:
-        raise TypeError('Given input is not of valid types.'
-                        '(i.e. np.ndarray or tf.Tensor)')
+        raise TypeError(
+            "Given input is not of valid types." "(i.e. np.ndarray or tf.Tensor)"
+        )

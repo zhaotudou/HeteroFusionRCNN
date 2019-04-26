@@ -35,19 +35,19 @@ class ObjectLabel:
 
     def __init__(self):
         self.type = ""  # Type of object
-        self.truncation = 0.
-        self.occlusion = 0.
-        self.alpha = 0.
-        self.x1 = 0.
-        self.y1 = 0.
-        self.x2 = 0.
-        self.y2 = 0.
-        self.h = 0.
-        self.w = 0.
-        self.l = 0.
-        self.t = (0., 0., 0.)
-        self.ry = 0.
-        self.score = 0.
+        self.truncation = 0.0
+        self.occlusion = 0.0
+        self.alpha = 0.0
+        self.x1 = 0.0
+        self.y1 = 0.0
+        self.x2 = 0.0
+        self.y2 = 0.0
+        self.h = 0.0
+        self.w = 0.0
+        self.l = 0.0
+        self.t = (0.0, 0.0, 0.0)
+        self.ry = 0.0
+        self.score = 0.0
 
     def __eq__(self, other):
         """Compares the given object to the current ObjectLabel instance.
@@ -83,13 +83,19 @@ def read_labels(label_dir, img_idx, results=False):
         return
 
     if results:
-        p = np.loadtxt(label_dir + "/%06d.txt" % img_idx, delimiter=' ',
-                       dtype=str,
-                       usecols=np.arange(start=0, step=1, stop=16))
+        p = np.loadtxt(
+            label_dir + "/%06d.txt" % img_idx,
+            delimiter=" ",
+            dtype=str,
+            usecols=np.arange(start=0, step=1, stop=16),
+        )
     else:
-        p = np.loadtxt(label_dir + "/%06d.txt" % img_idx, delimiter=' ',
-                       dtype=str,
-                       usecols=np.arange(start=0, step=1, stop=15))
+        p = np.loadtxt(
+            label_dir + "/%06d.txt" % img_idx,
+            delimiter=" ",
+            dtype=str,
+            usecols=np.arange(start=0, step=1, stop=15),
+        )
 
     # Check if the output is single dimensional or multi dimensional
     if len(p.shape) > 1:
@@ -168,18 +174,22 @@ def build_bbs_from_objects(obj_list, class_needed):
          [scores_frame_n]]
      """
 
-    if class_needed == 'All':
+    if class_needed == "All":
         obj_detections = obj_list
     else:
         if isinstance(class_needed, str):
-            obj_detections = [detections for detections in obj_list if
-                              detections.type == class_needed]
+            obj_detections = [
+                detections for detections in obj_list if detections.type == class_needed
+            ]
         elif isinstance(class_needed, list):
-            obj_detections = [detections for detections in obj_list if
-                              detections.type in class_needed]
+            obj_detections = [
+                detections for detections in obj_list if detections.type in class_needed
+            ]
         else:
-            raise TypeError("Invalid type for class_needed, {} should be "
-                            "str or list".format(type(class_needed)))
+            raise TypeError(
+                "Invalid type for class_needed, {} should be "
+                "str or list".format(type(class_needed))
+            )
 
     # Build A Numpy Array Of 2D Bounding Boxes
     x1 = [obj.x1 for obj in obj_detections]
@@ -201,24 +211,16 @@ def build_bbs_from_objects(obj_list, class_needed):
     boxes_3d = np.zeros((num_objs, 7))  # [ry, l, h, w, tx, ty, tz]
 
     for it in range(num_objs):
-        boxes_2d[it] = np.array([x1[it],
-                                 y1[it],
-                                 x2[it],
-                                 y2[it]])
+        boxes_2d[it] = np.array([x1[it], y1[it], x2[it], y2[it]])
 
-        boxes_3d[it] = np.array([ry[it],
-                                 l[it],
-                                 h[it],
-                                 w[it],
-                                 tx[it],
-                                 ty[it],
-                                 tz[it]])
+        boxes_3d[it] = np.array([ry[it], l[it], h[it], w[it], tx[it], ty[it], tz[it]])
 
     return boxes_2d, boxes_3d, scores
 
 
-def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
-                          im_size=None, min_intensity=None):
+def get_lidar_point_cloud(
+    img_idx, calib_dir, velo_dir, im_size=None, min_intensity=None
+):
     """ Calculates the lidar point cloud, and optionally returns only the
     points that are projected to the image.
 
@@ -242,7 +244,7 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
 
     # The given image is assumed to be a 2D image
     if not im_size:
-        point_cloud = np.vstack((pts, np.reshape(i, (-1,1)))).T
+        point_cloud = np.vstack((pts, np.reshape(i, (-1, 1)))).T
         return point_cloud
 
     else:
@@ -255,14 +257,16 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
         point_in_im = calib_utils.project_to_image(point_cloud, p=frame_calib.p2).T
 
         # Filter based on the given image size
-        image_filter = (point_in_im[:, 0] > 0) & \
-                       (point_in_im[:, 0] < im_size[0]) & \
-                       (point_in_im[:, 1] > 0) & \
-                       (point_in_im[:, 1] < im_size[1])
+        image_filter = (
+            (point_in_im[:, 0] > 0)
+            & (point_in_im[:, 0] < im_size[0])
+            & (point_in_im[:, 1] > 0)
+            & (point_in_im[:, 1] < im_size[1])
+        )
 
     # add intensity to pts
     i_filtered = i[range_filter]
-    pts = np.hstack((pts, np.reshape(i_filtered,(-1,1))))
+    pts = np.hstack((pts, np.reshape(i_filtered, (-1, 1))))
 
     if not min_intensity:
         return pts[image_filter].T
@@ -282,9 +286,9 @@ def get_road_plane(img_idx, planes_dir):
     :return plane : List containing plane equation coefficients
     """
 
-    plane_file = planes_dir + '/%06d.txt' % img_idx
+    plane_file = planes_dir + "/%06d.txt" % img_idx
 
-    with open(plane_file, 'r') as input_file:
+    with open(plane_file, "r") as input_file:
         lines = input_file.readlines()
         input_file.close()
 
@@ -317,20 +321,22 @@ def compute_box_corners_3d(object_label):
     """
 
     # Compute rotational matrix
-    rot = np.array([[+np.cos(object_label.ry), 0, +np.sin(object_label.ry)],
-                    [0, 1, 0],
-                    [-np.sin(object_label.ry), 0, +np.cos(object_label.ry)]])
+    rot = np.array(
+        [
+            [+np.cos(object_label.ry), 0, +np.sin(object_label.ry)],
+            [0, 1, 0],
+            [-np.sin(object_label.ry), 0, +np.cos(object_label.ry)],
+        ]
+    )
 
     l = object_label.l
     w = object_label.w
     h = object_label.h
 
     # 3D BB corners
-    x_corners = np.array(
-        [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
+    x_corners = np.array([l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2])
     y_corners = np.array([0, 0, 0, 0, -h, -h, -h, -h])
-    z_corners = np.array(
-        [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
+    z_corners = np.array([w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2])
 
     corners_3d = np.dot(rot, np.array([x_corners, y_corners, z_corners]))
 
@@ -356,10 +362,28 @@ def project_box3d_to_image(corners_3d, p):
     """
     # index for 3d bounding box face
     # it is converted to 4x4 matrix
-    face_idx = np.array([0, 1, 5, 4,  # front face
-                         1, 2, 6, 5,  # left face
-                         2, 3, 7, 6,  # back face
-                         3, 0, 4, 7]).reshape((4, 4))  # right face
+    face_idx = np.array(
+        [
+            0,
+            1,
+            5,
+            4,  # front face
+            1,
+            2,
+            6,
+            5,  # left face
+            2,
+            3,
+            7,
+            6,  # back face
+            3,
+            0,
+            4,
+            7,
+        ]
+    ).reshape(
+        (4, 4)
+    )  # right face
     return calib_utils.project_to_image(corners_3d, p), face_idx
 
 
@@ -372,9 +396,13 @@ def compute_orientation_3d(obj, p):
     """
 
     # compute rotational matrix
-    rot = np.array([[+np.cos(obj.ry), 0, +np.sin(obj.ry)],
-                    [0, 1, 0],
-                    [-np.sin(obj.ry), 0, +np.cos(obj.ry)]])
+    rot = np.array(
+        [
+            [+np.cos(obj.ry), 0, +np.sin(obj.ry)],
+            [0, 1, 0],
+            [-np.sin(obj.ry), 0, +np.cos(obj.ry)],
+        ]
+    )
 
     orientation3d = np.array([0.0, obj.l, 0.0, 0.0, 0.0, 0.0]).reshape(3, 2)
     orientation3d = np.dot(rot, orientation3d)
@@ -439,9 +467,14 @@ def is_point_inside(points, box_corners):
     w_dot_p1 = np.dot(w, p1)
     w_dot_p2 = np.dot(w, p5)
 
-    point_mask = (u_dot_p1 < u_dot_x) & (u_dot_x < u_dot_p2) & \
-                 (v_dot_p1 < v_dot_x) & (v_dot_x < v_dot_p2) & \
-                 (w_dot_p1 < w_dot_x) & (w_dot_x < w_dot_p2)
+    point_mask = (
+        (u_dot_p1 < u_dot_x)
+        & (u_dot_x < u_dot_p2)
+        & (v_dot_p1 < v_dot_x)
+        & (v_dot_x < v_dot_p2)
+        & (w_dot_p1 < w_dot_x)
+        & (w_dot_x < w_dot_p2)
+    )
 
     return point_mask
 
@@ -467,12 +500,14 @@ def get_point_filter(point_cloud, extents, ground_plane=None, offset_dist=2.0):
     y_extents = extents[1]
     z_extents = extents[2]
 
-    extents_filter = (point_cloud[0] > x_extents[0]) & \
-                     (point_cloud[0] < x_extents[1]) & \
-                     (point_cloud[1] > y_extents[0]) & \
-                     (point_cloud[1] < y_extents[1]) & \
-                     (point_cloud[2] > z_extents[0]) & \
-                     (point_cloud[2] < z_extents[1])
+    extents_filter = (
+        (point_cloud[0] > x_extents[0])
+        & (point_cloud[0] < x_extents[1])
+        & (point_cloud[1] > y_extents[0])
+        & (point_cloud[1] < y_extents[1])
+        & (point_cloud[2] > z_extents[0])
+        & (point_cloud[2] < z_extents[1])
+    )
 
     if ground_plane is not None:
         ground_plane = np.array(ground_plane)

@@ -18,7 +18,7 @@ def np_box_3d_to_box_8co(box_3d):
             the box as corners in the following format ->
             [[x1,...,x8], [y1...,y8], [z1,...,z8]].
                         
-        P8 *_______________*P5       
+        P8 *_______________*P5
           /|              /|
          / |             / |
         /  |            /  |
@@ -43,40 +43,57 @@ def np_box_3d_to_box_8co(box_3d):
     ry = box_3d[6]
     # Compute transform matrix
     # This includes rotation and translation
-    rot = np.array([[np.cos(ry), 0, np.sin(ry), box_3d[0]],
-                    [0, 1, 0, box_3d[1]],
-                    [-np.sin(ry), 0, np.cos(ry), box_3d[2]]])
+    rot = np.array(
+        [
+            [np.cos(ry), 0, np.sin(ry), box_3d[0]],
+            [0, 1, 0, box_3d[1]],
+            [-np.sin(ry), 0, np.cos(ry), box_3d[2]],
+        ]
+    )
 
     length = box_3d[3]
     width = box_3d[4]
     height = box_3d[5]
 
     # 3D BB corners
-    x_corners = np.array([length / 2, length / 2,
-                          -length / 2, -length / 2,
-                          length / 2, length / 2,
-                          -length / 2, -length / 2])
+    x_corners = np.array(
+        [
+            length / 2,
+            length / 2,
+            -length / 2,
+            -length / 2,
+            length / 2,
+            length / 2,
+            -length / 2,
+            -length / 2,
+        ]
+    )
 
-    y_corners = np.array([0.0, 0.0, 0.0, 0.0,
-                          -height, -height, -height, -height])
+    y_corners = np.array([0.0, 0.0, 0.0, 0.0, -height, -height, -height, -height])
 
-    z_corners = np.array([width / 2, -width / 2,
-                          -width / 2, width / 2,
-                          width / 2, -width / 2,
-                          -width / 2, width / 2])
+    z_corners = np.array(
+        [
+            width / 2,
+            -width / 2,
+            -width / 2,
+            width / 2,
+            width / 2,
+            -width / 2,
+            -width / 2,
+            width / 2,
+        ]
+    )
 
     # Create a ones column
     ones_col = np.ones(x_corners.shape)
 
     # Append the column of ones to be able to multiply
-    box_8c = np.dot(rot, np.array([x_corners,
-                                   y_corners,
-                                   z_corners,
-                                   ones_col]))
+    box_8c = np.dot(rot, np.array([x_corners, y_corners, z_corners, ones_col]))
     # Ignore the fourth column
     box_8c = box_8c[0:3]
 
     return box_8c
+
 
 def np_box_8co_to_facet(boxes_8co):
     """
@@ -88,28 +105,32 @@ def np_box_8co_to_facet(boxes_8co):
                 (a,b,c) is the inner norm pointing inwards of the object
     """
     b = boxes_8co
-    norm = [] 
-    def inward_plane(boxes, i,j,k, s):
-        unkown_norm = np.cross(b[:,k,:] - b[:,j,:], b[:,j,:] - b[:,i,:], axis=-1)
-        direction = np.einsum('ij,ij->i',b[:,s,:] - b[:,j,:], unkown_norm) > 0
-        inner_norm = np.einsum('ij,i->ij', unkown_norm, direction*2-1)
-        d = -np.einsum('ij,ij->i',b[:,j,:], inner_norm).reshape((-1,1))
-        return np.concatenate((inner_norm, d, b[:,j,:]), axis=1)
-    
+    norm = []
+
+    def inward_plane(boxes, i, j, k, s):
+        unkown_norm = np.cross(
+            b[:, k, :] - b[:, j, :], b[:, j, :] - b[:, i, :], axis=-1
+        )
+        direction = np.einsum("ij,ij->i", b[:, s, :] - b[:, j, :], unkown_norm) > 0
+        inner_norm = np.einsum("ij,i->ij", unkown_norm, direction * 2 - 1)
+        d = -np.einsum("ij,ij->i", b[:, j, :], inner_norm).reshape((-1, 1))
+        return np.concatenate((inner_norm, d, b[:, j, :]), axis=1)
+
     # bottom p3,p4,p1, check with p6
-    norm.append(inward_plane(b, 2,3,0, 5))
+    norm.append(inward_plane(b, 2, 3, 0, 5))
     # right p1,p2,p6, check with p3
-    norm.append(inward_plane(b, 0,1,5, 2))
+    norm.append(inward_plane(b, 0, 1, 5, 2))
     # top p6,p5,p8, check with p1
-    norm.append(inward_plane(b, 5,4,7, 0))
+    norm.append(inward_plane(b, 5, 4, 7, 0))
     # left p8,p7,p3, check with p6
-    norm.append(inward_plane(b, 7,6,2, 5))
+    norm.append(inward_plane(b, 7, 6, 2, 5))
     # behind p4,p1,p5, check with p2
-    norm.append(inward_plane(b, 3,0,4, 1))
+    norm.append(inward_plane(b, 3, 0, 4, 1))
     # front p2,p6,p7, check with p5
-    norm.append(inward_plane(b, 1,5,6, 4))
+    norm.append(inward_plane(b, 1, 5, 6, 4))
     # stack all
     return np.stack(norm, axis=1)
+
 
 def tf_box_3d_to_box_8co(boxes_3d):
     """Computes the 3D bounding box corner positions from Box3D format.
@@ -135,10 +156,14 @@ def tf_box_3d_to_box_8co(boxes_3d):
     ones = tf.ones_like(all_rys, dtype=tf.float32)
 
     # Rotation matrix
-    rot_mats = tf.stack([tf.stack([ry_cos, zeros, ry_sin], axis=1),
-                         tf.stack([zeros, ones, zeros], axis=1),
-                         tf.stack([-ry_sin, zeros, ry_cos], axis=1)],
-                        axis=2)
+    rot_mats = tf.stack(
+        [
+            tf.stack([ry_cos, zeros, ry_sin], axis=1),
+            tf.stack([zeros, ones, zeros], axis=1),
+            tf.stack([-ry_sin, zeros, ry_cos], axis=1),
+        ],
+        axis=2,
+    )
 
     length = boxes_3d[:, 3]
     width = boxes_3d[:, 4]
@@ -147,35 +172,48 @@ def tf_box_3d_to_box_8co(boxes_3d):
     half_length = length / 2
     half_width = width / 2
 
-    x_corners = tf.stack([half_length, half_length,
-                          -half_length, -half_length,
-                          half_length, half_length,
-                          -half_length, -half_length], axis=1)
+    x_corners = tf.stack(
+        [
+            half_length,
+            half_length,
+            -half_length,
+            -half_length,
+            half_length,
+            half_length,
+            -half_length,
+            -half_length,
+        ],
+        axis=1,
+    )
 
-    y_corners = tf.stack([zeros, zeros, zeros, zeros,
-                          -height, -height, -height, -height], axis=1)
+    y_corners = tf.stack(
+        [zeros, zeros, zeros, zeros, -height, -height, -height, -height], axis=1
+    )
 
-    z_corners = tf.stack([half_width, -half_width,
-                          -half_width, half_width,
-                          half_width, -half_width,
-                          -half_width, half_width], axis=1)
+    z_corners = tf.stack(
+        [
+            half_width,
+            -half_width,
+            -half_width,
+            half_width,
+            half_width,
+            -half_width,
+            -half_width,
+            half_width,
+        ],
+        axis=1,
+    )
 
-    corners = tf.stack([x_corners,
-                        y_corners,
-                        z_corners], axis=1)
+    corners = tf.stack([x_corners, y_corners, z_corners], axis=1)
 
-    boxes_8c = tf.matmul(rot_mats, corners,
-                         transpose_a=True,
-                         transpose_b=False)
+    boxes_8c = tf.matmul(rot_mats, corners, transpose_a=True, transpose_b=False)
 
     # Translate the corners
     corners_3d_x = boxes_8c[:, 0] + tf.reshape(boxes_3d[:, 0], [-1, 1])
     corners_3d_y = boxes_8c[:, 1] + tf.reshape(boxes_3d[:, 1], [-1, 1])
     corners_3d_z = boxes_8c[:, 2] + tf.reshape(boxes_3d[:, 2], [-1, 1])
 
-    boxes_8c = tf.stack([corners_3d_x,
-                         corners_3d_y,
-                         corners_3d_z], axis=1)
+    boxes_8c = tf.stack([corners_3d_x, corners_3d_y, corners_3d_z], axis=1)
 
     return boxes_8c
 
@@ -213,18 +251,33 @@ def np_box_3d_to_box_8c(box_3d):
     half_dim_z = dim_z / 2
 
     # 3D BB corners
-    x_corners = np.array([half_dim_x, half_dim_x,
-                          -half_dim_x, -half_dim_x,
-                          half_dim_x, half_dim_x,
-                          -half_dim_x, -half_dim_x])
+    x_corners = np.array(
+        [
+            half_dim_x,
+            half_dim_x,
+            -half_dim_x,
+            -half_dim_x,
+            half_dim_x,
+            half_dim_x,
+            -half_dim_x,
+            -half_dim_x,
+        ]
+    )
 
-    y_corners = np.array([0.0, 0.0, 0.0, 0.0,
-                          -dim_y, -dim_y, -dim_y, -dim_y])
+    y_corners = np.array([0.0, 0.0, 0.0, 0.0, -dim_y, -dim_y, -dim_y, -dim_y])
 
-    z_corners = np.array([half_dim_z, -half_dim_z,
-                          -half_dim_z, half_dim_z,
-                          half_dim_z, -half_dim_z,
-                          -half_dim_z, half_dim_z])
+    z_corners = np.array(
+        [
+            half_dim_z,
+            -half_dim_z,
+            -half_dim_z,
+            half_dim_z,
+            half_dim_z,
+            -half_dim_z,
+            -half_dim_z,
+            half_dim_z,
+        ]
+    )
 
     ry = box_3d[6]
 
@@ -237,18 +290,19 @@ def np_box_3d_to_box_8c(box_3d):
 
     # Compute transform matrix
     # This includes rotation and translation
-    rot = np.array([[np.cos(ry_diff), 0, np.sin(ry_diff), centroid_x],
-                    [0, 1, 0, centroid_y],
-                    [-np.sin(ry_diff), 0, np.cos(ry_diff), centroid_z]])
+    rot = np.array(
+        [
+            [np.cos(ry_diff), 0, np.sin(ry_diff), centroid_x],
+            [0, 1, 0, centroid_y],
+            [-np.sin(ry_diff), 0, np.cos(ry_diff), centroid_z],
+        ]
+    )
 
     # Create a ones column
     ones_col = np.ones(x_corners.shape)
 
     # Append the column of ones to be able to multiply
-    box_8c = np.dot(rot, np.array([x_corners,
-                                   y_corners,
-                                   z_corners,
-                                   ones_col]))
+    box_8c = np.dot(rot, np.array([x_corners, y_corners, z_corners, ones_col]))
     # Ignore the fourth column
     box_8c = box_8c[0:3]
 
@@ -298,43 +352,60 @@ def tf_box_3d_to_box_8c(boxes_3d):
     ones = tf.ones_like(ry_diff, dtype=tf.float32)
 
     # Rotation matrix
-    rot_mats = tf.stack([tf.stack([ry_cos, zeros, ry_sin], axis=1),
-                         tf.stack([zeros, ones, zeros], axis=1),
-                         tf.stack([-ry_sin, zeros, ry_cos], axis=1)],
-                        axis=2)
+    rot_mats = tf.stack(
+        [
+            tf.stack([ry_cos, zeros, ry_sin], axis=1),
+            tf.stack([zeros, ones, zeros], axis=1),
+            tf.stack([-ry_sin, zeros, ry_cos], axis=1),
+        ],
+        axis=2,
+    )
 
     half_dim_x = dim_x / 2
     half_dim_z = dim_z / 2
 
-    x_corners = tf.stack([half_dim_x, half_dim_x,
-                          -half_dim_x, -half_dim_x,
-                          half_dim_x, half_dim_x,
-                          -half_dim_x, -half_dim_x], axis=1)
+    x_corners = tf.stack(
+        [
+            half_dim_x,
+            half_dim_x,
+            -half_dim_x,
+            -half_dim_x,
+            half_dim_x,
+            half_dim_x,
+            -half_dim_x,
+            -half_dim_x,
+        ],
+        axis=1,
+    )
 
-    y_corners = tf.stack([zeros, zeros, zeros, zeros,
-                          -dim_y, -dim_y, -dim_y, -dim_y], axis=1)
+    y_corners = tf.stack(
+        [zeros, zeros, zeros, zeros, -dim_y, -dim_y, -dim_y, -dim_y], axis=1
+    )
 
-    z_corners = tf.stack([half_dim_z, -half_dim_z,
-                          -half_dim_z, half_dim_z,
-                          half_dim_z, -half_dim_z,
-                          -half_dim_z, half_dim_z], axis=1)
+    z_corners = tf.stack(
+        [
+            half_dim_z,
+            -half_dim_z,
+            -half_dim_z,
+            half_dim_z,
+            half_dim_z,
+            -half_dim_z,
+            -half_dim_z,
+            half_dim_z,
+        ],
+        axis=1,
+    )
 
-    corners = tf.stack([x_corners,
-                        y_corners,
-                        z_corners], axis=1)
+    corners = tf.stack([x_corners, y_corners, z_corners], axis=1)
 
-    boxes_8c = tf.matmul(rot_mats, corners,
-                         transpose_a=True,
-                         transpose_b=False)
+    boxes_8c = tf.matmul(rot_mats, corners, transpose_a=True, transpose_b=False)
 
     # Translate the corners
     corners_3d_x = boxes_8c[:, 0] + tf.reshape(centroid_x, [-1, 1])
     corners_3d_y = boxes_8c[:, 1] + tf.reshape(centroid_y, [-1, 1])
     corners_3d_z = boxes_8c[:, 2] + tf.reshape(centroid_z, [-1, 1])
 
-    boxes_8c = tf.stack([corners_3d_x,
-                         corners_3d_y,
-                         corners_3d_z], axis=1)
+    boxes_8c = tf.stack([corners_3d_x, corners_3d_y, corners_3d_z], axis=1)
 
     return boxes_8c
 
@@ -416,15 +487,45 @@ def align_boxes_8c(boxes_8c):
     corner_min_y = tf.reduce_min(y_corners, axis=1)
     corner_y5 = corner_y6 = corner_y7 = corner_y8 = corner_min_y
 
-    x_corners = tf.stack([corner_x1, corner_x2, corner_x3,
-                          corner_x4, corner_x5, corner_x6,
-                          corner_x7, corner_x8], axis=1)
-    y_corners = tf.stack([corner_y1, corner_y2, corner_y3,
-                          corner_y4, corner_y5, corner_y6,
-                          corner_y7, corner_y8], axis=1)
-    z_corners = tf.stack([corner_z1, corner_z2, corner_z3,
-                          corner_z4, corner_z5, corner_z6,
-                          corner_z7, corner_z8], axis=1)
+    x_corners = tf.stack(
+        [
+            corner_x1,
+            corner_x2,
+            corner_x3,
+            corner_x4,
+            corner_x5,
+            corner_x6,
+            corner_x7,
+            corner_x8,
+        ],
+        axis=1,
+    )
+    y_corners = tf.stack(
+        [
+            corner_y1,
+            corner_y2,
+            corner_y3,
+            corner_y4,
+            corner_y5,
+            corner_y6,
+            corner_y7,
+            corner_y8,
+        ],
+        axis=1,
+    )
+    z_corners = tf.stack(
+        [
+            corner_z1,
+            corner_z2,
+            corner_z3,
+            corner_z4,
+            corner_z5,
+            corner_z6,
+            corner_z7,
+            corner_z8,
+        ],
+        axis=1,
+    )
 
     aligned_boxes_8c = tf.stack([x_corners, y_corners, z_corners], axis=1)
 
@@ -499,18 +600,18 @@ def box_8c_to_box_3d(box_8c):
     zeros = tf.zeros_like(rys, dtype=tf.float32)
     ones = tf.ones_like(rys, dtype=tf.float32)
 
-    rotation_mats = tf.stack([
-        tf.stack([ry_cos, zeros, ry_sin], axis=1),
-        tf.stack([zeros, ones, zeros], axis=1),
-        tf.stack([-ry_sin, zeros, ry_cos], axis=1)], axis=2)
+    rotation_mats = tf.stack(
+        [
+            tf.stack([ry_cos, zeros, ry_sin], axis=1),
+            tf.stack([zeros, ones, zeros], axis=1),
+            tf.stack([-ry_sin, zeros, ry_cos], axis=1),
+        ],
+        axis=2,
+    )
 
-    corners = tf.stack([translated_x,
-                        y_corners,
-                        translated_z], axis=1)
+    corners = tf.stack([translated_x, y_corners, translated_z], axis=1)
     # Rotate the corners
-    corners_3d = tf.matmul(rotation_mats, corners,
-                           transpose_a=True,
-                           transpose_b=False)
+    corners_3d = tf.matmul(rotation_mats, corners, transpose_a=True, transpose_b=False)
 
     # Align the corners in case they are skewed
     aligned_corners = align_boxes_8c(corners_3d)
@@ -541,13 +642,13 @@ def box_8c_to_box_3d(box_8c):
     center_z = tf.reduce_mean(new_z_corners[:, 0:4], axis=1)
     center_y = corner_y1
 
-    box_3d = tf.stack([center_x, center_y, center_z,
-                       length, width, height, rys], axis=1)
+    box_3d = tf.stack(
+        [center_x, center_y, center_z, length, width, height, rys], axis=1
+    )
     return box_3d
 
 
-def tf_box_8c_to_offsets(boxes_8c,
-                         boxes_8c_gt):
+def tf_box_8c_to_offsets(boxes_8c, boxes_8c_gt):
     """Converts corner boxes to corner offsets.
     It subtracts the ground-truth box corners from the predicted corners
     and normalizes the offsets by the diagonal of the proposed boxes.
@@ -573,14 +674,12 @@ def tf_box_8c_to_offsets(boxes_8c,
     # Normalize the offsets by the box_8c diagonal
     offsets_norm = tf.divide(reshaped_offsets, diagonals_mult)
 
-    reshaped_offsets_norm = tf.reshape(offsets_norm,
-                                       [-1, 3, 8])
+    reshaped_offsets_norm = tf.reshape(offsets_norm, [-1, 3, 8])
 
     return reshaped_offsets_norm
 
 
-def tf_offsets_to_box_8c(boxes_8c,
-                         offsets):
+def tf_offsets_to_box_8c(boxes_8c, offsets):
     """Converts corner ofsets to box corners.
 
     It multiplies the diagonals with the offsets and then adds it back
@@ -602,8 +701,7 @@ def tf_offsets_to_box_8c(boxes_8c,
     diagonals_mult = tf.multiply(ones, diagonals)
 
     offsets_back = tf.multiply(reshaped_offsets, diagonals_mult)
-    reshaped_offsets_back = tf.reshape(offsets_back,
-                                       [-1, 3, 8])
+    reshaped_offsets_back = tf.reshape(offsets_back, [-1, 3, 8])
 
     # Multiply the offsets by the normalization factor i.e. diagonals
     return tf.add(reshaped_offsets_back, boxes_8c)

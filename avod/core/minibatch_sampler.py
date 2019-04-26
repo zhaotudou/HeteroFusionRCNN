@@ -38,6 +38,7 @@ from avod.core import ops
 
 class MinibatchSampler(object):
     """Abstract base class for subsampling minibatches."""
+
     __metaclass__ = ABCMeta
 
     def __init__(self):
@@ -86,8 +87,8 @@ class MinibatchSampler(object):
         num_samples = tf.minimum(tf.size(indices), num_samples)
         selected_indices = tf.slice(indices, [0], tf.reshape(num_samples, [1]))
 
-        selected_indicator = ops.indices_to_dense_vector(selected_indices,
-                                                         tf.shape(indicator)[
-                                                             0])
+        selected_indicator = ops.indices_to_dense_vector(
+            selected_indices, tf.shape(indicator)[0]
+        )
 
         return tf.equal(selected_indicator, 1)
