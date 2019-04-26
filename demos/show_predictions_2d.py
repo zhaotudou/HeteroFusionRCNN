@@ -57,12 +57,12 @@ def main():
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = 'avod_cars_alt_2'
+    checkpoint_name = 'rpn_cars_alt_1'
 
     # Drawing Toggles
-    draw_proposals_separate = False
+    draw_proposals_separate = True
     draw_overlaid = False
-    draw_predictions_separate = True
+    draw_predictions_separate = False
 
     # Show orientation for both GT and proposals/predictions
     draw_orientations_on_prop = False
@@ -97,7 +97,7 @@ def main():
     output_dir_base = predictions_dir + '/images_2d'
 
     # Get checkpoint step
-    steps = os.listdir(proposals_and_scores_dir)
+    steps = os.listdir(proposals_and_scores_dir if os.path.exists(proposals_and_scores_dir) else predictions_and_scores_dir)
     steps.sort(key=int)
     print('Available steps: {}'.format(steps))
 

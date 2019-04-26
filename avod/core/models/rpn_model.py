@@ -85,7 +85,6 @@ class RpnModel(model.DetectionModel):
         # Rpn config
         rpn_config = self._config.rpn_config
         self._use_intensity_feature = rpn_config.rpn_use_intensity_feature
-        self._proposal_roi_crop_size = rpn_config.rpn_proposal_roi_crop_size
         self._fusion_method = rpn_config.rpn_fusion_method
 
         if self._train_val_test in ["train", "val"]:
@@ -367,9 +366,9 @@ class RpnModel(model.DetectionModel):
                         self.S, self.DELTA, self.R, self.DELTA_THETA) # (B,F,7)
             
             # NMS
-            if self._train_val_test == 'train':
+            if self._train_val_test == 'train' or self._config.alternating_training_step == 2:
                 # to speed up training, skip NMS, as we don't care what top_* is during training
-                print('Skip RPN-NMS during training')
+                print('Skip RPN-NMS during training or alternating_training_step == 2')
                 nms_indices = tf.zeros([self._batch_size, self._nms_size], tf.int32)
             else:
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
