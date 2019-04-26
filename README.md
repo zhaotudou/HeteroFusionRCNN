@@ -11,7 +11,7 @@ CUDA: 9.0
 #### Clone this repo
 
 ```
-git clone -b PointRCNN-seg http://fuliangcheng@git.sankuai.com/scm/~lijiahong/heterofusion.git
+git clone -b PointRCNN-seg ssh://git@git.sankuai.com/~lijiahong/heterofusion.git
 ```
 
 ####  Install Python dependencies
@@ -34,12 +34,6 @@ add2virtualenv wavedata
 # For nonvirtualenv users
 export PYTHONPATH=$PYTHONPATH:'/path/to/heterofusion'
 export PYTHONPATH=$PYTHONPATH:'/path/to/heterofusion/wavedata'
-```
-
-#### Compile integral image library in wavedata
-
-```
-sh scripts/install/build_integral_image_lib.bash
 ```
 
 #### Compile proto
@@ -103,9 +97,9 @@ Before running any scripts, check the `dataset_dir` field in those config files 
 ```
 dataset_dir: '/path/to/dataset/Kitti/object'
 ```
-### 1. Mini-batch Generation
+### 1. Preprocessing
 
-The training data needs to be pre-processed to generate mini-batches for the RPN. 
+The training data needs to be pre-processed to generate point level label for the RPN. 
 
 Note: This script does parallel processing with `num_[class]_children` processes for faster processing. This can also be disabled inside the script by setting `in_parallel` to `False`.
 
@@ -128,14 +122,14 @@ To start training, run the following:
 ```bash
 python avod/experiments/run_training.py --pipeline_config=avod/configs/rpn_cars_alt_1.config  --device='0' --data_split='train'
 ```
-### 3. Generate data for prar-2 network - BRN network
+### 3. Generate data for part-2 network - RCNN network
 
 ```bash
 python avod/experiments/run_evaluation.py --pipeline_config=avod/configs/rpn_cars_alt_1.config --data_split='train'
 ```
 After running, you should see `proposals_and_scores` and `proposals_info` folders under `avod/data/outputs/rpn_cars_alt_1/predictions/
 `.
-### 4. Train part-2 network - BRN network
+### 4. Train part-2 network - RCNN network
 To start training, run the following:
 
 ```bash
