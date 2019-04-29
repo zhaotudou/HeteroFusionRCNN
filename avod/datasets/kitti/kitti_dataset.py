@@ -52,7 +52,6 @@ class KittiDataset:
         self.num_classes = len(self.classes)
         self.num_clusters = np.asarray(self.config.num_clusters)
 
-        self.pc_source = self.config.pc_source
         self.aug_list = self.config.aug_list
 
         # Determines the network mode. This is initialized to 'train' but
@@ -146,10 +145,6 @@ class KittiDataset:
         # This is a property since the sample list gets shuffled for training
         return np.asarray([sample.name for sample in self.sample_list])
 
-    @property
-    def bev_image_dir(self):
-        raise NotImplementedError("BEV images not saved to disk yet!")
-
     def _check_dataset_dir(self):
         """Checks that dataset directory exists in the file system
 
@@ -201,23 +196,27 @@ class KittiDataset:
     def get_velodyne_path(self, sample_name):
         return self.velo_dir + "/" + sample_name + ".bin"
 
-    def get_bev_sample_path(self, sample_name):
-        return self.bev_image_dir + "/" + sample_name + ".png"
-
     def get_proposal_path(self, sample_name):
         return self.proposal_dir + "/" + sample_name + ".txt"
 
     def get_proposal_info_path(self, sample_name):
         return self.proposal_info_dir + "/" + sample_name + ".txt"
 
+    def get_proposal(self, sample_name):
+        proposals = np.loadtxt(self.get_proposal_path(sample_name)).reshape((-1, 8))[
+            :, 0:7
+        ]
+        return proposals
+
+    def get_proposal_info(self, sample_name):
+        proposals_info = np.loadtxt(self.get_proposal_info_path(sample_name)).reshape(
+            (-1, 10)
+        )[:, 1:]
+        return proposals_info
+
     # Cluster info
     def get_cluster_info(self):
         return self.kitti_utils.clusters, self.kitti_utils.std_devs
-
-    def get_anchors_info(self, sample_name):
-        return self.kitti_utils.get_anchors_info(
-            self.classes_name, self.kitti_utils.anchor_strides, sample_name
-        )
 
     def get_label_seg(self, sample_name):
         return self.kitti_utils.get_label_seg(
@@ -257,11 +256,10 @@ class KittiDataset:
         sample_dicts = []
         for sample_idx in indices:
             sample = self.sample_list[sample_idx]
-            sample_name = sample.name
 
             # Only read labels if they exist
             if self.has_labels:
-                label_seg = self.get_label_seg(sample_name)
+                label_seg = self.get_label_seg(sample.name)
                 foreground_point_num = label_seg[label_seg[:, 0] > 0].shape[0]
                 if (foreground_point_num <= 0) and (
                     (self.train_val_test == "train" and (not self.train_on_all_samples))
@@ -270,7 +268,7 @@ class KittiDataset:
                     continue
                 """
                 obj_labels = obj_utils.read_labels(self.label_dir,
-                                                   int(sample_name))
+                                                   int(sample.name))
                 # Only use objects that match dataset classes
                 obj_labels = self.kitti_utils.filter_labels(obj_labels)
                 """
@@ -278,16 +276,14 @@ class KittiDataset:
                 # obj_labels = None
                 label_seg = np.zeros((16384, 8), dtype=np.float32)
 
-            img_idx = int(sample_name)
-
             # Load image (BGR -> RGB)
-            cv_bgr_image = cv2.imread(self.get_rgb_image_path(sample_name))
+            cv_bgr_image = cv2.imread(self.get_rgb_image_path(sample.name))
             rgb_image = cv_bgr_image[..., ::-1]
             image_shape = rgb_image.shape[0:2]
             image_input = rgb_image
 
             point_xyz, point_intensity = self.kitti_utils.get_point_cloud(
-                self.pc_source, img_idx, image_shape
+                int(sample.name), image_shape
             )
             point_cloud = np.vstack((point_xyz, point_intensity))
             point_cloud = point_cloud.T
@@ -309,24 +305,12 @@ class KittiDataset:
             sample_dict = {
                 constants.KEY_LABEL_SEG: label_seg,
                 constants.KEY_POINT_CLOUD: point_cloud,
-                constants.KEY_SAMPLE_NAME: sample_name,
+                constants.KEY_SAMPLE_NAME: sample.name,
                 constants.KEY_SAMPLE_AUGS: sample.augs,
             }
             sample_dicts.append(sample_dict)
 
         return sample_dicts
-
-    def load_proposals(self, sample_name):
-        proposals = np.loadtxt(self.get_proposal_path(sample_name)).reshape((-1, 8))[
-            :, 0:7
-        ]
-        return proposals
-
-    def load_proposals_info(self, sample_name):
-        proposals_info = np.loadtxt(self.get_proposal_info_path(sample_name)).reshape(
-            (-1, 10)
-        )[:, 1:]
-        return proposals_info
 
     def _shuffle_samples(self):
         perm = np.arange(self.num_samples)
