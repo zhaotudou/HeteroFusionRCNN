@@ -35,8 +35,6 @@ class LabelSegUtils:
             + dataset.name
             + "/"
             + dataset.cluster_split
-            + "/"
-            + dataset.pc_source
         )
 
     def preprocess_rpn_label_segs(self, indices):
