@@ -18,6 +18,7 @@ from avod.core import model
 from avod.core import pointfly as pf
 from avod.core import summary_utils
 from avod.core.anchor_generators import grid_anchor_3d_generator
+from avod.core import compute_iou
 from avod.datasets.kitti import kitti_aug
 
 
@@ -27,6 +28,7 @@ class RpnModel(model.DetectionModel):
     ##############################
     PL_PC_INPUTS = "pc_inputs_pl"
     PL_LABEL_SEGS = "label_segs_pl"
+    PL_LABEL_BOXES = "label_boxes_pl"
 
     ##############################
     # Keys for Predictions
@@ -41,9 +43,11 @@ class RpnModel(model.DetectionModel):
     PRED_REG_GT = "rpn_reg_gt"
     PRED_FG_PTS = "rpn_fg_pts_num"
 
-    PRED_NMS_INDICES = "rpn_nms_indices"
     PRED_PROPOSALS = "rpn_proposals"
     PRED_OBJECTNESS_SOFTMAX = "rpn_objectness_softmax"
+
+    PRED_IOU_2D = "rpn_proposal_gt_iou_2d"
+    PRED_IOU_3D = "rpn_proposal_gt_iou_3d"
     ##############################
     # Keys for Loss
     ##############################
@@ -176,6 +180,11 @@ class RpnModel(model.DetectionModel):
             self._add_placeholder(
                 tf.float32, [self._batch_size, None, 8], self.PL_LABEL_SEGS
             )  # (B,P,8)
+
+        with tf.variable_scope("pl_boxes"):
+            self._add_placeholder(
+                tf.float32, [self._batch_size, None, 7], self.PL_LABEL_BOXES
+            )  # (B,M,7)
 
     def _set_up_feature_extractors(self):
         """Sets up feature extractors and stores feature maps and
@@ -407,67 +416,34 @@ class RpnModel(model.DetectionModel):
                 )
 
                 def gather_top_n(sb_data):
-                    sb_proposals, sb_confidences, sb_sorted_idxs = sb_data
+                    sb_proposals, sb_confidences, sb_seg_scores, sb_sorted_idxs = (
+                        sb_data
+                    )
                     sorted_confidences = tf.gather(sb_confidences, sb_sorted_idxs)
                     sorted_proposals = tf.gather(sb_proposals, sb_sorted_idxs)
-                    return sorted_proposals, sorted_confidences
+                    sorted_seg_scores = tf.gather(sb_seg_scores, sb_sorted_idxs)
+                    return sorted_proposals, sorted_confidences, sorted_seg_scores
 
-                pre_nms_proposals, pre_nms_confidences = tf.map_fn(
+                pre_nms_proposals, pre_nms_confidences, pre_nms_seg_scores = tf.map_fn(
                     gather_top_n,
-                    elems=(proposals, confidences, sorted_idxs),
-                    dtype=(tf.float32, tf.float32),
+                    elems=(proposals, confidences, seg_scores, sorted_idxs),
+                    dtype=(tf.float32, tf.float32, tf.float32),
                 )
 
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
                 oriented_NMS = True
                 print("RPN oriented_NMS = " + str(oriented_NMS))
-                # BEV projection
-                with tf.variable_scope("bev_projection"):
-
-                    def sb_project_to_bev_fn(sb_proposals):
-                        if oriented_NMS:
-                            sb_bev_proposal_boxes, _ = tf.py_func(
-                                box_3d_projector.project_to_bev,
-                                [sb_proposals, tf.constant(self._bev_extents)],
-                                (tf.float32, tf.float32),
-                            )
-                        else:
-                            # ortho rotating
-                            sb_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
-                                sb_proposals
-                            )
-                            sb_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
-                                sb_proposal_anchors, self._bev_extents
-                            )
-                            sb_bev_proposal_boxes = anchor_projector.reorder_projected_boxes(
-                                sb_bev_proposal_boxes
-                            )
-                        return sb_bev_proposal_boxes
-
-                    bev_pre_nms_proposal_boxes = tf.map_fn(
-                        sb_project_to_bev_fn, elems=pre_nms_proposals, dtype=tf.float32
-                    )
-                    if oriented_NMS:
-                        bev_pre_nms_proposal_boxes = tf.reshape(
-                            bev_pre_nms_proposal_boxes, [self._batch_size, -1, 4, 2]
-                        )
                 # BEV-NMS and ignore multiclass
                 with tf.variable_scope("bev_nms"):
 
                     def sb_nms_fn(args):
                         (sb_boxes, sb_scores) = args
                         if oriented_NMS:
-                            sb_nms_indices = tf.py_func(
-                                oriented_nms.nms,
-                                [
-                                    sb_boxes,
-                                    sb_scores,
-                                    tf.constant(self._nms_iou_thresh),
-                                    tf.constant(self._post_nms_size),
-                                ],
-                                tf.int32,
+                            sb_nms_indices = compute_iou.oriented_nms_tf(
+                                sb_boxes, sb_scores, self._nms_iou_thresh
                             )
+                            sb_nms_indices = sb_nms_indices[: self._post_nms_size]
                         else:
                             sb_nms_indices = tf.image.non_max_suppression(
                                 sb_boxes,
@@ -476,24 +452,23 @@ class RpnModel(model.DetectionModel):
                                 iou_threshold=self._nms_iou_thresh,
                             )
 
-                        # DEBUG
-                        # sb_nms_indices = tf.Print(
-                        #     sb_nms_indices,
-                        #     [tf.shape(sb_nms_indices)[0]],
-                        #     "(avg) num_proposals_before_padding: ",
-                        # )
-
-                        sb_nms_indices_padded = tf.pad(
-                            sb_nms_indices,
-                            [[0, self._post_nms_size - tf.shape(sb_nms_indices)[0]]],
-                            mode="CONSTANT",
-                            constant_values=-1,
-                        )
-                        return sb_nms_indices_padded, tf.shape(sb_nms_indices)[0]
+                            sb_nms_indices = tf.pad(
+                                sb_nms_indices,
+                                [
+                                    [
+                                        0,
+                                        self._post_nms_size
+                                        - tf.shape(sb_nms_indices)[0],
+                                    ]
+                                ],
+                                mode="CONSTANT",
+                                constant_values=-1,
+                            )
+                        return sb_nms_indices, tf.shape(sb_nms_indices)[0]
 
                     nms_indices, num_proposals_before_padding = tf.map_fn(
                         sb_nms_fn,
-                        elems=[bev_pre_nms_proposal_boxes, pre_nms_confidences],
+                        elems=[pre_nms_proposals, pre_nms_confidences],
                         dtype=(tf.int32, tf.int32),
                     )
 
@@ -502,11 +477,43 @@ class RpnModel(model.DetectionModel):
                         tf.reduce_sum(num_proposals_before_padding) / self._batch_size,
                     )
 
+                # Compute IOUs
+                if self._train_val_test == "val":
+                    with tf.variable_scope("compute_ious"):
+
+                        def sb_nms_selection(args):
+                            sb_proposals, sb_scores, sb_nms_indices = args
+                            sb_post_nms_proposals = tf.gather(
+                                sb_proposals, sb_nms_indices, axis=0
+                            )
+                            sb_post_nms_scores = tf.gather(
+                                sb_scores, sb_nms_indices, axis=0
+                            )
+                            return sb_post_nms_proposals, sb_post_nms_scores
+
+                        post_nms_proposals, post_nms_seg_scores = tf.map_fn(
+                            sb_nms_selection,
+                            elems=(pre_nms_proposals, pre_nms_seg_scores, nms_indices),
+                            dtype=(tf.float32, tf.float32),
+                        )
+
+                        def sb_compute_iou(args):
+                            proposal_boxes, gt_boxes = args
+                            return compute_iou.box3d_iou_tf(proposal_boxes, gt_boxes)
+
+                        iou3ds, iou2ds = tf.map_fn(
+                            sb_compute_iou,
+                            elems=(
+                                post_nms_proposals,
+                                self.placeholders[self.PL_LABEL_BOXES],
+                            ),
+                            dtype=(tf.float32, tf.float32),
+                        )
+
         if self._train_val_test in ["train", "val"]:
             label_segs = self.placeholders[self.PL_LABEL_SEGS]  # (B,P,8)
             label_cls = label_segs[:, :, 0]
             label_box_3d = label_segs[:, :, 1:]
-
             ######################################################
             # GTs for the loss function & metrics
             ######################################################
@@ -611,16 +618,16 @@ class RpnModel(model.DetectionModel):
                 res_y_gt,
                 res_size_gt,
             )
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = seg_scores
             if self._train_val_test == "val":
-                predictions[self.PRED_NMS_INDICES] = nms_indices
-                predictions[self.PRED_PROPOSALS] = proposals
+                predictions[self.PRED_IOU_2D] = iou2ds
+                predictions[self.PRED_IOU_3D] = iou3ds
+                predictions[self.PRED_PROPOSALS] = post_nms_proposals
+                predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
-            predictions[self.PRED_NMS_INDICES] = nms_indices
-            predictions[self.PRED_PROPOSALS] = proposals
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = seg_scores
+            predictions[self.PRED_PROPOSALS] = post_nms_proposals
+            predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
         return predictions
 
     def _parse_rpn_output(self, rpn_output):
@@ -744,7 +751,7 @@ class RpnModel(model.DetectionModel):
 
         batch_pc_inputs = []
         batch_label_segs = []
-        # batch_label_boxes_3d = []
+        batch_label_boxes = []
         self._samples_info.clear()
         for sample in samples:
             # Network input data
@@ -753,6 +760,11 @@ class RpnModel(model.DetectionModel):
             # image_shape = [image_input.shape[0], image_input.shape[1]]
             pc_input = sample.get(constants.KEY_POINT_CLOUD)
             label_seg = sample.get(constants.KEY_LABEL_SEG)
+            label_box_objs = sample.get(constants.KEY_LABEL_BOX)
+            label_box = [
+                box_3d_encoder.object_label_to_box_3d(obj_label)
+                for obj_label in label_box_objs
+            ]
             pool_size = pc_input.shape[0]
 
             def random_sample(pool_size, sample_num):
@@ -782,6 +794,7 @@ class RpnModel(model.DetectionModel):
 
             batch_pc_inputs.append(pc_input_sampled)
             batch_label_segs.append(label_seg_sampled)
+            batch_label_boxes.append(label_box)
 
             # Temporary sample info for debugging
             sample_name = sample.get(constants.KEY_SAMPLE_NAME)
@@ -794,6 +807,22 @@ class RpnModel(model.DetectionModel):
         # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
         self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(batch_pc_inputs)
         self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(batch_label_segs)
+        # Since samples may have various number of objects labels,
+        # we pad all zero labels to make them have the same dimension
+        max_num_labels = max([len(label_boxes) for label_boxes in batch_label_boxes])
+        batch_label_boxes_padded = []
+        for label_boxes in batch_label_boxes:
+            label_boxes_padded = np.zeros((max_num_labels, 7))
+            if len(label_boxes) == max_num_labels:
+                label_boxes_padded = np.asarray(label_boxes)
+            else:
+                for i, label_box in enumerate(label_boxes):
+                    label_boxes_padded[i, :] = label_box
+            batch_label_boxes_padded.append(label_boxes_padded)
+
+        self._placeholder_inputs[self.PL_LABEL_BOXES] = np.asarray(
+            batch_label_boxes_padded
+        )
 
         # Sample Info
         # img_idx is a list to match the placeholder shape
@@ -807,6 +836,7 @@ class RpnModel(model.DetectionModel):
         return feed_dict
 
     def loss(self, prediction_dict):
+
         seg_softmax = prediction_dict[self.PRED_SEG_SOFTMAX]
         seg_gt = prediction_dict[self.PRED_SEG_GT]
 

@@ -304,6 +304,8 @@ class Evaluator:
                         for sample_name in sample_names
                     ]
                     self.calculate_proposals_info(
+                        predictions[RpnModel.PRED_IOU_2D],
+                        predictions[RpnModel.PRED_IOU_3D],
                         rpn_file_paths,
                         sample_names,
                         prop_info_files,
@@ -942,32 +944,26 @@ class Evaluator:
             proposals_and_scores: A numpy array of shape (number_of_proposals,
                 8), containing the rpn proposal boxes and scores.
         """
-        nms_indices = predictions[RpnModel.PRED_NMS_INDICES]
         proposals = predictions[RpnModel.PRED_PROPOSALS]
         softmax_scores = predictions[RpnModel.PRED_OBJECTNESS_SOFTMAX]
 
-        Batch = nms_indices.shape[0]
-        NMS = nms_indices.shape[1]
-        for b in range(Batch):
-            top_proposals = []
-            top_scores = []
-            for n in range(NMS):
-                idx = nms_indices[b, n]
-                if idx == -1:
-                    break
-                top_proposals.append(proposals[b, idx])
-                top_scores.append(softmax_scores[b, idx])
+        batch = proposals.shape[0]
+        for b in range(batch):
+            top_proposals = proposals[b, :]
+            top_scores = softmax_scores[b, :][:, np.newaxis]
+            proposals_and_scores = np.hstack((top_proposals, top_scores))
 
-            proposals_and_scores = np.column_stack(
-                [
-                    np.asarray(top_proposals).reshape((-1, 7)),
-                    np.asarray(top_scores).reshape((-1, 1)),
-                ]
-            )
             np.savetxt(rpn_file_paths[b], proposals_and_scores, fmt="%.3f")
 
     def calculate_proposals_info(
-        self, rpn_file_paths, sample_names, prop_info_files, eval_rpn_stats, global_step
+        self,
+        proposal_gt_iou2ds,
+        proposal_gt_iou3ds,
+        rpn_file_paths,
+        sample_names,
+        prop_info_files,
+        eval_rpn_stats,
+        global_step,
     ):
         assert len(rpn_file_paths) == len(sample_names)
 
@@ -997,7 +993,11 @@ class Evaluator:
             label_classes = np.asarray(label_classes, dtype=np.int32)
 
             recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = box_util.compute_recall_iou(
-                top_proposals, label_boxes_3d, label_classes
+                top_proposals,
+                label_boxes_3d,
+                label_classes,
+                proposal_gt_iou2ds[i, ...],
+                proposal_gt_iou3ds[i, ...],
             )
 
             num_props = top_proposals.shape[0]
