@@ -786,8 +786,8 @@ class AvodModel(model.DetectionModel):
         batch_proposals = []
         batch_proposals_info = []
         for sample_name in self._samples_info:
-            proposals = self.dataset.load_proposals(sample_name)
-            proposals_info = self.dataset.load_proposals_info(sample_name)
+            proposals = self.dataset.get_proposal(sample_name)
+            proposals_info = self.dataset.get_proposal_info(sample_name)
             batch_proposals.append(proposals)
             batch_proposals_info.append(proposals_info)
         self._placeholder_inputs[self.PL_PROPOSALS] = np.asarray(batch_proposals)

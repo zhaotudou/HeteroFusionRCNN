@@ -29,9 +29,6 @@ message KittiDatasetConfig {
     // Number of clusters corresponding to each class (e.g. [2, 1, 2])
     repeated int32 num_clusters = 8;
 
-    // PC source, e.g. 'lidar'
-    required string pc_source = 9;
-
     // Augmentations (e.g. [''], ['flipping'], ['flipping', 'pca_jitter'])
     repeated string aug_list = 10;
 
