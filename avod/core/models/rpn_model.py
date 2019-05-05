@@ -1,25 +1,15 @@
 import numpy as np
-import random
 import tensorflow as tf
-from tensorflow.contrib import slim
 
 from avod.builders import feature_extractor_builder
-from avod.core.models import model_util
-from avod.core import anchor_filter
-from avod.core import anchor_projector
 from avod.core import box_3d_encoder
-from avod.core import box_3d_projector
 from avod.core import bin_based_box3d_encoder
-from avod.core import box_util
-from avod.core import oriented_nms
 from avod.core import constants
 from avod.core import losses
 from avod.core import model
 from avod.core import pointfly as pf
-from avod.core import summary_utils
 from avod.core.anchor_generators import grid_anchor_3d_generator
 from avod.core import compute_iou
-from avod.datasets.kitti import kitti_aug
 
 
 class RpnModel(model.DetectionModel):
@@ -37,11 +27,10 @@ class RpnModel(model.DetectionModel):
     PRED_SEG_GT = "rpn_seg_gt"
     PRED_TOTAL_PTS = "rpn_total_pts"
 
-    PRED_CLS = "rpn_fg_cls"
-    PRED_REG = "rpn_fg_reg"
+    PRED_CLS = "rpn_cls"
+    PRED_REG = "rpn_reg"
     PRED_CLS_GT = "rpn_cls_gt"
     PRED_REG_GT = "rpn_reg_gt"
-    PRED_FG_PTS = "rpn_fg_pts_num"
 
     PRED_PROPOSALS = "rpn_proposals"
     PRED_OBJECTNESS_SOFTMAX = "rpn_objectness_softmax"
@@ -637,13 +626,13 @@ class RpnModel(model.DetectionModel):
         Output:
             bin_x_logits
             res_x_norms
-            
+
             bin_z_logits
             res_z_norms
-            
+
             bin_theta_logits
             res_theta_norms
-            
+
             res_y
 
             res_size: (l,w,h)
@@ -738,17 +727,6 @@ class RpnModel(model.DetectionModel):
             else:
                 samples = self.dataset.next_batch(batch_size=batch_size, shuffle=False)
 
-        # if self._is_training:
-        #     offset = int(
-        #         random.gauss(0, self._pc_sample_pts * self._pc_sample_pts_variance)
-        #     )
-        #     offset = max(offset, -self._pc_sample_pts * self._pc_sample_pts_clip)
-        #     offset = min(offset, self._pc_sample_pts * self._pc_sample_pts_clip)
-        #     pc_sample_pts = int(self._pc_sample_pts + offset)
-        # else:
-        #     pc_sample_pts = self._pc_sample_pts
-        pc_sample_pts = self._pc_sample_pts
-
         batch_pc_inputs = []
         batch_label_segs = []
         batch_label_boxes = []
@@ -782,7 +760,7 @@ class RpnModel(model.DetectionModel):
                 return choices
 
             while True:
-                choices = random_sample(pool_size, pc_sample_pts)
+                choices = random_sample(pool_size, self._pc_sample_pts)
                 pc_input_sampled = pc_input[choices]
                 label_seg_sampled = label_seg[choices]
 
