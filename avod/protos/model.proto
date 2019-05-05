@@ -70,14 +70,20 @@ message RpnConfig {
     // RPN proposal ROI fusion method, one of ['mean', 'concat']
     required string rpn_fusion_method = 2;
 
-    // RPN Non-max suppression boxes during training
-    required int32 rpn_train_nms_size = 3;
+    // RPN number proposals fed to Non-max suppression during training
+    required int32 rpn_train_pre_nms_size = 12;
+
+    // RPN number proposals kept after Non-max suppression during training
+    required int32 rpn_train_post_nms_size = 3;
 
     // RPN NMS IoU threshold during training
     required float rpn_train_nms_iou_thresh = 4;
     
-    // RPN Non-max suppression boxes during testing
-    required int32 rpn_test_nms_size = 5;
+    // RPN number proposals fed to Non-max suppression during test
+    required int32 rpn_test_pre_nms_size = 13;
+
+    // RPN number proposals kept after Non-max suppression during test
+    required int32 rpn_test_post_nms_size = 5;
 
     // RPN NMS IoU threshold during testing
     required float rpn_test_nms_iou_thresh = 6;

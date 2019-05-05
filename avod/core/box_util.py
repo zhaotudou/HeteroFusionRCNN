@@ -5,6 +5,7 @@ Date: September 2017
 """
 from __future__ import print_function
 
+import tensorflow as tf
 import numpy as np
 from scipy.spatial import ConvexHull
 from avod.core import box_8c_encoder
@@ -127,12 +128,16 @@ def box3d_iou(corners1, corners2):
     return iou, iou_2d
 
 
-def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
+def compute_recall_iou(
+    pred_boxes_3d, label_boxes_3d, label_cls, proposal_gt_iou2d, proposal_gt_iou3d
+):
     """
     Input:
         pred_boxes_3d: (n,7) [x,y,z,l,w,h,ry]
         label_boxes_3d: (m,7) [x,y,z,l,w,h,ry]
         label_cls: (m) [cls]
+        propoal_gt_iou2d: (n,m) 2d iou between proposal and ground truth
+        propoal_gt_iou3d: (n,m) 3d iou between proposal and ground truth
     Output:
         recall_50: (1)
         recall_70: (1)
@@ -143,24 +148,13 @@ def compute_recall_iou(pred_boxes_3d, label_boxes_3d, label_cls):
     """
     n = pred_boxes_3d.shape[0]
     m = label_boxes_3d.shape[0]
+    mx_iou2ds = proposal_gt_iou2d[:, :m]
+    mx_iou3ds = proposal_gt_iou3d[:, :m]
     iou2ds = np.zeros((n), dtype=np.float32)
     iou3ds = np.zeros((n), dtype=np.float32)
     iou3ds_gt_boxes = np.zeros((n, 7), dtype=np.float32)
     iou3ds_gt_cls = np.zeros((n), dtype=np.float32)
 
-    pred_boxes_8co = [
-        box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in pred_boxes_3d
-    ]
-    label_boxes_8co = [
-        box_8c_encoder.np_box_3d_to_box_8co(box3d).T for box3d in label_boxes_3d
-    ]
-    mx_iou2ds = np.zeros((n, m))
-    mx_iou3ds = np.zeros((n, m))
-    for i in range(n):
-        for j in range(m):
-            iou_3d, iou_2d = box3d_iou(pred_boxes_8co[i], label_boxes_8co[j])
-            mx_iou2ds[i][j] = iou_2d
-            mx_iou3ds[i][j] = iou_3d
     if m * n > 0:
         recall_50 = np.sum(np.max(mx_iou3ds, axis=0) > 0.5)
         recall_70 = np.sum(np.max(mx_iou3ds, axis=0) > 0.7)
@@ -296,6 +290,8 @@ if __name__ == "__main__":
     inter, area = convex_hull_intersection(rect1, rect2)
     print((inter, area))
     """
+
+    """
     import timeit
 
     rect1 = [(1, 1), (0, 1), (0, 0), (1, 0)]
@@ -309,3 +305,23 @@ if __name__ == "__main__":
             globals=globals(),
         )
     )
+    """
+    pred_boxes_3d = np.asarray([[0.5, 0.5, 0.5, 1, 1, 1, 0]])
+    label_boxes_3d = np.asarray([[1, 1, 1, 1, 1, 1, 0]])
+    # label_cls = np.asarray([1])
+    # print(pred_boxes_3d.shape)
+    # print(label_boxes_3d.shape)
+    # ans = compute_recall_iou_old(pred_boxes_3d, label_boxes_3d, label_cls)
+    # print(ans)
+
+    from compute_iou import box3d_iou_tf
+
+    pred_boxes_3d = tf.convert_to_tensor(pred_boxes_3d, dtype=tf.float32)
+    label_boxes_3d = tf.convert_to_tensor(label_boxes_3d, dtype=tf.float32)
+
+    iou3d, iou2d = box3d_iou_tf(label_boxes_3d, pred_boxes_3d)
+
+    with tf.Session() as sess:
+        iou3d, iou2d = sess.run([iou3d, iou2d])
+    print("iou2d: ", iou2d)
+    print("iou3d: ", iou3d)

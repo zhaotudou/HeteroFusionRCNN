@@ -5,6 +5,7 @@ This runs the DetectionModel trainer.
 
 import argparse
 import os
+import datetime
 
 import tensorflow as tf
 
@@ -91,7 +92,11 @@ def main(_):
     # Set CUDA device id
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
 
+    print("training started at: ", str(datetime.datetime.now()))
+
     train(model_config, train_config, dataset_config)
+
+    print("training finished at: ", str(datetime.datetime.now()))
 
 
 if __name__ == "__main__":

@@ -266,12 +266,9 @@ class KittiDataset:
                     or (self.train_val_test == "val" and (not self.eval_all_samples))
                 ):
                     continue
-                """
-                obj_labels = obj_utils.read_labels(self.label_dir,
-                                                   int(sample.name))
+                obj_labels = obj_utils.read_labels(self.label_dir, int(sample.name))
                 # Only use objects that match dataset classes
                 obj_labels = self.kitti_utils.filter_labels(obj_labels)
-                """
             else:
                 # obj_labels = None
                 label_seg = np.zeros((16384, 8), dtype=np.float32)
@@ -292,9 +289,9 @@ class KittiDataset:
             if kitti_aug.AUG_FLIPPING in sample.augs:
                 image_input = kitti_aug.flip_image(image_input)
                 point_cloud = kitti_aug.flip_point_cloud(point_cloud)
-                # obj_labels = [
-                #     kitti_aug.flip_label_in_3d_only(obj) for obj in obj_labels
-                # ]
+                obj_labels = [
+                    kitti_aug.flip_label_in_3d_only(obj) for obj in obj_labels
+                ]
 
             # Augmentation (Image Jitter)
             if kitti_aug.AUG_PCA_JITTER in sample.augs:
@@ -304,6 +301,7 @@ class KittiDataset:
 
             sample_dict = {
                 constants.KEY_LABEL_SEG: label_seg,
+                constants.KEY_LABEL_BOX: obj_labels,
                 constants.KEY_POINT_CLOUD: point_cloud,
                 constants.KEY_SAMPLE_NAME: sample.name,
                 constants.KEY_SAMPLE_AUGS: sample.augs,

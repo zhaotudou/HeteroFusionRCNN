@@ -18,6 +18,7 @@ from avod.core import model
 from avod.core import pointfly as pf
 from avod.core import summary_utils
 from avod.core.anchor_generators import grid_anchor_3d_generator
+from avod.core import compute_iou
 from avod.datasets.kitti import kitti_aug
 
 
@@ -27,6 +28,7 @@ class RpnModel(model.DetectionModel):
     ##############################
     PL_PC_INPUTS = "pc_inputs_pl"
     PL_LABEL_SEGS = "label_segs_pl"
+    PL_LABEL_BOXES = "label_boxes_pl"
 
     ##############################
     # Keys for Predictions
@@ -35,15 +37,17 @@ class RpnModel(model.DetectionModel):
     PRED_SEG_GT = "rpn_seg_gt"
     PRED_TOTAL_PTS = "rpn_total_pts"
 
-    PRED_FG_CLS = "rpn_fg_cls"
-    PRED_FG_REG = "rpn_fg_reg"
-    PRED_FG_CLS_GT = "rpn_fg_cls_gt"
-    PRED_FG_REG_GT = "rpn_fg_reg_gt"
+    PRED_CLS = "rpn_fg_cls"
+    PRED_REG = "rpn_fg_reg"
+    PRED_CLS_GT = "rpn_cls_gt"
+    PRED_REG_GT = "rpn_reg_gt"
     PRED_FG_PTS = "rpn_fg_pts_num"
 
-    PRED_NMS_INDICES = "rpn_nms_indices"
     PRED_PROPOSALS = "rpn_proposals"
     PRED_OBJECTNESS_SOFTMAX = "rpn_objectness_softmax"
+
+    PRED_IOU_2D = "rpn_proposal_gt_iou_2d"
+    PRED_IOU_3D = "rpn_proposal_gt_iou_3d"
     ##############################
     # Keys for Loss
     ##############################
@@ -90,10 +94,12 @@ class RpnModel(model.DetectionModel):
         self._fusion_method = rpn_config.rpn_fusion_method
 
         if self._train_val_test in ["train", "val"]:
-            self._nms_size = rpn_config.rpn_train_nms_size
+            self._pre_nms_size = rpn_config.rpn_train_pre_nms_size
+            self._post_nms_size = rpn_config.rpn_train_post_nms_size
             self._nms_iou_thresh = rpn_config.rpn_train_nms_iou_thresh
         else:
-            self._nms_size = rpn_config.rpn_test_nms_size
+            self._pre_nms_size = rpn_config.rpn_test_pre_nms_size
+            self._post_nms_size = rpn_config.rpn_test_post_nms_size
             self._nms_iou_thresh = rpn_config.rpn_test_nms_iou_thresh
 
         self.S = rpn_config.rpn_xz_search_range
@@ -175,6 +181,11 @@ class RpnModel(model.DetectionModel):
                 tf.float32, [self._batch_size, None, 8], self.PL_LABEL_SEGS
             )  # (B,P,8)
 
+        with tf.variable_scope("pl_boxes"):
+            self._add_placeholder(
+                tf.float32, [self._batch_size, None, 7], self.PL_LABEL_BOXES
+            )  # (B,M,7)
+
     def _set_up_feature_extractors(self):
         """Sets up feature extractors and stores feature maps and
         bottlenecks as member variables.
@@ -185,6 +196,15 @@ class RpnModel(model.DetectionModel):
         self._pc_pts, self._pc_fts = self._pc_feature_extractor.build(
             self._pc_pts_preprocessed, self._pc_fts_preprocessed, self._is_training
         )  # (B,P,3) (B,P,C)
+
+        self._pc_pts = tf.reshape(
+            self._pc_pts,
+            [self._batch_size, self._pc_sample_pts, self._pc_pts.shape[2].value],
+        )
+        self._pc_fts = tf.reshape(
+            self._pc_fts,
+            [self._batch_size, self._pc_sample_pts, self._pc_fts.shape[2].value],
+        )
         tf.summary.histogram("pc_fts", self._pc_fts)
 
     def _gather_residuals(
@@ -222,10 +242,8 @@ class RpnModel(model.DetectionModel):
         #############
         res_x_norm = np.take_along_axis(res_x_norms, np.expand_dims(bin_x, -1), axis=-1) #(B,p,1)
         res_x_norm = np.squeeze(res_x_norm, -1)
-         
         res_z_norm = np.take_along_axis(res_z_norms, np.expand_dims(bin_z, -1), axis=-1) #(B,p,1)
         res_z_norm = np.squeeze(res_z_norm, -1)
-        
         res_theta_norm = np.take_along_axis(res_theta_norms, np.expand_dims(bin_theta, -1), axis=-1) #(B,p,1)
         res_theta_norm = np.squeeze(res_theta_norm, -1)
         """
@@ -265,7 +283,6 @@ class RpnModel(model.DetectionModel):
         K_mean_sizes = np.reshape(cluster_sizes, (-1,3))
         K_mean_sizes = np.vstack([np.asarray([0.0, 0.0, 0.0]), K_mean_sizes]) # insert 0-background
         mean_sizes = K_mean_sizes[cls_preds]
-        
         return mean_sizes.astype(np.float32)
         """
 
@@ -299,46 +316,11 @@ class RpnModel(model.DetectionModel):
                 seg_softmax[:, :, 1:], axis=-1, name="seg_scores"
             )  # (B,P)
 
-        label_segs = self.placeholders[self.PL_LABEL_SEGS]  # (B,P,8)
-        label_cls = label_segs[:, :, 0]
-        label_box_3d = label_segs[:, :, 1:]
-        # foreground point masking
-        with tf.variable_scope("foreground_masking"):
-            if self._train_val_test in ["train", "val"]:
-                self._foreground_mask = label_cls > 0  # (B,P)
-            else:
-                self._foreground_mask = seg_preds > 0  # (B,P)
-
-            fg_indices = model_util.point_cloud_masking(
-                self._foreground_mask, self.NUM_FG_POINT
-            )  # (B,F,2)
-            foreground_pts = tf.reshape(
-                tf.gather_nd(self._pc_pts, fg_indices),
-                [self._batch_size, self.NUM_FG_POINT, self._pc_pts.shape[2].value],
-            )  # (B,F,3)
-            foreground_fts = tf.reshape(
-                tf.gather_nd(self._pc_fts, fg_indices),
-                [self._batch_size, self.NUM_FG_POINT, self._pc_fts.shape[2].value],
-            )  # (B,F,C)
-            foreground_preds = tf.reshape(
-                tf.gather_nd(seg_preds, fg_indices),
-                [self._batch_size, self.NUM_FG_POINT],
-            )  # (B,F)
-            foreground_scores = tf.reshape(
-                tf.gather_nd(seg_scores, fg_indices),
-                [self._batch_size, self.NUM_FG_POINT],
-            )  # (B,F)
-
-            foreground_label_boxes_3d = tf.reshape(
-                tf.gather_nd(label_box_3d, fg_indices),
-                [self._batch_size, self.NUM_FG_POINT, 7],
-            )  # (B,F,7)
-
         # branch-2: bin-based 3D proposal generation
         #########################################
         with tf.variable_scope("bin_based_rpn"):
             # Parse rpn layers config
-            fc_layers = [foreground_fts]
+            fc_layers = [self._pc_fts]
             layers_config = self._config.layers_config.rpn_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
                 C = layer_param.C
@@ -361,233 +343,261 @@ class RpnModel(model.DetectionModel):
                 self._is_training,
                 activation=None,
             )
-            bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size = self._parse_rpn_output(
-                fc_output
-            )
-            res_y = tf.squeeze(res_y, [-1])
+
+        bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size = self._parse_rpn_output(
+            fc_output
+        )
+        res_y = tf.squeeze(res_y, [-1])
+
+        # Decode bin-based 3D Box
+        bin_x = tf.argmax(bin_x_logits, axis=-1, output_type=tf.int32)  # (B,P)
+        bin_z = tf.argmax(bin_z_logits, axis=-1, output_type=tf.int32)  # (B,P)
+        bin_theta = tf.argmax(bin_theta_logits, axis=-1, output_type=tf.int32)  # (B,P)
+
+        res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+            res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
+        )
+
+        mean_sizes = self._gather_mean_sizes(
+            tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
+            seg_preds,
+        )
 
         with tf.variable_scope("histograms_rpn"):
             with tf.variable_scope("bin_based_proposal"):
                 for fc_layer in fc_layers:
                     # fix the name to avoid tf warnings
                     tf.summary.histogram(fc_layer.name.replace(":", "_"), fc_layer)
+
         # Return the proposals
         ######################################################
         with tf.variable_scope("proposals"):
-            # Decode bin-based 3D Box
-            bin_x = tf.argmax(bin_x_logits, axis=-1, output_type=tf.int32)  # (B,F)
-            bin_z = tf.argmax(bin_z_logits, axis=-1, output_type=tf.int32)  # (B,F)
-            bin_theta = tf.argmax(
-                bin_theta_logits, axis=-1, output_type=tf.int32
-            )  # (B,F)
-
-            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
-                res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
-            )
-
-            mean_sizes = self._gather_mean_sizes(
-                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
-                foreground_preds,
-            )
-
-            with tf.variable_scope("decoding"):
-                proposals = bin_based_box3d_encoder.tf_decode(
-                    foreground_pts,
-                    0,
-                    bin_x,
-                    res_x_norm,
-                    bin_z,
-                    res_z_norm,
-                    bin_theta,
-                    res_theta_norm,
-                    res_y,
-                    res_size,
-                    mean_sizes,
-                    self.S,
-                    self.DELTA,
-                    self.R,
-                    self.DELTA_THETA,
-                )  # (B,F,7)
-
-            # NMS
-            if (
-                self._train_val_test == "train"
-                or self._config.alternating_training_step == 2
-            ):
+            if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
-                print("Skip RPN-NMS during training or alternating_training_step == 2")
-                nms_indices = tf.zeros([self._batch_size, self._nms_size], tf.int32)
+                print("Skip RPN-NMS during training")
+                # nms_indices = tf.zeros([self._batch_size, self._post_nms_size], tf.int32)
             else:
+                with tf.variable_scope("decoding"):
+                    proposals = bin_based_box3d_encoder.tf_decode(
+                        self._pc_pts,
+                        0,
+                        bin_x,
+                        res_x_norm,
+                        bin_z,
+                        res_z_norm,
+                        bin_theta,
+                        res_theta_norm,
+                        res_y,
+                        res_size,
+                        mean_sizes,
+                        self.S,
+                        self.DELTA,
+                        self.R,
+                        self.DELTA_THETA,
+                    )  # (B,P,7)
+
+                # bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
+                # bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
+                # bin_theta_scores = tf.reduce_max(
+                #     tf.nn.softmax(bin_theta_logits), axis=-1
+                # )
+
+                # confidence = (
+                #     seg_scores
+                #     * bin_x_scores
+                #     * bin_z_scores
+                #     * bin_theta_scores
+                # ) # (B,P)
+                confidences = seg_scores
+
+                # get _pre_nms_size number of proposals for NMS
+                _, sorted_idxs = tf.nn.top_k(
+                    confidences, k=self._pre_nms_size, sorted=True
+                )
+
+                def gather_top_n(sb_data):
+                    sb_proposals, sb_confidences, sb_seg_scores, sb_sorted_idxs = (
+                        sb_data
+                    )
+                    sorted_confidences = tf.gather(sb_confidences, sb_sorted_idxs)
+                    sorted_proposals = tf.gather(sb_proposals, sb_sorted_idxs)
+                    sorted_seg_scores = tf.gather(sb_seg_scores, sb_sorted_idxs)
+                    return sorted_proposals, sorted_confidences, sorted_seg_scores
+
+                pre_nms_proposals, pre_nms_confidences, pre_nms_seg_scores = tf.map_fn(
+                    gather_top_n,
+                    elems=(proposals, confidences, seg_scores, sorted_idxs),
+                    dtype=(tf.float32, tf.float32, tf.float32),
+                )
+
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
                 oriented_NMS = True
                 print("RPN oriented_NMS = " + str(oriented_NMS))
-                # BEV projection
-                with tf.variable_scope("bev_projection"):
-
-                    def sb_project_to_bev_fn(sb_proposals):
-                        if oriented_NMS:
-                            sb_bev_proposal_boxes, _ = tf.py_func(
-                                box_3d_projector.project_to_bev,
-                                [sb_proposals, tf.constant(self._bev_extents)],
-                                (tf.float32, tf.float32),
-                            )
-                        else:
-                            # ortho rotating
-                            sb_proposal_anchors = box_3d_encoder.tf_box_3d_to_anchor(
-                                sb_proposals
-                            )
-                            sb_bev_proposal_boxes, _ = anchor_projector.project_to_bev(
-                                sb_proposal_anchors, self._bev_extents
-                            )
-                            sb_bev_proposal_boxes = anchor_projector.reorder_projected_boxes(
-                                sb_bev_proposal_boxes
-                            )
-                        return sb_bev_proposal_boxes
-
-                    bev_proposal_boxes = tf.map_fn(
-                        sb_project_to_bev_fn, elems=proposals, dtype=tf.float32
-                    )
-                    if oriented_NMS:
-                        bev_proposal_boxes = tf.reshape(
-                            bev_proposal_boxes, [self._batch_size, -1, 4, 2]
-                        )
                 # BEV-NMS and ignore multiclass
                 with tf.variable_scope("bev_nms"):
 
                     def sb_nms_fn(args):
                         (sb_boxes, sb_scores) = args
                         if oriented_NMS:
-                            sb_nms_indices = tf.py_func(
-                                oriented_nms.nms,
-                                [
-                                    sb_boxes,
-                                    sb_scores,
-                                    tf.constant(self._nms_iou_thresh),
-                                    tf.constant(self._nms_size),
-                                ],
-                                tf.int32,
+                            sb_nms_indices = compute_iou.oriented_nms_tf(
+                                sb_boxes, sb_scores, self._nms_iou_thresh
                             )
+                            sb_nms_indices = sb_nms_indices[: self._post_nms_size]
                         else:
                             sb_nms_indices = tf.image.non_max_suppression(
                                 sb_boxes,
                                 sb_scores,
-                                max_output_size=self._nms_size,
+                                max_output_size=self._post_nms_size,
                                 iou_threshold=self._nms_iou_thresh,
                             )
 
-                        sb_nms_indices = tf.pad(
-                            sb_nms_indices,
-                            [[0, self._nms_size - tf.shape(sb_nms_indices)[0]]],
-                            mode="CONSTANT",
-                            constant_values=-1,
-                        )
-                        return sb_nms_indices
+                            sb_nms_indices = tf.pad(
+                                sb_nms_indices,
+                                [
+                                    [
+                                        0,
+                                        self._post_nms_size
+                                        - tf.shape(sb_nms_indices)[0],
+                                    ]
+                                ],
+                                mode="CONSTANT",
+                                constant_values=-1,
+                            )
+                        return sb_nms_indices, tf.shape(sb_nms_indices)[0]
 
-                    bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
-                    bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
-                    bin_theta_scores = tf.reduce_max(
-                        tf.nn.softmax(bin_theta_logits), axis=-1
-                    )
-                    confidence = (
-                        foreground_scores
-                        * bin_x_scores
-                        * bin_z_scores
-                        * bin_theta_scores
-                    )
-                    nms_indices = tf.map_fn(
+                    nms_indices, num_proposals_before_padding = tf.map_fn(
                         sb_nms_fn,
-                        elems=[bev_proposal_boxes, confidence],
-                        dtype=tf.int32,
+                        elems=[pre_nms_proposals, pre_nms_confidences],
+                        dtype=(tf.int32, tf.int32),
                     )
 
-        ######################################################
-        # GTs for the loss function & metrics
-        ######################################################
-        # Ground Truth Seg
-        with tf.variable_scope("seg_one_hot_classes"):
-            segs_gt_one_hot = tf.one_hot(
-                tf.to_int32(label_cls),
-                depth=self.num_classes + 1,
-                on_value=1.0,
-                off_value=0.0,
-            )
+                    tf.summary.scalar(
+                        "(avg) sum_proposals_before_padding",
+                        tf.reduce_sum(num_proposals_before_padding) / self._batch_size,
+                    )
 
-        with tf.variable_scope("segmentation_accuracy"):
-            num_foreground_pts = (
-                tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32))
-                / self._batch_size
-            )
-            tf.summary.scalar("foreground_points_num", num_foreground_pts)
-            # seg accuracy
-            all_ones = tf.ones_like(seg_preds, dtype=tf.float32)
-            num_total_pts = tf.reduce_sum(all_ones)
-            seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls))
-            # seg_accuracy = tf.reduce_mean(seg_correct)
-            seg_accuracy = (
-                tf.reduce_sum(tf.cast(seg_correct, tf.float32)) / num_total_pts
-            )
-            tf.summary.scalar("segmentation_accuracy", seg_accuracy)
+                # Compute IOUs
+                if self._train_val_test == "val":
+                    with tf.variable_scope("compute_ious"):
 
-        # Ground Truth Box Cls/Reg
-        with tf.variable_scope("box_cls_reg_gt"):
-            (
-                bin_x_gt,
-                res_x_gt,
-                bin_z_gt,
-                res_z_gt,
-                bin_theta_gt,
-                res_theta_gt,
-                res_y_gt,
-                res_size_gt,
-            ) = bin_based_box3d_encoder.tf_encode(
-                foreground_pts,
-                0,
-                foreground_label_boxes_3d,
-                mean_sizes,
-                self.S,
-                self.DELTA,
-                self.R,
-                self.DELTA_THETA,
-            )
+                        def sb_nms_selection(args):
+                            sb_proposals, sb_scores, sb_nms_indices = args
+                            sb_post_nms_proposals = tf.gather(
+                                sb_proposals, sb_nms_indices, axis=0
+                            )
+                            sb_post_nms_scores = tf.gather(
+                                sb_scores, sb_nms_indices, axis=0
+                            )
+                            return sb_post_nms_proposals, sb_post_nms_scores
 
-            bin_x_gt_one_hot = tf.one_hot(
-                tf.to_int32(bin_x_gt),
-                depth=int(2 * self.S / self.DELTA),
-                on_value=1.0,
-                off_value=0.0,
-            )
+                        post_nms_proposals, post_nms_seg_scores = tf.map_fn(
+                            sb_nms_selection,
+                            elems=(pre_nms_proposals, pre_nms_seg_scores, nms_indices),
+                            dtype=(tf.float32, tf.float32),
+                        )
 
-            bin_z_gt_one_hot = tf.one_hot(
-                tf.to_int32(bin_z_gt),
-                depth=int(2 * self.S / self.DELTA),
-                on_value=1.0,
-                off_value=0.0,
-            )
+                        def sb_compute_iou(args):
+                            proposal_boxes, gt_boxes = args
+                            return compute_iou.box3d_iou_tf(proposal_boxes, gt_boxes)
 
-            bin_theta_gt_one_hot = tf.one_hot(
-                tf.to_int32(bin_theta_gt),
-                depth=int(2 * self.R / self.DELTA_THETA),
-                on_value=1.0,
-                off_value=0.0,
-            )
+                        iou3ds, iou2ds = tf.map_fn(
+                            sb_compute_iou,
+                            elems=(
+                                post_nms_proposals,
+                                self.placeholders[self.PL_LABEL_BOXES],
+                            ),
+                            dtype=(tf.float32, tf.float32),
+                        )
 
-        ######################################################
-        # Prediction Dict
-        ######################################################
-        predictions = dict()
         if self._train_val_test in ["train", "val"]:
+            label_segs = self.placeholders[self.PL_LABEL_SEGS]  # (B,P,8)
+            label_cls = label_segs[:, :, 0]
+            label_box_3d = label_segs[:, :, 1:]
+            ######################################################
+            # GTs for the loss function & metrics
+            ######################################################
+
+            # Ground Truth Seg
+            with tf.variable_scope("seg_one_hot_classes"):
+                segs_gt_one_hot = tf.one_hot(
+                    tf.to_int32(label_cls),
+                    depth=self.num_classes + 1,
+                    on_value=1.0,
+                    off_value=0.0,
+                )
+
+            with tf.variable_scope("segmentation_accuracy"):
+                self._foreground_mask = label_cls > 0  # (B,P)
+                num_foreground_pts = (
+                    tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32))
+                    / self._batch_size
+                )
+                tf.summary.scalar("foreground_points_num", num_foreground_pts)
+                # seg accuracy
+                all_ones = tf.ones_like(seg_preds, dtype=tf.float32)
+                num_total_pts = tf.reduce_sum(all_ones)
+                seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls))
+                # seg_accuracy = tf.reduce_mean(seg_correct)
+                seg_accuracy = (
+                    tf.reduce_sum(tf.cast(seg_correct, tf.float32)) / num_total_pts
+                )
+                tf.summary.scalar("segmentation_accuracy", seg_accuracy)
+
+            # Ground Truth Box Cls/Reg
+            with tf.variable_scope("box_cls_reg_gt"):
+                (
+                    bin_x_gt,
+                    res_x_gt,
+                    bin_z_gt,
+                    res_z_gt,
+                    bin_theta_gt,
+                    res_theta_gt,
+                    res_y_gt,
+                    res_size_gt,
+                ) = bin_based_box3d_encoder.tf_encode(
+                    self._pc_pts,
+                    0,
+                    label_box_3d,
+                    mean_sizes,
+                    self.S,
+                    self.DELTA,
+                    self.R,
+                    self.DELTA_THETA,
+                )
+
+                bin_x_gt_one_hot = tf.one_hot(
+                    tf.to_int32(bin_x_gt),
+                    depth=int(2 * self.S / self.DELTA),
+                    on_value=1.0,
+                    off_value=0.0,
+                )
+
+                bin_z_gt_one_hot = tf.one_hot(
+                    tf.to_int32(bin_z_gt),
+                    depth=int(2 * self.S / self.DELTA),
+                    on_value=1.0,
+                    off_value=0.0,
+                )
+
+                bin_theta_gt_one_hot = tf.one_hot(
+                    tf.to_int32(bin_theta_gt),
+                    depth=int(2 * self.R / self.DELTA_THETA),
+                    on_value=1.0,
+                    off_value=0.0,
+                )
+
+            ######################################################
+            # Prediction Dict
+            ######################################################
+            predictions = dict()
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_SEG_GT] = segs_gt_one_hot
             predictions[self.PRED_TOTAL_PTS] = num_total_pts
 
             # Foreground BOX predictions
-            predictions[self.PRED_FG_CLS] = (
-                bin_x_logits,
-                bin_z_logits,
-                bin_theta_logits,
-            )
-            predictions[self.PRED_FG_REG] = (
+            predictions[self.PRED_CLS] = (bin_x_logits, bin_z_logits, bin_theta_logits)
+            predictions[self.PRED_REG] = (
                 res_x_norm,
                 res_z_norm,
                 res_theta_norm,
@@ -596,29 +606,28 @@ class RpnModel(model.DetectionModel):
             )
 
             # Foreground BOX ground truth
-            predictions[self.PRED_FG_CLS_GT] = (
+            predictions[self.PRED_CLS_GT] = (
                 bin_x_gt_one_hot,
                 bin_z_gt_one_hot,
                 bin_theta_gt_one_hot,
             )
-            predictions[self.PRED_FG_REG_GT] = (
+            predictions[self.PRED_REG_GT] = (
                 res_x_gt,
                 res_z_gt,
                 res_theta_gt,
                 res_y_gt,
                 res_size_gt,
             )
-
-            # Proposals after nms
-            predictions[self.PRED_NMS_INDICES] = nms_indices
-            predictions[self.PRED_PROPOSALS] = proposals
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = foreground_scores
+            if self._train_val_test == "val":
+                predictions[self.PRED_IOU_2D] = iou2ds
+                predictions[self.PRED_IOU_3D] = iou3ds
+                predictions[self.PRED_PROPOSALS] = post_nms_proposals
+                predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
-            predictions[self.PRED_NMS_INDICES] = nms_indices
-            predictions[self.PRED_PROPOSALS] = proposals
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = foreground_scores
+            predictions[self.PRED_PROPOSALS] = post_nms_proposals
+            predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
         return predictions
 
     def _parse_rpn_output(self, rpn_output):
@@ -729,19 +738,20 @@ class RpnModel(model.DetectionModel):
             else:
                 samples = self.dataset.next_batch(batch_size=batch_size, shuffle=False)
 
-        if self._is_training:
-            offset = int(
-                random.gauss(0, self._pc_sample_pts * self._pc_sample_pts_variance)
-            )
-            offset = max(offset, -self._pc_sample_pts * self._pc_sample_pts_clip)
-            offset = min(offset, self._pc_sample_pts * self._pc_sample_pts_clip)
-            pc_sample_pts = int(self._pc_sample_pts + offset)
-        else:
-            pc_sample_pts = self._pc_sample_pts
+        # if self._is_training:
+        #     offset = int(
+        #         random.gauss(0, self._pc_sample_pts * self._pc_sample_pts_variance)
+        #     )
+        #     offset = max(offset, -self._pc_sample_pts * self._pc_sample_pts_clip)
+        #     offset = min(offset, self._pc_sample_pts * self._pc_sample_pts_clip)
+        #     pc_sample_pts = int(self._pc_sample_pts + offset)
+        # else:
+        #     pc_sample_pts = self._pc_sample_pts
+        pc_sample_pts = self._pc_sample_pts
 
         batch_pc_inputs = []
         batch_label_segs = []
-        # batch_label_boxes_3d = []
+        batch_label_boxes = []
         self._samples_info.clear()
         for sample in samples:
             # Network input data
@@ -750,6 +760,11 @@ class RpnModel(model.DetectionModel):
             # image_shape = [image_input.shape[0], image_input.shape[1]]
             pc_input = sample.get(constants.KEY_POINT_CLOUD)
             label_seg = sample.get(constants.KEY_LABEL_SEG)
+            label_box_objs = sample.get(constants.KEY_LABEL_BOX)
+            label_box = [
+                box_3d_encoder.object_label_to_box_3d(obj_label)
+                for obj_label in label_box_objs
+            ]
             pool_size = pc_input.shape[0]
 
             def random_sample(pool_size, sample_num):
@@ -779,6 +794,7 @@ class RpnModel(model.DetectionModel):
 
             batch_pc_inputs.append(pc_input_sampled)
             batch_label_segs.append(label_seg_sampled)
+            batch_label_boxes.append(label_box)
 
             # Temporary sample info for debugging
             sample_name = sample.get(constants.KEY_SAMPLE_NAME)
@@ -791,6 +807,22 @@ class RpnModel(model.DetectionModel):
         # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
         self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(batch_pc_inputs)
         self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(batch_label_segs)
+        # Since samples may have various number of objects labels,
+        # we pad all zero labels to make them have the same dimension
+        max_num_labels = max([len(label_boxes) for label_boxes in batch_label_boxes])
+        batch_label_boxes_padded = []
+        for label_boxes in batch_label_boxes:
+            label_boxes_padded = np.zeros((max_num_labels, 7))
+            if len(label_boxes) == max_num_labels:
+                label_boxes_padded = np.asarray(label_boxes)
+            else:
+                for i, label_box in enumerate(label_boxes):
+                    label_boxes_padded[i, :] = label_box
+            batch_label_boxes_padded.append(label_boxes_padded)
+
+        self._placeholder_inputs[self.PL_LABEL_BOXES] = np.asarray(
+            batch_label_boxes_padded
+        )
 
         # Sample Info
         # img_idx is a list to match the placeholder shape
@@ -828,15 +860,24 @@ class RpnModel(model.DetectionModel):
                 # bin_x_logits, bin_z_logits, bin_theta_logits = prediction_dict[self.PRED_FG_CLS]
                 # bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = prediction_dict[self.PRED_FG_CLS_GT]
                 for elem in zip(
-                    prediction_dict[self.PRED_FG_CLS],
-                    prediction_dict[self.PRED_FG_CLS_GT],
+                    prediction_dict[self.PRED_CLS], prediction_dict[self.PRED_CLS_GT]
                 ):
+                    foreground_pred_cls = tf.boolean_mask(
+                        elem[0], self._foreground_mask
+                    )
+                    foreground_pred_cls_gt = tf.boolean_mask(
+                        elem[1], self._foreground_mask
+                    )
                     bin_classification_loss += cls_loss(
-                        elem[0], elem[1], weight=cls_loss_weight
+                        foreground_pred_cls,
+                        foreground_pred_cls_gt,
+                        weight=cls_loss_weight,
                     )
                 with tf.variable_scope("cls_norm"):
                     # normalize by the number of foreground pts
-                    num_foreground_pts = self._batch_size * self.NUM_FG_POINT
+                    num_foreground_pts = tf.reduce_sum(
+                        tf.cast(self._foreground_mask, tf.float32)
+                    )
                     bin_classification_loss /= num_foreground_pts
                     tf.summary.scalar("bin_classification", bin_classification_loss)
 
@@ -847,11 +888,18 @@ class RpnModel(model.DetectionModel):
                 # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size = prediction_dict[self.PRED_FG_REG]
                 # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_gt = prediction_dict[self.PRED_FG_REG_GT]
                 for elem in zip(
-                    prediction_dict[self.PRED_FG_REG],
-                    prediction_dict[self.PRED_FG_REG_GT],
+                    prediction_dict[self.PRED_REG], prediction_dict[self.PRED_REG_GT]
                 ):
+                    foreground_pred_reg = tf.boolean_mask(
+                        elem[0], self._foreground_mask
+                    )
+                    foreground_pred_reg_gt = tf.boolean_mask(
+                        elem[1], self._foreground_mask
+                    )
                     regression_loss += reg_loss(
-                        elem[0], elem[1], weight=reg_loss_weight
+                        foreground_pred_reg,
+                        foreground_pred_reg_gt,
+                        weight=reg_loss_weight,
                     )
                 with tf.variable_scope("reg_norm"):
                     # normalize by the number of foreground pts
