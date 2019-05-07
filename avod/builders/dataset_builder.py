@@ -95,8 +95,6 @@ class DatasetBuilder(object):
     )
 
     CONFIG_DEFAULTS_PROTO = """
-        pc_source: 'lidar'
-
         kitti_utils_config {
             area_extents: [-40, 40, -5, 3, 0, 70]
             voxel_size: 0.1

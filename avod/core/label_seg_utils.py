@@ -1,5 +1,4 @@
 import os
-import copy
 
 import numpy as np
 import tensorflow as tf
@@ -125,15 +124,12 @@ class LabelSegUtils:
         num_points = points.shape[0]
         num_boxes = boxes_3d.shape[0]
         # expand_size
-        boxes_3d_exp = copy.deepcopy(boxes_3d)
-        for box_3d in boxes_3d_exp:
-            box_3d[3:6] += expand_gt_size
-        boxes_8co = np.asarray(
-            [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T for box_3d in boxes_3d]
-        )
-        boxes_8co_exp = np.asarray(
-            [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T for box_3d in boxes_3d_exp]
-        )
+        boxes_3d_exp = boxes_3d.copy()
+        boxes_3d_exp[:, 3:6] += expand_gt_size * 2
+        boxes_3d_exp[:, 1] += expand_gt_size
+
+        boxes_8co = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d)
+        boxes_8co_exp = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d_exp)
 
         label_seg = np.zeros((num_points, 8), dtype=np.float32)
         for i in range(num_boxes):
@@ -172,9 +168,7 @@ class LabelSegUtils:
 
         num_points = points.shape[0]
         num_boxes = boxes_3d.shape[0]
-        boxes_8co = np.asarray(
-            [box_8c_encoder.np_box_3d_to_box_8co(box_3d).T for box_3d in boxes_3d]
-        )
+        boxes_8co = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d)
         if num_boxes > 0:
             facets = box_8c_encoder.np_box_8co_to_facet(boxes_8co)
 

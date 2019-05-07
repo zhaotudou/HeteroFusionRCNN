@@ -59,11 +59,9 @@ if __name__ == "__main__":
     intensities = np.arange(batch_size * 2).reshape(batch_size, 2, 1).astype("float32")
     mask = np.random.rand(batch_size, 2).astype("bool")
     boxes_3d = np.asarray([0, 0, 0, 1, 1, 1, 3.14 / 4], dtype=np.float32)
-    boxes = (
-        box_8c_encoder.np_box_3d_to_box_8co(boxes_3d)
-        .reshape(-1, 3, 8)
-        .astype("float32")
-    )
+    boxes_8co = box_8c_encoder.np_box_3d_to_box_8co(
+        boxes_3d.reshape((-1, 7))
+    ).transpose((0, 2, 1))
 
     # np.random.seed(100)
     box_ind = np.asarray([0]).astype("int32")
@@ -72,10 +70,10 @@ if __name__ == "__main__":
     fts = tf.constant(fts)
     intensities = tf.constant(intensities)
     mask = tf.constant(mask)
-    boxes = tf.constant(boxes)
+    boxes_8co = tf.constant(boxes_8co)
     box_ind = tf.constant(box_ind)
     crop_pts, crop_fts, crop_intensities, crop_mask, crop_ind, non_empty_box_mask = pc_crop_and_sample(
-        pts, fts, intensities, mask, boxes, box_ind, 1
+        pts, fts, intensities, mask, boxes_8co, box_ind, 1
     )
 
     non_empty_fts = tf.boolean_mask(crop_fts, non_empty_box_mask)

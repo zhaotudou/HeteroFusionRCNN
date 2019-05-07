@@ -231,7 +231,7 @@ def get_lidar_point_cloud(
                       to filter the point cloud [w, h]
     :param min_intensity: (optional) minimum intensity required to keep a point
 
-    :return: (4, N) point_cloud in the form [[x,...][y,...][z,...][i,...]]
+    :return: (N, 4) point_cloud in the form [x,y,z,i]
     """
 
     # Read calibration info
@@ -244,7 +244,7 @@ def get_lidar_point_cloud(
 
     # The given image is assumed to be a 2D image
     if not im_size:
-        point_cloud = np.vstack((pts, np.reshape(i, (-1, 1)))).T
+        point_cloud = np.vstack((pts, np.reshape(i, (-1, 1))))
         return point_cloud
 
     else:
@@ -269,12 +269,12 @@ def get_lidar_point_cloud(
     pts = np.hstack((pts, np.reshape(i_filtered, (-1, 1))))
 
     if not min_intensity:
-        return pts[image_filter].T
+        return pts[image_filter]
 
     else:
         intensity_filter = i > min_intensity
         point_filter = np.logical_and(image_filter, intensity_filter)
-        return pts[point_filter].T
+        return pts[point_filter]
 
 
 def get_road_plane(img_idx, planes_dir):
@@ -437,7 +437,7 @@ def is_point_inside(points, box_corners):
 
     :param points: (3, N) point cloud to test in the form
         [[x1...xn], [y1...yn], [z1...zn]]
-    :param box_corners: 3D corners of the bounding box
+    :param box_corners: (3, 8) 3D corners of the bounding box
 
     :return bool mask of which points are within the bounding box.
             Use numpy function .all() to check all points

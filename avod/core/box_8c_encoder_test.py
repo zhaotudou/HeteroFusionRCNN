@@ -37,9 +37,11 @@ class Box8cEncoderTest(unittest.TestCase):
         )
 
         # convert to 8 corners
-        gt_box_8co = box_8c_encoder.np_box_3d_to_box_8co(gt_box_3d)
+        gt_box_8co = (
+            box_8c_encoder.np_box_3d_to_box_8co(gt_box_3d.reshape((-1, 7))).squeeze().T
+        )
         # the numpy version takes a single box
-        anchor_box_8co = box_8c_encoder.np_box_3d_to_box_8co(anchor_box_3d[0])
+        anchor_box_8co = box_8c_encoder.np_box_3d_to_box_8co(anchor_box_3d).squeeze().T
 
         np.testing.assert_almost_equal(
             exp_gt_box_8co, gt_box_8co, decimal=2, err_msg="GT corner encoding mismatch"
@@ -65,10 +67,9 @@ class Box8cEncoderTest(unittest.TestCase):
         anchor_boxes_3d = box_3d_encoder.anchors_to_box_3d(anchors, fix_lw=True)
 
         # convert each box to corner using the numpy version
-        boxes_8c_1 = box_8c_encoder.np_box_3d_to_box_8co(anchor_boxes_3d[0])
-        boxes_8c_2 = box_8c_encoder.np_box_3d_to_box_8co(anchor_boxes_3d[1])
-
-        exp_anchor_box_8co = np.stack((boxes_8c_1, boxes_8c_2), axis=0)
+        exp_anchor_box_8co = box_8c_encoder.np_box_3d_to_box_8co(
+            anchor_boxes_3d
+        ).transpose((0, 2, 1))
 
         anchors_box3d_tensor = tf.convert_to_tensor(anchor_boxes_3d, dtype=tf.float32)
         # convert to 8 corners
@@ -109,10 +110,9 @@ class Box8cEncoderTest(unittest.TestCase):
 
         gt_boxes_3d_tensor = tf.convert_to_tensor(gt_boxes_3d, dtype=tf.float32)
 
-        boxes_8c_1 = box_8c_encoder.np_box_3d_to_box_8co(gt_boxes_3d[0])
-        boxes_8c_2 = box_8c_encoder.np_box_3d_to_box_8co(gt_boxes_3d[1])
-
-        exp_boxes_8c_gt = np.stack((boxes_8c_1, boxes_8c_2), axis=0)
+        exp_boxes_8c_gt = box_8c_encoder.np_box_3d_to_box_8co(gt_boxes_3d).transpose(
+            (0, 2, 1)
+        )
 
         boxes_c8_gt = box_8c_encoder.tf_box_3d_to_box_8co(gt_boxes_3d_tensor)
 
@@ -179,10 +179,7 @@ class Box8cEncoderTest(unittest.TestCase):
             dtype=np.float32,
         )
 
-        box_8co_1 = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d[0])
-        box_8co_2 = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d[1])
-
-        boxes_8c = np.stack((box_8co_1, box_8co_2), axis=0)
+        boxes_8c = box_8c_encoder.np_box_3d_to_box_8co(boxes_3d).transpose((0, 2, 1))
 
         boxes_c8_tensor = tf.convert_to_tensor(boxes_8c, dtype=tf.float32)
 
@@ -203,7 +200,9 @@ class Box8cEncoderTest(unittest.TestCase):
             [-0.59, 1.9, 25.01, 3.2, 1.61, 1.66, 0.0], dtype=np.float32
         )
 
-        box_8co = box_8c_encoder.np_box_3d_to_box_8co(exp_box_3d)
+        box_8co = (
+            box_8c_encoder.np_box_3d_to_box_8co(exp_box_3d.reshape((-1, 7))).squeeze().T
+        )
 
         # skew the corners slightly
         box_8co[0, 2] += 0.4

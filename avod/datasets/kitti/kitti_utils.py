@@ -74,8 +74,8 @@ class KittiUtils(object):
                 source is 'lidar' or 'depth'
 
         Returns:
-            points_xyz: (3, N). The set of points in rect camera coordinates
-            points_intensity: (1, N). The intensity values of the point
+            points_rect: (N, 3). The set of points in rect camera coordinates
+            points_intensity: (N, 1). The intensity values of the point
         """
 
         # wavedata wants im_size in (w, h) order
@@ -85,11 +85,11 @@ class KittiUtils(object):
             img_idx, self.dataset.calib_dir, self.dataset.velo_dir, im_size=im_size
         )
 
-        points_xyz, points_intensity = (
-            point_cloud[:-1, :],
-            point_cloud[-1, :].reshape(1, -1),
+        points_rect, points_intensity = (
+            point_cloud[:, :-1],
+            point_cloud[:, -1].reshape(-1, 1),
         )
-        return points_xyz, points_intensity
+        return points_rect, points_intensity
 
     def get_ground_plane(self, sample_name):
         """Reads the ground plane for the sample

@@ -18,6 +18,7 @@ class RpnModel(model.DetectionModel):
     ##############################
     PL_PC_INPUTS = "pc_inputs_pl"
     PL_LABEL_SEGS = "label_segs_pl"
+    PL_LABEL_REGS = "label_regs_pl"
     PL_LABEL_BOXES = "label_boxes_pl"
 
     ##############################
@@ -167,8 +168,16 @@ class RpnModel(model.DetectionModel):
 
         with tf.variable_scope("pl_labels"):
             self._add_placeholder(
-                tf.float32, [self._batch_size, None, 8], self.PL_LABEL_SEGS
-            )  # (B,P,8)
+                tf.float32, [self._batch_size, None], self.PL_LABEL_SEGS
+            )  # (B,P)
+
+            self._add_placeholder(
+                tf.float32, [self._batch_size, None, 7], self.PL_LABEL_REGS
+            )  # (B,P,7)
+
+            self._add_placeholder(
+                tf.float32, [self._batch_size, None, 7], self.PL_LABEL_BOXES
+            )  # (B,M,7)
 
         with tf.variable_scope("pl_boxes"):
             self._add_placeholder(
@@ -288,10 +297,9 @@ class RpnModel(model.DetectionModel):
         # branch-1: foreground point segmentation
         #########################################
         with tf.variable_scope("foreground_segmentation"):
-            # TODO: num seg class should be 2 (bkg/fg), not num_classes + 1
             seg_logits = pf.dense(
                 self._pc_fts,
-                self.num_classes + 1,
+                2,
                 "seg_logits",
                 self._is_training,
                 with_bn=False,
@@ -500,9 +508,8 @@ class RpnModel(model.DetectionModel):
                         )
 
         if self._train_val_test in ["train", "val"]:
-            label_segs = self.placeholders[self.PL_LABEL_SEGS]  # (B,P,8)
-            label_cls = label_segs[:, :, 0]
-            label_box_3d = label_segs[:, :, 1:]
+            label_cls = self.placeholders[self.PL_LABEL_SEGS]  # (B,P)
+            label_reg = self.placeholders[self.PL_LABEL_REGS]  # (B,P,7)
             ######################################################
             # GTs for the loss function & metrics
             ######################################################
@@ -510,10 +517,7 @@ class RpnModel(model.DetectionModel):
             # Ground Truth Seg
             with tf.variable_scope("seg_one_hot_classes"):
                 segs_gt_one_hot = tf.one_hot(
-                    tf.to_int32(label_cls),
-                    depth=self.num_classes + 1,
-                    on_value=1.0,
-                    off_value=0.0,
+                    tf.to_int32(label_cls), 2, on_value=1.0, off_value=0.0
                 )
 
             with tf.variable_scope("segmentation_accuracy"):
@@ -547,7 +551,7 @@ class RpnModel(model.DetectionModel):
                 ) = bin_based_box3d_encoder.tf_encode(
                     self._pc_pts,
                     0,
-                    label_box_3d,
+                    label_reg,
                     mean_sizes,
                     self.S,
                     self.DELTA,
@@ -715,93 +719,40 @@ class RpnModel(model.DetectionModel):
 
             if self._train_val_test == "train":
                 # Get the a random sample from the remaining epoch
-                samples = self.dataset.next_batch(batch_size=batch_size)
+                batch_data = self.dataset.next_batch(batch_size, self._pc_sample_pts)
 
             else:  # self._train_val_test == "val"
                 # Load samples in order for validation
-                samples = self.dataset.next_batch(batch_size=batch_size, shuffle=False)
+                batch_data = self.dataset.next_batch(
+                    batch_size, self._pc_sample_pts, shuffle=False
+                )
         else:
             # For testing, any sample should work
             if sample_index is not None:
-                samples = self.dataset.load_samples([sample_index])
+                samples = self.dataset.load_samples([sample_index], self._pc_sample_pts)
+                batch_data = self.dataset.collate_batch(samples)
             else:
-                samples = self.dataset.next_batch(batch_size=batch_size, shuffle=False)
-
-        batch_pc_inputs = []
-        batch_label_segs = []
-        batch_label_boxes = []
-        self._samples_info.clear()
-        for sample in samples:
-            # Network input data
-            # image_input = sample.get(constants.KEY_IMAGE_INPUT)
-            # Image shape (h, w)
-            # image_shape = [image_input.shape[0], image_input.shape[1]]
-            pc_input = sample.get(constants.KEY_POINT_CLOUD)
-            label_seg = sample.get(constants.KEY_LABEL_SEG)
-            label_box_objs = sample.get(constants.KEY_LABEL_BOX)
-            label_box = [
-                box_3d_encoder.object_label_to_box_3d(obj_label)
-                for obj_label in label_box_objs
-            ]
-            pool_size = pc_input.shape[0]
-
-            def random_sample(pool_size, sample_num):
-                if pool_size > sample_num:
-                    choices = np.random.choice(pool_size, sample_num, replace=False)
-                else:
-                    choices = np.concatenate(
-                        (
-                            np.random.choice(pool_size, pool_size, replace=False),
-                            np.random.choice(
-                                pool_size, sample_num - pool_size, replace=True
-                            ),
-                        )
-                    )
-                return choices
-
-            while True:
-                choices = random_sample(pool_size, self._pc_sample_pts)
-                pc_input_sampled = pc_input[choices]
-                label_seg_sampled = label_seg[choices]
-
-                foreground_point_num = label_seg_sampled[
-                    label_seg_sampled[:, 0] > 0
-                ].shape[0]
-                if foreground_point_num > 0 or self._train_val_test == "test":
-                    break
-
-            batch_pc_inputs.append(pc_input_sampled)
-            batch_label_segs.append(label_seg_sampled)
-            batch_label_boxes.append(label_box)
-
-            # Temporary sample info for debugging
-            sample_name = sample.get(constants.KEY_SAMPLE_NAME)
-            self._samples_info.append(sample_name)
+                batch_data = self.dataset.next_batch(
+                    batch_size, self._pc_sample_pts, shuffle=False
+                )
 
         # this is a list to match the explicit shape for the placeholder
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
 
         # Fill in the rest
         # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
-        self._placeholder_inputs[self.PL_PC_INPUTS] = np.asarray(batch_pc_inputs)
-        self._placeholder_inputs[self.PL_LABEL_SEGS] = np.asarray(batch_label_segs)
-        # Since samples may have various number of objects labels,
-        # we pad all zero labels to make them have the same dimension
-        max_num_labels = max([len(label_boxes) for label_boxes in batch_label_boxes])
-        batch_label_boxes_padded = []
-        for label_boxes in batch_label_boxes:
-            label_boxes_padded = np.zeros((max_num_labels, 7))
-            if len(label_boxes) == max_num_labels:
-                label_boxes_padded = np.asarray(label_boxes)
-            else:
-                for i, label_box in enumerate(label_boxes):
-                    label_boxes_padded[i, :] = label_box
-            batch_label_boxes_padded.append(label_boxes_padded)
-
-        self._placeholder_inputs[self.PL_LABEL_BOXES] = np.asarray(
-            batch_label_boxes_padded
-        )
-
+        self._placeholder_inputs[self.PL_PC_INPUTS] = batch_data[
+            constants.KEY_POINT_CLOUD
+        ]
+        self._placeholder_inputs[self.PL_LABEL_SEGS] = batch_data[
+            constants.KEY_LABEL_SEG
+        ]
+        self._placeholder_inputs[self.PL_LABEL_REGS] = batch_data[
+            constants.KEY_LABEL_REG
+        ]
+        self._placeholder_inputs[self.PL_LABEL_BOXES] = batch_data[
+            constants.KEY_LABEL_BOXES_3D
+        ]
         # Sample Info
         # img_idx is a list to match the placeholder shape
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
@@ -856,7 +807,11 @@ class RpnModel(model.DetectionModel):
                     num_foreground_pts = tf.reduce_sum(
                         tf.cast(self._foreground_mask, tf.float32)
                     )
-                    bin_classification_loss /= num_foreground_pts
+                    bin_classification_loss = tf.cond(
+                        tf.greater(num_foreground_pts, 0),
+                        true_fn=lambda: bin_classification_loss / num_foreground_pts,
+                        false_fn=lambda: bin_classification_loss * 0,
+                    )
                     tf.summary.scalar("bin_classification", bin_classification_loss)
 
             with tf.variable_scope("regression"):
@@ -881,7 +836,11 @@ class RpnModel(model.DetectionModel):
                     )
                 with tf.variable_scope("reg_norm"):
                     # normalize by the number of foreground pts
-                    regression_loss /= num_foreground_pts
+                    regression_loss = tf.cond(
+                        tf.greater(num_foreground_pts, 0),
+                        true_fn=lambda: regression_loss / num_foreground_pts,
+                        false_fn=lambda: regression_loss * 0,
+                    )
                     tf.summary.scalar("regression", regression_loss)
 
             with tf.variable_scope("rpn_loss"):

@@ -11,6 +11,7 @@ from wavedata.tools.core import calib_utils
 from wavedata.tools.obj_detection import obj_utils
 
 from avod.core import box_3d_encoder
+from avod.core import box_8c_encoder
 from avod.core import constants
 from avod.datasets.kitti import kitti_aug
 from avod.datasets.kitti.kitti_utils import KittiUtils
@@ -241,7 +242,7 @@ class KittiDataset:
 
         return np.array(sample_names)
 
-    def load_samples(self, indices):
+    def load_samples(self, indices, pc_sample_pts=16384):
         """ Loads input-output data for a set of samples. Should only be
             called when a particular sample dict is required. Otherwise,
             samples should be provided by the next_batch function
@@ -257,21 +258,12 @@ class KittiDataset:
         for sample_idx in indices:
             sample = self.sample_list[sample_idx]
 
-            # Only read labels if they exist
             if self.has_labels:
-                label_seg = self.get_label_seg(sample.name)
-                foreground_point_num = label_seg[label_seg[:, 0] > 0].shape[0]
-                if (foreground_point_num <= 0) and (
-                    (self.train_val_test == "train" and (not self.train_on_all_samples))
-                    or (self.train_val_test == "val" and (not self.eval_all_samples))
-                ):
-                    continue
                 obj_labels = obj_utils.read_labels(self.label_dir, int(sample.name))
                 # Only use objects that match dataset classes
                 obj_labels = self.kitti_utils.filter_labels(obj_labels)
-            else:
-                # obj_labels = None
-                label_seg = np.zeros((16384, 8), dtype=np.float32)
+                if len(obj_labels) <= 0:
+                    continue
 
             # Load image (BGR -> RGB)
             cv_bgr_image = cv2.imread(self.get_rgb_image_path(sample.name))
@@ -279,43 +271,117 @@ class KittiDataset:
             image_shape = rgb_image.shape[0:2]
             image_input = rgb_image
 
-            point_xyz, point_intensity = self.kitti_utils.get_point_cloud(
+            # Load PC in rect image space
+            pts_rect, pts_intensity = self.kitti_utils.get_point_cloud(
                 int(sample.name), image_shape
             )
-            point_cloud = np.vstack((point_xyz, point_intensity))
-            point_cloud = point_cloud.T
 
-            # Augmentation (Flipping)
-            if kitti_aug.AUG_FLIPPING in sample.augs:
-                image_input = kitti_aug.flip_image(image_input)
-                point_cloud = kitti_aug.flip_point_cloud(point_cloud)
-                obj_labels = [
-                    kitti_aug.flip_label_in_3d_only(obj) for obj in obj_labels
-                ]
-
-            # Augmentation (Image Jitter)
-            if kitti_aug.AUG_PCA_JITTER in sample.augs:
-                image_input[:, :, 0:3] = kitti_aug.apply_pca_jitter(
-                    image_input[:, :, 0:3]
+            if pc_sample_pts < len(pts_rect):
+                pts_depth = pts_rect[:, 2]
+                pts_near_flag = pts_depth < 40.0
+                far_idxs_choice = np.where(pts_near_flag == 0)[0]
+                near_idxs = np.where(pts_near_flag == 1)[0]
+                near_idxs_choice = np.random.choice(
+                    near_idxs, pc_sample_pts - len(far_idxs_choice), replace=False
                 )
+
+                choice = (
+                    np.concatenate((near_idxs_choice, far_idxs_choice), axis=0)
+                    if len(far_idxs_choice) > 0
+                    else near_idxs_choice
+                )
+                np.random.shuffle(choice)
+            else:
+                choice = np.arange(0, len(pts_rect), dtype=np.int32)
+                if pc_sample_pts > len(pts_rect):
+                    extra_choice = np.random.choice(
+                        choice, pc_sample_pts - len(pts_rect), replace=False
+                    )
+                    choice = np.concatenate((choice, extra_choice), axis=0)
+                np.random.shuffle(choice)
+
+            sampled_pts_rect = pts_rect[choice, :]
+            sampled_pts_intensity = (
+                pts_intensity[choice] - 0.5
+            )  # translate intensity to [-0.5, 0.5]
+            sampled_pc = np.hstack((sampled_pts_rect, sampled_pts_intensity))
+
+            # Only read labels if they exist
+            if self.has_labels:
+                # Augmentation (Flipping)
+                if kitti_aug.AUG_FLIPPING in sample.augs:
+                    # image_input = kitti_aug.flip_image(image_input)
+                    sampled_pc = kitti_aug.flip_points(sampled_pc)
+                    obj_labels = [
+                        kitti_aug.flip_label_in_3d_only(obj) for obj in obj_labels
+                    ]
+
+                # Augmentation (Image Jitter)
+                if kitti_aug.AUG_PCA_JITTER in sample.augs:
+                    image_input[:, :, 0:3] = kitti_aug.apply_pca_jitter(
+                        image_input[:, :, 0:3]
+                    )
+
+                label_boxes_3d = np.asarray(
+                    [
+                        box_3d_encoder.object_label_to_box_3d(obj_label)
+                        for obj_label in obj_labels
+                    ]
+                )
+
+                # generate training labels
+                label_seg, label_reg = self.generate_rpn_training_labels(
+                    sampled_pc[:, :3], label_boxes_3d
+                )
+            else:
+                label_boxes_3d = np.zeros((1, 7))
+                label_seg = np.zeros(pc_sample_pts)
+                label_reg = np.zeros((pc_sample_pts, 7))
 
             sample_dict = {
                 constants.KEY_LABEL_SEG: label_seg,
-                constants.KEY_LABEL_BOX: obj_labels,
-                constants.KEY_POINT_CLOUD: point_cloud,
-                constants.KEY_SAMPLE_NAME: sample.name,
-                constants.KEY_SAMPLE_AUGS: sample.augs,
+                constants.KEY_LABEL_REG: label_reg,
+                constants.KEY_LABEL_BOXES_3D: label_boxes_3d,
+                constants.KEY_POINT_CLOUD: sampled_pc,
+                # constants.KEY_SAMPLE_NAME: sample.name,
+                # constants.KEY_SAMPLE_AUGS: sample.augs,
             }
             sample_dicts.append(sample_dict)
 
         return sample_dicts
+
+    def generate_rpn_training_labels(self, pts_rect, gt_boxes3d):
+        cls_label = np.zeros((pts_rect.shape[0]), dtype=np.int32)
+        reg_label = np.zeros((pts_rect.shape[0], 7), dtype=np.float32)
+        extend_gt_boxes3d = gt_boxes3d.copy()
+        extend_gt_boxes3d[:, 3:6] += self.kitti_utils.expand_gt_size * 2
+        extend_gt_boxes3d[:, 1] += self.kitti_utils.expand_gt_size
+
+        gt_corners = box_8c_encoder.np_box_3d_to_box_8co(gt_boxes3d)
+        extend_gt_corners = box_8c_encoder.np_box_3d_to_box_8co(extend_gt_boxes3d)
+
+        for k in range(gt_boxes3d.shape[0]):
+            box_corners = gt_corners[k]
+            fg_pt_flag = obj_utils.is_point_inside(pts_rect.T, box_corners.T)
+            cls_label[fg_pt_flag] = 1
+            reg_label[fg_pt_flag, :] = gt_boxes3d[k]
+
+            # enlarge the bbox3d, ignore nearby points
+            extend_box_corners = extend_gt_corners[k]
+            fg_enlarge_flag = obj_utils.is_point_inside(
+                pts_rect.T, extend_box_corners.T
+            )
+            ignore_flag = np.logical_xor(fg_pt_flag, fg_enlarge_flag)
+            cls_label[ignore_flag] = -1
+
+        return cls_label, reg_label
 
     def _shuffle_samples(self):
         perm = np.arange(self.num_samples)
         np.random.shuffle(perm)
         self.sample_list = self.sample_list[perm]
 
-    def next_batch(self, batch_size, shuffle=True):
+    def next_batch(self, batch_size, pc_sample_pts=16384, shuffle=True):
         """
         Retrieve the next `batch_size` samples from this data set.
 
@@ -349,7 +415,7 @@ class KittiDataset:
 
                 # Append those samples to the current batch
                 samples_in_batch.extend(
-                    self.load_samples(np.arange(start, self.num_samples))
+                    self.load_samples(np.arange(start, self.num_samples), pc_sample_pts)
                 )
 
                 # Shuffle the data
@@ -362,13 +428,53 @@ class KittiDataset:
                 end = self._index_in_epoch
 
                 # Append the rest of the batch
-                samples_in_batch.extend(self.load_samples(np.arange(start, end)))
+                samples_in_batch.extend(
+                    self.load_samples(np.arange(start, end), pc_sample_pts)
+                )
 
             else:
                 self._index_in_epoch += remain
                 end = self._index_in_epoch
 
                 # Append the samples in the range to the batch
-                samples_in_batch.extend(self.load_samples(np.arange(start, end)))
+                samples_in_batch.extend(
+                    self.load_samples(np.arange(start, end), pc_sample_pts)
+                )
 
-        return samples_in_batch
+        return self.collate_batch(samples_in_batch)
+
+    def collate_batch(self, samples):
+
+        batch_size = samples.__len__()
+        batch_data = {}
+
+        for key in samples[0].keys():
+            if key == constants.KEY_LABEL_BOXES_3D:
+                max_gt = 0
+                for k in range(batch_size):
+                    max_gt = max(max_gt, samples[k][key].__len__())
+                batch_gt_boxes3d = np.zeros((batch_size, max_gt, 7), dtype=np.float32)
+                for i in range(batch_size):
+                    batch_gt_boxes3d[i, : samples[i][key].__len__(), :] = samples[i][
+                        key
+                    ]
+                batch_data[key] = batch_gt_boxes3d
+                continue
+
+            if isinstance(samples[0][key], np.ndarray):
+                if batch_size == 1:
+                    batch_data[key] = samples[0][key][np.newaxis, ...]
+                else:
+                    batch_data[key] = np.concatenate(
+                        [samples[k][key][np.newaxis, ...] for k in range(batch_size)],
+                        axis=0,
+                    )
+
+            else:
+                batch_data[key] = [samples[k][key] for k in range(batch_size)]
+                if isinstance(samples[0][key], int):
+                    batch_data[key] = np.array(batch_data[key], dtype=np.int32)
+                elif isinstance(samples[0][key], float):
+                    batch_data[key] = np.array(batch_data[key], dtype=np.float32)
+
+        return batch_data
