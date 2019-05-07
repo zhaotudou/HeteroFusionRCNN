@@ -117,7 +117,7 @@ class RpnModel(model.DetectionModel):
         self._placeholder_inputs = dict()
 
         # Information about the current sample
-        self._samples_info = []
+        self._sample_names = []
 
         # Dataset
         self.dataset = dataset
@@ -719,20 +719,22 @@ class RpnModel(model.DetectionModel):
 
             if self._train_val_test == "train":
                 # Get the a random sample from the remaining epoch
-                batch_data = self.dataset.next_batch(batch_size, self._pc_sample_pts)
+                batch_data, sample_names = self.dataset.next_batch(
+                    batch_size, self._pc_sample_pts
+                )
 
             else:  # self._train_val_test == "val"
                 # Load samples in order for validation
-                batch_data = self.dataset.next_batch(
+                batch_data, sample_names = self.dataset.next_batch(
                     batch_size, self._pc_sample_pts, shuffle=False
                 )
         else:
             # For testing, any sample should work
             if sample_index is not None:
                 samples = self.dataset.load_samples([sample_index], self._pc_sample_pts)
-                batch_data = self.dataset.collate_batch(samples)
+                batch_data, sample_names = self.dataset.collate_batch(samples)
             else:
-                batch_data = self.dataset.next_batch(
+                batch_data, sample_names = self.dataset.next_batch(
                     batch_size, self._pc_sample_pts, shuffle=False
                 )
 
@@ -754,6 +756,7 @@ class RpnModel(model.DetectionModel):
             constants.KEY_LABEL_BOXES_3D
         ]
         # Sample Info
+        self._sample_names = sample_names
         # img_idx is a list to match the placeholder shape
         # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
 

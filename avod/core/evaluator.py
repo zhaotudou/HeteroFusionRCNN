@@ -214,7 +214,7 @@ class Evaluator:
             feed_dict_time = time.time() - start_time
 
             # Get sample name from model
-            sample_names = self.model._samples_info
+            sample_names = self.model._sample_names
 
             if self.full_model:
                 assert len(sample_names) == 1

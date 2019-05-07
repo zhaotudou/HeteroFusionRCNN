@@ -343,8 +343,8 @@ class KittiDataset:
                 constants.KEY_LABEL_REG: label_reg,
                 constants.KEY_LABEL_BOXES_3D: label_boxes_3d,
                 constants.KEY_POINT_CLOUD: sampled_pc,
-                # constants.KEY_SAMPLE_NAME: sample.name,
-                # constants.KEY_SAMPLE_AUGS: sample.augs,
+                constants.KEY_SAMPLE_NAME: sample.name,
+                constants.KEY_SAMPLE_AUGS: sample.augs,
             }
             sample_dicts.append(sample_dict)
 
@@ -447,8 +447,14 @@ class KittiDataset:
 
         batch_size = samples.__len__()
         batch_data = {}
+        sample_names = []
 
         for key in samples[0].keys():
+            if key == constants.KEY_SAMPLE_NAME:
+                sample_names = [samples[k][key] for k in range(batch_size)]
+                continue
+            if key == constants.KEY_SAMPLE_AUGS:
+                continue
             if key == constants.KEY_LABEL_BOXES_3D:
                 max_gt = 0
                 for k in range(batch_size):
@@ -469,7 +475,6 @@ class KittiDataset:
                         [samples[k][key][np.newaxis, ...] for k in range(batch_size)],
                         axis=0,
                     )
-
             else:
                 batch_data[key] = [samples[k][key] for k in range(batch_size)]
                 if isinstance(samples[0][key], int):
@@ -477,4 +482,4 @@ class KittiDataset:
                 elif isinstance(samples[0][key], float):
                     batch_data[key] = np.array(batch_data[key], dtype=np.float32)
 
-        return batch_data
+        return batch_data, sample_names

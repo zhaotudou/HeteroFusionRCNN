@@ -157,7 +157,7 @@ class AvodModel(model.DetectionModel):
         # Inputs to network placeholders
         self._placeholder_inputs = dict()
 
-        self._samples_info = []
+        self._sample_names = []
 
     def _add_placeholder(self, dtype, shape, name):
         placeholder = tf.placeholder(dtype, shape, name)
@@ -782,10 +782,10 @@ class AvodModel(model.DetectionModel):
             raise ValueError("feed batch_size must equal to model build batch_size")
 
         feed_dict = self._rpn_model.create_feed_dict(batch_size)
-        self._samples_info = self._rpn_model._samples_info
+        self._sample_names = self._rpn_model._sample_names
         batch_proposals = []
         batch_proposals_info = []
-        for sample_name in self._samples_info:
+        for sample_name in self._sample_names:
             proposals = self.dataset.get_proposal(sample_name)
             proposals_info = self.dataset.get_proposal_info(sample_name)
             batch_proposals.append(proposals)
