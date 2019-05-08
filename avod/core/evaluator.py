@@ -947,7 +947,6 @@ class Evaluator:
         proposals = predictions[RpnModel.PRED_PROPOSALS]
         softmax_scores = predictions[RpnModel.PRED_OBJECTNESS_SOFTMAX]
         num_proposals_before_padding = [len(sb_proposals) for sb_proposals in proposals]
-        print(num_proposals_before_padding)
         if not self.model_config.rpn_config.rpn_fixed_num_proposal_nms:
             num_proposals_before_padding = predictions[
                 RpnModel.PRED_NUM_PROPOSALS_BEFORE_PADDING
