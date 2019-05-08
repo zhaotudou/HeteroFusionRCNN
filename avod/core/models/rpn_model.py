@@ -10,6 +10,7 @@ from avod.core import model
 from avod.core import pointfly as pf
 from avod.core.anchor_generators import grid_anchor_3d_generator
 from avod.core import compute_iou
+from avod.core import model_util
 
 
 class RpnModel(model.DetectionModel):
@@ -35,6 +36,7 @@ class RpnModel(model.DetectionModel):
 
     PRED_PROPOSALS = "rpn_proposals"
     PRED_OBJECTNESS_SOFTMAX = "rpn_objectness_softmax"
+    PRED_NUM_PROPOSALS_BEFORE_PADDING = "rpn_num_proposals_before_padding"
 
     PRED_IOU_2D = "rpn_proposal_gt_iou_2d"
     PRED_IOU_3D = "rpn_proposal_gt_iou_3d"
@@ -82,6 +84,7 @@ class RpnModel(model.DetectionModel):
         rpn_config = self._config.rpn_config
         self._use_intensity_feature = rpn_config.rpn_use_intensity_feature
         self._fusion_method = rpn_config.rpn_fusion_method
+        self._fixed_num_proposal_nms = rpn_config.rpn_fixed_num_proposal_nms
 
         if self._train_val_test in ["train", "val"]:
             self._pre_nms_size = rpn_config.rpn_train_pre_nms_size
@@ -313,11 +316,61 @@ class RpnModel(model.DetectionModel):
                 seg_softmax[:, :, 1:], axis=-1, name="seg_scores"
             )  # (B,P)
 
+        label_cls = self.placeholders[self.PL_LABEL_SEGS]  # (B,P)
+        label_reg = self.placeholders[self.PL_LABEL_REGS]  # (B,P,7)
+
+        proposal_pts = self._pc_pts
+        proposal_fts = self._pc_fts
+        proposal_preds = seg_preds
+        proposal_scores = seg_scores
+        proposal_label_reg = label_reg
+
+        # foreground point masking
+        with tf.variable_scope("foreground_masking"):
+            if self._train_val_test in ["train", "val"]:
+                self._foreground_mask = label_cls > 0  # (B,P)
+            else:
+                self._foreground_mask = seg_preds > 0  # (B,P)
+
+            if (
+                self._train_val_test in ["val", "test"]
+                and not self._fixed_num_proposal_nms
+            ):
+                fg_indices = model_util.point_cloud_masking(
+                    self._foreground_mask, self.NUM_FG_POINT
+                )  # (B,F,2)
+                foreground_pts = tf.reshape(
+                    tf.gather_nd(self._pc_pts, fg_indices),
+                    [self._batch_size, self.NUM_FG_POINT, self._pc_pts.shape[2].value],
+                )  # (B,F,3)
+                foreground_fts = tf.reshape(
+                    tf.gather_nd(self._pc_fts, fg_indices),
+                    [self._batch_size, self.NUM_FG_POINT, self._pc_fts.shape[2].value],
+                )  # (B,F,C)
+                foreground_preds = tf.reshape(
+                    tf.gather_nd(seg_preds, fg_indices),
+                    [self._batch_size, self.NUM_FG_POINT],
+                )  # (B,F)
+                foreground_scores = tf.reshape(
+                    tf.gather_nd(seg_scores, fg_indices),
+                    [self._batch_size, self.NUM_FG_POINT],
+                )  # (B,F)
+                foreground_label_reg = tf.reshape(
+                    tf.gather_nd(label_reg, fg_indices),
+                    [self._batch_size, self.NUM_FG_POINT, 7],
+                )  # (B,F,7)
+
+                proposal_pts = foreground_pts
+                proposal_fts = foreground_fts
+                proposal_preds = foreground_preds
+                proposal_scores = foreground_scores
+                proposal_label_reg = foreground_label_reg
+
         # branch-2: bin-based 3D proposal generation
         #########################################
         with tf.variable_scope("bin_based_rpn"):
             # Parse rpn layers config
-            fc_layers = [self._pc_fts]
+            fc_layers = [proposal_fts]
             layers_config = self._config.layers_config.rpn_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
                 C = layer_param.C
@@ -357,7 +410,7 @@ class RpnModel(model.DetectionModel):
 
         mean_sizes = self._gather_mean_sizes(
             tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
-            seg_preds,
+            proposal_preds,
         )
 
         with tf.variable_scope("histograms_rpn"):
@@ -376,7 +429,7 @@ class RpnModel(model.DetectionModel):
             else:
                 with tf.variable_scope("decoding"):
                     proposals = bin_based_box3d_encoder.tf_decode(
-                        self._pc_pts,
+                        proposal_pts,
                         0,
                         bin_x,
                         res_x_norm,
@@ -405,27 +458,34 @@ class RpnModel(model.DetectionModel):
                 #     * bin_z_scores
                 #     * bin_theta_scores
                 # ) # (B,P)
-                confidences = seg_scores
+                confidences = proposal_scores
 
-                # get _pre_nms_size number of proposals for NMS
-                _, sorted_idxs = tf.nn.top_k(
-                    confidences, k=self._pre_nms_size, sorted=True
-                )
-
-                def gather_top_n(sb_data):
-                    sb_proposals, sb_confidences, sb_seg_scores, sb_sorted_idxs = (
-                        sb_data
+                if self._fixed_num_proposal_nms:
+                    # get _pre_nms_size number of proposals for NMS
+                    _, sorted_idxs = tf.nn.top_k(
+                        confidences, k=self._pre_nms_size, sorted=True
                     )
-                    sorted_confidences = tf.gather(sb_confidences, sb_sorted_idxs)
-                    sorted_proposals = tf.gather(sb_proposals, sb_sorted_idxs)
-                    sorted_seg_scores = tf.gather(sb_seg_scores, sb_sorted_idxs)
-                    return sorted_proposals, sorted_confidences, sorted_seg_scores
 
-                pre_nms_proposals, pre_nms_confidences, pre_nms_seg_scores = tf.map_fn(
-                    gather_top_n,
-                    elems=(proposals, confidences, seg_scores, sorted_idxs),
-                    dtype=(tf.float32, tf.float32, tf.float32),
-                )
+                    def gather_top_n(sb_data):
+                        sb_proposals, sb_confidences, sb_seg_scores, sb_sorted_idxs = (
+                            sb_data
+                        )
+                        sorted_confidences = tf.gather(sb_confidences, sb_sorted_idxs)
+                        sorted_proposals = tf.gather(sb_proposals, sb_sorted_idxs)
+                        sorted_seg_scores = tf.gather(sb_seg_scores, sb_sorted_idxs)
+                        return sorted_proposals, sorted_confidences, sorted_seg_scores
+
+                    pre_nms_proposals, pre_nms_confidences, pre_nms_seg_scores = tf.map_fn(
+                        gather_top_n,
+                        elems=(proposals, confidences, seg_scores, sorted_idxs),
+                        dtype=(tf.float32, tf.float32, tf.float32),
+                    )
+                else:
+                    pre_nms_proposals, pre_nms_confidences, pre_nms_seg_scores = (
+                        proposals,
+                        confidences,
+                        proposal_scores,
+                    )
 
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
@@ -440,7 +500,26 @@ class RpnModel(model.DetectionModel):
                             sb_nms_indices = compute_iou.oriented_nms_tf(
                                 sb_boxes, sb_scores, self._nms_iou_thresh
                             )
+
                             sb_nms_indices = sb_nms_indices[: self._post_nms_size]
+                            if not self._fixed_num_proposal_nms:
+                                # sb_nms_indices append duplicated indices to make
+                                # sure sb_nms_indices has the same size as sb_boxes.
+                                # In case variable number proposals is desired,
+                                # use tf.unique to remove duplicates
+                                sb_nms_indices = tf.Print(
+                                    sb_nms_indices,
+                                    [tf.shape(sb_nms_indices)[0]],
+                                    "(avg) num_proposals_before_unique: ",
+                                )
+
+                                sb_nms_indices, _ = tf.unique(sb_nms_indices)
+
+                                sb_nms_indices = tf.Print(
+                                    sb_nms_indices,
+                                    [tf.shape(sb_nms_indices)[0]],
+                                    "(avg) num_proposals_after_unique: ",
+                                )
                         else:
                             sb_nms_indices = tf.image.non_max_suppression(
                                 sb_boxes,
@@ -449,29 +528,24 @@ class RpnModel(model.DetectionModel):
                                 iou_threshold=self._nms_iou_thresh,
                             )
 
-                            sb_nms_indices = tf.pad(
-                                sb_nms_indices,
-                                [
-                                    [
-                                        0,
-                                        self._post_nms_size
-                                        - tf.shape(sb_nms_indices)[0],
-                                    ]
-                                ],
-                                mode="CONSTANT",
-                                constant_values=-1,
-                            )
-                        return sb_nms_indices, tf.shape(sb_nms_indices)[0]
+                        sb_nms_indices = tf.Print(
+                            sb_nms_indices,
+                            [tf.shape(sb_nms_indices)[0]],
+                            "(avg) num_proposals_before_padding: ",
+                        )
+
+                        sb_nms_indices_padded = tf.pad(
+                            sb_nms_indices,
+                            [[0, self._post_nms_size - tf.shape(sb_nms_indices)[0]]],
+                            mode="CONSTANT",
+                            constant_values=-1,
+                        )
+                        return sb_nms_indices_padded, tf.shape(sb_nms_indices)[0]
 
                     nms_indices, num_proposals_before_padding = tf.map_fn(
                         sb_nms_fn,
                         elems=[pre_nms_proposals, pre_nms_confidences],
                         dtype=(tf.int32, tf.int32),
-                    )
-
-                    tf.summary.scalar(
-                        "(avg) sum_proposals_before_padding",
-                        tf.reduce_sum(num_proposals_before_padding) / self._batch_size,
                     )
 
                 # Compute IOUs
@@ -508,8 +582,6 @@ class RpnModel(model.DetectionModel):
                         )
 
         if self._train_val_test in ["train", "val"]:
-            label_cls = self.placeholders[self.PL_LABEL_SEGS]  # (B,P)
-            label_reg = self.placeholders[self.PL_LABEL_REGS]  # (B,P,7)
             ######################################################
             # GTs for the loss function & metrics
             ######################################################
@@ -521,7 +593,7 @@ class RpnModel(model.DetectionModel):
                 )
 
             with tf.variable_scope("segmentation_accuracy"):
-                self._foreground_mask = label_cls > 0  # (B,P)
+                # self._foreground_mask = label_cls > 0  # (B,P)
                 num_foreground_pts = (
                     tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32))
                     / self._batch_size
@@ -549,9 +621,9 @@ class RpnModel(model.DetectionModel):
                     res_y_gt,
                     res_size_gt,
                 ) = bin_based_box3d_encoder.tf_encode(
-                    self._pc_pts,
+                    proposal_pts,
                     0,
-                    label_reg,
+                    proposal_label_reg,
                     mean_sizes,
                     self.S,
                     self.DELTA,
@@ -616,11 +688,17 @@ class RpnModel(model.DetectionModel):
                 predictions[self.PRED_IOU_3D] = iou3ds
                 predictions[self.PRED_PROPOSALS] = post_nms_proposals
                 predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
+                predictions[
+                    self.PRED_NUM_PROPOSALS_BEFORE_PADDING
+                ] = num_proposals_before_padding
         else:
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_PROPOSALS] = post_nms_proposals
             predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
+            predictions[
+                self.PRED_NUM_PROPOSALS_BEFORE_PADDING
+            ] = num_proposals_before_padding
         return predictions
 
     def _parse_rpn_output(self, rpn_output):
