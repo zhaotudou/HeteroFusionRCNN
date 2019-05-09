@@ -90,7 +90,7 @@ class OrientedNMSOp: public OpKernel{
       int num_to_keep = 0;
 
       // temp cpu data for output
-      std::vector<int> keep_data_cpu(boxes_num);
+      std::vector<int> keep_data_cpu(boxes_num, -1);
 
       for (int i = 0; i < boxes_num; i++){
         int nblock = i / THREADS_PER_BLOCK_NMS;
