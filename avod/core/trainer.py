@@ -6,6 +6,7 @@ DetectionModel.
 import datetime
 import os
 import tensorflow as tf
+import horovod.tensorflow as hvd
 import time
 
 from tensorflow.python import debug as tf_debug
@@ -44,11 +45,11 @@ def train(model, train_config):
 
     paths_config = model_config.paths_config
     logdir = paths_config.logdir
-    if not os.path.exists(logdir):
+    if not os.path.exists(logdir) and hvd.rank() == 0:
         os.makedirs(logdir)
 
     checkpoint_dir = paths_config.checkpoint_dir
-    if not os.path.exists(checkpoint_dir):
+    if not os.path.exists(checkpoint_dir) and hvd.rank() == 0:
         os.makedirs(checkpoint_dir)
     checkpoint_path = checkpoint_dir + "/" + model_config.checkpoint_name
 
@@ -70,6 +71,9 @@ def train(model, train_config):
     training_optimizer = optimizer_builder.build(
         train_config.optimizer, global_summaries, global_step_tensor
     )
+    training_optimizer = hvd.DistributedOptimizer(training_optimizer)
+    hooks = [hvd.BroadcastGlobalVariablesHook(0)]
+    bcast_op = hvd.broadcast_global_variables(0)
 
     # Create the train op
     with tf.variable_scope("train_op"):
@@ -123,20 +127,19 @@ def train(model, train_config):
         input_pcs=summary_pc_images,
     )
 
-    allow_gpu_mem_growth = train_config.allow_gpu_mem_growth
-    if allow_gpu_mem_growth:
-        # GPU memory config
-        config = tf.ConfigProto()
-        config.gpu_options.allow_growth = allow_gpu_mem_growth
-        sess = tf.Session(config=config)
-    else:
-        sess = tf.Session()
+    config = tf.ConfigProto()
+    config.gpu_options.visible_device_list = str(hvd.local_rank())
+    config.gpu_options.allow_growth = train_config.allow_gpu_mem_growth \
+        if train_config.allow_gpu_mem_growth else False
+    sess = tf.Session(config=config)
+
     # sess = tf_debug.LocalCLIDebugWrapperSession(sess, dump_root='/data/ljh/HeteroFusion/dump')
 
-    # Create unique folder name using datetime for summary writer
-    datetime_str = str(datetime.datetime.now())
-    logdir = logdir + "/train"
-    train_writer = tf.summary.FileWriter(logdir + "/" + datetime_str, sess.graph)
+    if hvd.rank() == 0:
+        # Create unique folder name using datetime for summary writer
+        datetime_str = str(datetime.datetime.now())
+        logdir = logdir + "/train"
+        train_writer = tf.summary.FileWriter(logdir + "/" + datetime_str, sess.graph)
 
     # Create init op
     init = tf.global_variables_initializer()
@@ -158,16 +161,23 @@ def train(model, train_config):
         # Initialize the variables
         sess.run(init)
 
+    sess.run(bcast_op)
+
+    global_max_iterations = max_iterations
+    max_iterations = int(max_iterations / hvd.size())
+    print("Global Max Iterations {}, Each Iterations {} For {} GPUs".
+          format(global_max_iterations, max_iterations, hvd.size()))
+
     # Read the global step if restored
     global_step = tf.train.global_step(sess, global_step_tensor)
-    print("Starting from step {} / {}".format(global_step, max_iterations))
+    print("Rank {} Starting from step {} / {}".format(hvd.rank(), global_step, max_iterations))
 
     # Main Training Loop
     last_time = time.time()
     for step in range(global_step, max_iterations + 1):
 
         # Save checkpoint
-        if step % checkpoint_interval == 0:
+        if step % checkpoint_interval == 0 and hvd.rank() == 0:
             global_step = tf.train.global_step(sess, global_step_tensor)
 
             saver.save(sess, save_path=checkpoint_path, global_step=global_step)
@@ -182,7 +192,7 @@ def train(model, train_config):
         feed_dict = model.create_feed_dict(batch_size)
 
         # Write summaries and train op
-        if step % summary_interval == 0:
+        if step % summary_interval == 0 and hvd.rank() == 0:
             current_time = time.time()
             time_elapsed = current_time - last_time
             last_time = current_time
@@ -201,6 +211,6 @@ def train(model, train_config):
         else:
             # Run the train op only
             sess.run(train_op, feed_dict)
-
-    # Close the summary writers
-    train_writer.close()
+    if hvd.rank() == 0:
+        # Close the summary writers
+        train_writer.close()
