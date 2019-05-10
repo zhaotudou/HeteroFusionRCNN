@@ -95,6 +95,10 @@ class RpnModel(model.DetectionModel):
             self._post_nms_size = rpn_config.rpn_test_post_nms_size
             self._nms_iou_thresh = rpn_config.rpn_test_nms_iou_thresh
 
+        assert (
+            self._pre_nms_size >= self._post_nms_size
+        ), "post nms size must be no greater than pre nms size"
+
         self.S = rpn_config.rpn_xz_search_range
         self.DELTA = rpn_config.rpn_xz_bin_len
         self.NUM_BIN_X = int(2 * self.S / self.DELTA)

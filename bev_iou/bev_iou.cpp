@@ -90,7 +90,7 @@ class OrientedNMSOp: public OpKernel{
       int num_to_keep = 0;
 
       // temp cpu data for output
-      std::vector<int> keep_data_cpu(boxes_num, -1);
+      std::vector<int> keep_data_cpu(boxes_num);
 
       for (int i = 0; i < boxes_num; i++){
         int nblock = i / THREADS_PER_BLOCK_NMS;
@@ -103,6 +103,12 @@ class OrientedNMSOp: public OpKernel{
                 remv_cpu[j] |= p[j];
             }
         }
+      }
+
+      // pad the rest of keep data with the first value of selected
+      // I would assume it must be 0
+      for (; num_to_keep < boxes_num; num_to_keep++) {
+        keep_data_cpu[num_to_keep] = keep_data_cpu[0];
       }
 
       // copy output from cpu to gpu
