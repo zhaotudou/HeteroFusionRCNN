@@ -163,7 +163,15 @@ def compute_recall_iou(
         iou3ds_gt_boxes = label_boxes_3d[np.argmax(mx_iou3ds, axis=1)]
         iou3ds_gt_cls = label_cls[np.argmax(mx_iou3ds, axis=1)]
 
-    return recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls
+    return (
+        recall_50,
+        recall_70,
+        iou2ds,
+        iou3ds,
+        iou3ds_gt_boxes,
+        iou3ds_gt_cls,
+        mx_iou3ds,
+    )
 
 
 def get_iou(bb1, bb2):

@@ -17,14 +17,13 @@ from avod.core.models.rpn_model import RpnModel
 from avod.core.evaluator import Evaluator
 
 
-def inference(model_config, eval_config, dataset_config, data_split, ckpt_indices):
+def inference(model_config, eval_config, dataset_config):
 
     # Overwrite the defaults
     dataset_config = config_builder.proto_to_obj(dataset_config)
 
-    dataset_config.data_split = data_split
     dataset_config.data_split_dir = "training"
-    if data_split == "test":
+    if dataset_config.data_split == "test":
         dataset_config.data_split_dir = "testing"
 
     eval_config.eval_mode = "test"
@@ -35,8 +34,6 @@ def inference(model_config, eval_config, dataset_config, data_split, ckpt_indice
     eval_config.allow_gpu_mem_growth = True
 
     eval_config = config_builder.proto_to_obj(eval_config)
-    # Grab the checkpoint indices to evaluate
-    eval_config.ckpt_indices = ckpt_indices
 
     # Remove augmentation during evaluation in test mode
     dataset_config.aug_list = []
@@ -53,6 +50,8 @@ def inference(model_config, eval_config, dataset_config, data_split, ckpt_indice
 
     with tf.Graph().as_default():
         if model_name == "avod_model":
+            if eval_config.save_rpn_feature:
+                raise ValueError("Full Model don't support --save_rpn_feature")
             model = AvodModel(
                 model_config, train_val_test=eval_config.eval_mode, dataset=dataset
             )
@@ -108,6 +107,13 @@ def main(_):
     )
 
     parser.add_argument(
+        "--save_rpn_feature",
+        action="store_true",
+        default=False,
+        help="save features for separately rcnn training and evaluation",
+    )
+
+    parser.add_argument(
         "--device", type=str, dest="device", default="0", help="CUDA device id"
     )
 
@@ -131,10 +137,19 @@ def main(_):
         experiment_config_path, is_training=False
     )
 
+    # Overwrite data split
+    dataset_config.data_split = args.data_split
+
+    # Overwrite save_rpn_feature
+    eval_config.save_rpn_feature = args.save_rpn_feature
+
+    # Grab the checkpoint indices to evaluate
+    eval_config.ckpt_indices = args.ckpt_indices
+
+    # Set CUDA device id
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
-    inference(
-        model_config, eval_config, dataset_config, args.data_split, args.ckpt_indices
-    )
+
+    inference(model_config, eval_config, dataset_config)
 
 
 if __name__ == "__main__":

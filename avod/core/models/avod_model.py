@@ -13,16 +13,13 @@ from avod.core import box_8c_encoder
 from avod.core import box_4c_encoder
 from avod.core import bin_based_box3d_encoder
 from avod.core import pointfly as pf
+from avod.core import compute_iou
 
-from avod.core import box_list
-from avod.core import box_list_ops
 from avod.core import box_util
-from avod.core import oriented_nms
+from avod.core import constants
 
 from avod.core import model
 from avod.core import losses
-from avod.core import orientation_encoder
-from avod.core.models.rpn_model import RpnModel
 
 
 class AvodModel(model.DetectionModel):
@@ -30,8 +27,13 @@ class AvodModel(model.DetectionModel):
     # Keys for Placeholders
     ##############################
     PL_PROPOSALS = "proposals_pl"
-    PL_PROPOSALS_INFO = "proposals_info_pl"
+    PL_PROPOSALS_IOU = "proposals_iou_pl"
+    PL_PROPOSALS_GT = "proposals_gt_pl"
 
+    PL_RPN_PTS = "rpn_pts_pl"
+    PL_RPN_INTENSITY = "rpn_intensity_pl"
+    PL_RPN_FG_MASK = "rpn_fg_mask_pl"
+    PL_RPN_FTS = "rpn_fts_pl"
     ##############################
     # Keys for Predictions
     ##############################
@@ -47,9 +49,11 @@ class AvodModel(model.DetectionModel):
     PRED_MB_REG_GT = "avod_mb_reg_gt"
     PRED_MB_POS_REG_MASK = "avod_mb_pos_reg_mask"
 
-    # Top predictions after BEV NMS
-    PRED_TOP_PREDICTION_BOXES_3D = "avod_top_prediction_boxes_3d"
-    PRED_TOP_PREDICTION_SOFTMAX = "avod_top_prediction_softmax"
+    # predictions & BEV NMS
+    PRED_BOXES = "avod_prediction_boxes"
+    PRED_SOFTMAX = "avod_prediction_softmax"
+    PRED_NON_EMPTY_BOX_MASK = "avod_prediction_non_empty_box_mask"
+    PRED_NMS_INDICES = "avod_prediction_nms_indices"
 
     ##############################
     # Keys for Loss
@@ -74,11 +78,6 @@ class AvodModel(model.DetectionModel):
         super(AvodModel, self).__init__(model_config)
 
         self._batch_size = batch_size
-        # batch_size must be 1. Indeed, what really cares is mini_batch_size, i.e. num proposals
-        if self._batch_size != 1:
-            raise ValueError("Invalid batch_size, should be 1")
-        # Create the RpnModel
-        self._rpn_model = RpnModel(model_config, train_val_test, dataset, batch_size)
 
         self.dataset = dataset
         self._bev_extents = self.dataset.kitti_utils.bev_extents
@@ -88,7 +87,8 @@ class AvodModel(model.DetectionModel):
         self.num_classes = dataset.num_classes
 
         # Input config
-        # input_config = self._config.input_config
+        input_config = self._config.input_config
+        self._pc_sample_pts = input_config.pc_sample_pts
 
         # self._img_pixel_size = np.asarray([input_config.img_dims_h,
         #                                   input_config.img_dims_w])
@@ -114,26 +114,6 @@ class AvodModel(model.DetectionModel):
         self.NUM_BIN_THETA = int(2 * self.R / self.DELTA_THETA)
 
         self._pooling_context_length = avod_config.avod_pooling_context_length
-
-        mini_batch_config = avod_config.mini_batch_config
-        cls_iou_thresholds = mini_batch_config.cls_iou_3d_thresholds
-        reg_iou_thresholds = mini_batch_config.reg_iou_3d_thresholds
-        self.cls_neg_iou_range = [
-            cls_iou_thresholds.neg_iou_lo,
-            cls_iou_thresholds.neg_iou_hi,
-        ]
-        self.cls_pos_iou_range = [
-            cls_iou_thresholds.pos_iou_lo,
-            cls_iou_thresholds.pos_iou_hi,
-        ]
-        self.reg_neg_iou_range = [
-            reg_iou_thresholds.neg_iou_lo,
-            reg_iou_thresholds.neg_iou_hi,
-        ]
-        self.reg_pos_iou_range = [
-            reg_iou_thresholds.pos_iou_lo,
-            reg_iou_thresholds.pos_iou_hi,
-        ]
 
         # Feature Extractor Nets
         self._pc_feature_extractor = feature_extractor_builder.get_extractor(
@@ -173,7 +153,29 @@ class AvodModel(model.DetectionModel):
                 tf.float32, [self._batch_size, None, 7], self.PL_PROPOSALS
             )
             self._add_placeholder(
-                tf.float32, [self._batch_size, None, 9], self.PL_PROPOSALS_INFO
+                tf.float32, [self._batch_size, None], self.PL_PROPOSALS_IOU
+            )
+            self._add_placeholder(
+                tf.float32, [self._batch_size, None, 8], self.PL_PROPOSALS_GT
+            )
+
+        with tf.variable_scope("pl_rpn_feature"):
+            self._add_placeholder(
+                tf.float32, [self._batch_size, self._pc_sample_pts, 3], self.PL_RPN_PTS
+            )
+            self._add_placeholder(
+                tf.float32,
+                [self._batch_size, self._pc_sample_pts],
+                self.PL_RPN_INTENSITY,
+            )
+            self._add_placeholder(
+                tf.bool, [self._batch_size, self._pc_sample_pts], self.PL_RPN_FG_MASK
+            )
+            # TODO: rm channel size hard coding
+            self._add_placeholder(
+                tf.float32,
+                [self._batch_size, self._pc_sample_pts, 256],
+                self.PL_RPN_FTS,
             )
 
     @classmethod
@@ -288,21 +290,19 @@ class AvodModel(model.DetectionModel):
 
         return mean_sizes.astype(np.float32)
 
-    def build(self):
-        rpn_model = self._rpn_model
-        # Share the same prediction dict as RPN
-        prediction_dict = rpn_model.build()
-        pc_pts = rpn_model._pc_pts  # (B,P,3)
-        pc_fts = rpn_model._pc_fts  # (B,P,C)
-        foreground_mask = rpn_model._foreground_mask  # (B,P)
-        pc_intensities = rpn_model._pc_intensities  # (B,P,1)
-
+    def build(self, **kwargs):
         self._set_up_input_pls()
+        pc_pts = self.placeholders[self.PL_RPN_PTS]  # (B,P,3)
+        pc_fts = self.placeholders[self.PL_RPN_FTS]  # (B,P,C)
+        foreground_mask = self.placeholders[self.PL_RPN_FG_MASK]  # (B,P)
+        pc_intensities = self.placeholders[self.PL_RPN_INTENSITY]  # (B,P)
+
         proposals = self.placeholders[self.PL_PROPOSALS]  # (B,n,7)
-        proposals_info = self.placeholders[self.PL_PROPOSALS_INFO]  # (B,n,9)
-        proposals_iou3d = tf.reshape(proposals_info[:, :, 0], [-1])  # (N=Bn)
-        proposals_gt_box3d = tf.reshape(proposals_info[:, :, 1:8], [-1, 7])  # (N=Bn,7)
-        proposals_gt_cls = tf.reshape(proposals_info[:, :, 8], [-1])  # (N=Bn)
+        proposals_iou3d = self.placeholders[self.PL_PROPOSALS_IOU]  # (B,n)
+        proposals_gt_box3d = self.placeholders[self.PL_PROPOSALS_GT][
+            :, :, :7
+        ]  # (B,n,7)
+        proposals_gt_cls = self.placeholders[self.PL_PROPOSALS_GT][:, :, 7]  # (B,n)
 
         """
         if not (self._path_drop_probabilities[0] ==
@@ -351,18 +351,20 @@ class AvodModel(model.DetectionModel):
                 )
                 return tf.reshape(ones_mat * multiplier, [-1])
 
-            # These should be all 0's since there is only 1 pointcloud
             tf_box_indices = get_box_indices(expanded_proposals)
 
             # Do ROI Pooling on PC
             proposals = tf.reshape(proposals, [-1, 7])  # (N=Bn,7)
             expanded_proposals = tf.reshape(expanded_proposals, [-1, 7])  # (N=Bn,7)
+            proposals_iou3d = tf.reshape(proposals_iou3d, [-1])  # (N=Bn)
+            proposals_gt_box3d = tf.reshape(proposals_gt_box3d, [-1, 7])  # (N=Bn,7)
+            proposals_gt_cls = tf.reshape(proposals_gt_cls, [-1])  # (N=Bn)
             from cropping import tf_cropping
 
             crop_pts, crop_fts, crop_intensities, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
                 pc_pts,
                 pc_fts,
-                pc_intensities,
+                tf.expand_dims(pc_intensities, -1),
                 foreground_mask,
                 box_8c_encoder.tf_box_3d_to_box_8co(expanded_proposals),
                 tf_box_indices,
@@ -433,16 +435,8 @@ class AvodModel(model.DetectionModel):
                     )
                     fc_layers.append(fc_drop)
 
-                fc_output = pf.dense(
-                    fc_layers[-1],
-                    crop_fts.shape[2].value,
-                    "fc_output",
-                    self._is_training,
-                    activation=None,
-                )  # (N,R,C)
-
         with tf.variable_scope("pc_encoder"):
-            merged_fts = tf.concat([crop_fts, fc_output], axis=-1)  # (N,R,2C)
+            merged_fts = tf.concat([crop_fts, fc_layers[-1]], axis=-1)  # (N,R,2C)
             encode_pts, encode_fts = self._pc_feature_extractor.build(
                 crop_pts, merged_fts, self._is_training
             )  # (N,r,3), (N,r,C')
@@ -493,15 +487,15 @@ class AvodModel(model.DetectionModel):
                 self._is_training,
                 activation=None,
             )
-            bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size = self._parse_brn_output(
-                fc_output
-            )
-            res_y = tf.squeeze(res_y, [-1])
+
+        bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size = self._parse_brn_output(
+            fc_output
+        )
+        res_y = tf.squeeze(res_y, [-1])
 
         # Final Predictions
         ######################################################
         with tf.variable_scope("boxes"):
-            # Decode bin-based 3D Box
             bin_x = tf.argmax(bin_x_logits, axis=-1)  # (N)
             bin_z = tf.argmax(bin_z_logits, axis=-1)  # (N)
             bin_theta = tf.argmax(bin_theta_logits, axis=-1)  # (N)
@@ -518,93 +512,114 @@ class AvodModel(model.DetectionModel):
                 tf.float32,
             )
 
-            with tf.variable_scope("decoding"):
-                reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
-                    proposals[:, :3],
-                    proposals[:, 6],
-                    bin_x,
-                    res_x_norm,
-                    bin_z,
-                    res_z_norm,
-                    bin_theta,
-                    res_theta_norm,
-                    res_y,
-                    res_size,
-                    mean_sizes,
-                    self.S,
-                    self.DELTA,
-                    self.R,
-                    self.DELTA_THETA,
-                )  # (N,7)
-
             # NMS
             if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
                 print("Skip BRN-NMS during training")
-                top_boxes_3d = reg_boxes_3d
-                top_cls_softmax = cls_softmax
             else:
+                # Decode bin-based 3D Box
+                with tf.variable_scope("decoding"):
+                    reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
+                        proposals[:, :3],
+                        proposals[:, 6],
+                        bin_x,
+                        res_x_norm,
+                        bin_z,
+                        res_z_norm,
+                        bin_theta,
+                        res_theta_norm,
+                        res_y,
+                        res_size,
+                        mean_sizes,
+                        self.S,
+                        self.DELTA,
+                        self.R,
+                        self.DELTA_THETA,
+                    )  # (N,7)
+
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
                 oriented_NMS = True
-                print("BRN oriented_NMS = " + str(oriented_NMS))
-                # BEV projection
-                with tf.variable_scope("bev_projection"):
-                    reg_boxes_3d = tf.boolean_mask(
-                        reg_boxes_3d, non_empty_box_mask
-                    )  # (N',7)
-                    if oriented_NMS:
-                        bev_boxes, _ = tf.py_func(
-                            box_3d_projector.project_to_bev,
-                            [reg_boxes_3d, tf.constant(self._bev_extents)],
-                            (tf.float32, tf.float32),
-                        )
-
-                    else:
-                        # ortho rotating
-                        box_anchors = box_3d_encoder.tf_box_3d_to_anchor(reg_boxes_3d)
-                        bev_boxes, _ = anchor_projector.project_to_bev(
-                            box_anchors, self._bev_extents
-                        )
-                        bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(
-                            bev_boxes
-                        )
-
+                print("RCNN oriented_NMS = " + str(oriented_NMS))
                 # bev-NMS and ignore multiclass
                 with tf.variable_scope("bev_nms"):
-                    cls_scores = tf.boolean_mask(cls_scores, non_empty_box_mask)  # (N')
-                    cls_softmax = tf.boolean_mask(
-                        cls_softmax, non_empty_box_mask
-                    )  # (N')
-                    if oriented_NMS:
-                        nms_indices = tf.py_func(
-                            oriented_nms.nms,
-                            [
-                                bev_boxes,
-                                cls_scores,
-                                tf.constant(self._nms_iou_thresh),
-                                tf.constant(self._nms_size),
-                            ],
-                            tf.int32,
-                        )
-                    else:
-                        nms_indices = tf.image.non_max_suppression(
-                            bev_boxes_tf_order,
-                            cls_scores,
-                            max_output_size=self._nms_size,
-                            iou_threshold=self._nms_iou_thresh,
+
+                    def sb_nms_fn(args):
+                        (sb_boxes, sb_scores, sb_non_empty_box_mask) = args
+                        sb_boxes = tf.boolean_mask(sb_boxes, sb_non_empty_box_mask)
+                        sb_scores = tf.boolean_mask(sb_scores, sb_non_empty_box_mask)
+                        if oriented_NMS:
+                            sb_nms_indices = compute_iou.oriented_nms_tf(
+                                sb_boxes, sb_scores, self._nms_iou_thresh
+                            )
+                            sb_nms_indices = sb_nms_indices[
+                                : tf.minimum(
+                                    self._nms_size, tf.shape(sb_nms_indices)[0]
+                                )
+                            ]
+                        else:
+                            # ortho rotating
+                            sb_box_anchors = box_3d_encoder.tf_box_3d_to_anchor(
+                                sb_boxes
+                            )
+                            sb_bev_boxes, _ = anchor_projector.project_to_bev(
+                                sb_box_anchors, self._bev_extents
+                            )
+                            sb_bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(
+                                sb_bev_boxes
+                            )
+                            sb_nms_indices = tf.image.non_max_suppression(
+                                sb_bev_boxes_tf_order,
+                                sb_scores,
+                                max_output_size=self._nms_size,
+                                iou_threshold=self._nms_iou_thresh,
+                            )
+
+                        sb_nms_indices = tf.cond(
+                            tf.greater(self._nms_size, tf.shape(sb_nms_indices)[0]),
+                            true_fn=lambda: tf.pad(
+                                sb_nms_indices,
+                                [[0, self._nms_size - tf.shape(sb_nms_indices)[0]]],
+                                mode="CONSTANT",
+                                constant_values=-1,
+                            ),
+                            false_fn=lambda: sb_nms_indices,
                         )
 
-                    top_boxes_3d = tf.gather(reg_boxes_3d, nms_indices)
-                    top_cls_softmax = tf.gather(cls_softmax, nms_indices)
+                        return sb_nms_indices, tf.shape(sb_nms_indices)[0]
+
+                    batch_reg_boxes_3d = tf.reshape(
+                        reg_boxes_3d, [self._batch_size, -1, 7]
+                    )  # (B,n,7)
+                    batch_cls_scores = tf.reshape(
+                        cls_scores, [self._batch_size, -1]
+                    )  # (B,n)
+                    batch_cls_softmax = tf.reshape(
+                        cls_softmax, [self._batch_size, -1, self.num_classes + 1]
+                    )  # (B,n,K)
+                    batch_non_empty_box_mask = tf.reshape(
+                        non_empty_box_mask, [self._batch_size, -1]
+                    )  # (B,n)
+
+                    nms_indices, num_proposals_before_padding = tf.map_fn(
+                        sb_nms_fn,
+                        elems=[
+                            batch_reg_boxes_3d,
+                            batch_cls_scores,
+                            batch_non_empty_box_mask,
+                        ],
+                        dtype=(tf.int32, tf.int32),
+                    )
 
         ######################################################
         # Determine Positive/Negative GTs for the loss function & metrics
         ######################################################
         # for box cls loss
         with tf.variable_scope("box_cls_gt"):
-            neg_cls_mask = tf.less(proposals_iou3d, self.cls_neg_iou_range[1])
-            pos_cls_mask = tf.greater(proposals_iou3d, self.cls_pos_iou_range[0])
+            neg_cls_mask = tf.less(proposals_iou3d, self.dataset.cls_neg_iou_range[1])
+            pos_cls_mask = tf.greater(
+                proposals_iou3d, self.dataset.cls_pos_iou_range[0]
+            )
             pos_neg_cls_mask = tf.logical_or(neg_cls_mask, pos_cls_mask)
             pos_neg_cls_mask = tf.logical_and(pos_neg_cls_mask, non_empty_box_mask)
 
@@ -621,7 +636,9 @@ class AvodModel(model.DetectionModel):
 
         # for box refinement loss
         with tf.variable_scope("box_cls_reg_gt"):
-            pos_reg_mask = tf.greater(proposals_iou3d, self.reg_pos_iou_range[0])
+            pos_reg_mask = tf.greater(
+                proposals_iou3d, self.dataset.reg_pos_iou_range[0]
+            )
             pos_reg_mask = tf.logical_and(pos_reg_mask, non_empty_box_mask)
 
             # reg gt
@@ -669,6 +686,7 @@ class AvodModel(model.DetectionModel):
         ######################################################
         # Prediction Dict
         ######################################################
+        prediction_dict = dict()
         if self._train_val_test in ["train", "val"]:
             # cls Mini batch preds & gt
             prediction_dict[self.PRED_MB_CLASSIFICATION_LOGITS] = cls_logits
@@ -706,12 +724,16 @@ class AvodModel(model.DetectionModel):
             # reg Mini batch pos mask
             prediction_dict[self.PRED_MB_POS_REG_MASK] = pos_reg_mask
 
-            # Top NMS predictions
-            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = top_boxes_3d
-            prediction_dict[self.PRED_TOP_PREDICTION_SOFTMAX] = top_cls_softmax
+            if self._train_val_test == "val":
+                prediction_dict[self.PRED_BOXES] = batch_reg_boxes_3d
+                prediction_dict[self.PRED_SOFTMAX] = batch_cls_softmax
+                prediction_dict[self.PRED_NON_EMPTY_BOX_MASK] = batch_non_empty_box_mask
+                prediction_dict[self.PRED_NMS_INDICES] = nms_indices
         else:
-            prediction_dict[self.PRED_TOP_PREDICTION_BOXES_3D] = top_boxes_3d
-            prediction_dict[self.PRED_TOP_PREDICTION_SOFTMAX] = top_cls_softmax
+            prediction_dict[self.PRED_BOXES] = batch_reg_boxes_3d
+            prediction_dict[self.PRED_SOFTMAX] = batch_cls_softmax
+            prediction_dict[self.PRED_NON_EMPTY_BOX_MASK] = batch_non_empty_box_mask
+            prediction_dict[self.PRED_NMS_INDICES] = nms_indices
         return prediction_dict
 
     def _parse_brn_output(self, brn_output):
@@ -776,24 +798,61 @@ class AvodModel(model.DetectionModel):
             res_size,
         )
 
-    def create_feed_dict(self, batch_size=1):
+    def create_feed_dict(self, batch_size=1, sample_index=None):
 
         if batch_size != self._batch_size:
             raise ValueError("feed batch_size must equal to model build batch_size")
 
-        feed_dict = self._rpn_model.create_feed_dict(batch_size)
-        self._sample_names = self._rpn_model._sample_names
-        batch_proposals = []
-        batch_proposals_info = []
-        for sample_name in self._sample_names:
-            proposals = self.dataset.get_proposal(sample_name)
-            proposals_info = self.dataset.get_proposal_info(sample_name)
-            batch_proposals.append(proposals)
-            batch_proposals_info.append(proposals_info)
-        self._placeholder_inputs[self.PL_PROPOSALS] = np.asarray(batch_proposals)
-        self._placeholder_inputs[self.PL_PROPOSALS_INFO] = np.asarray(
-            batch_proposals_info
-        )
+        if self._train_val_test in ["train", "val"]:
+
+            # sample_index should be None
+            if sample_index is not None:
+                raise ValueError(
+                    "sample_index should be None. Do not load "
+                    "particular samples during train or val"
+                )
+
+            if self._train_val_test == "train":
+                # Get the a random sample from the remaining epoch
+                batch_data, sample_names = self.dataset.next_batch(
+                    batch_size, True, model="rcnn"
+                )
+
+            else:  # self._train_val_test == "val"
+                # Load samples in order for validation
+                batch_data, sample_names = self.dataset.next_batch(
+                    batch_size, False, model="rcnn"
+                )
+        else:
+            # For testing, any sample should work
+            if sample_index is not None:
+                samples = self.dataset.load_samples([sample_index], model="rcnn")
+                batch_data, sample_names = self.dataset.collate_batch(samples)
+            else:
+                batch_data, sample_names = self.dataset.next_batch(
+                    batch_size, False, model="rcnn"
+                )
+
+        self._placeholder_inputs[self.PL_PROPOSALS] = batch_data[constants.KEY_RPN_ROI]
+        self._placeholder_inputs[self.PL_PROPOSALS_IOU] = batch_data[
+            constants.KEY_RPN_IOU
+        ]
+        self._placeholder_inputs[self.PL_PROPOSALS_GT] = batch_data[
+            constants.KEY_RPN_GT
+        ]
+
+        self._placeholder_inputs[self.PL_RPN_PTS] = batch_data[constants.KEY_RPN_PTS]
+        self._placeholder_inputs[self.PL_RPN_INTENSITY] = batch_data[
+            constants.KEY_RPN_INTENSITY
+        ]
+        self._placeholder_inputs[self.PL_RPN_FG_MASK] = batch_data[
+            constants.KEY_RPN_FG_MASK
+        ].astype(np.bool)
+        self._placeholder_inputs[self.PL_RPN_FTS] = batch_data[constants.KEY_RPN_FTS]
+
+        self._sample_names = sample_names
+
+        feed_dict = dict()
         for key, value in self.placeholders.items():
             feed_dict[value] = self._placeholder_inputs[key]
         return feed_dict
@@ -881,15 +940,15 @@ class AvodModel(model.DetectionModel):
                     )
                     tf.summary.scalar("regression", regression_loss)
 
-            with tf.variable_scope("brn_loss"):
-                brn_loss = (
+            with tf.variable_scope("rcnn_loss"):
+                rcnn_loss = (
                     box_classification_loss + bin_classification_loss + regression_loss
                 )
 
-        loss_dict, rpn_loss = self._rpn_model.loss(prediction_dict)
+        loss_dict = {
+            self.LOSS_FINAL_CLASSIFICATION: box_classification_loss,
+            self.LOSS_FINAL_BIN_CLASSIFICATION: bin_classification_loss,
+            self.LOSS_FINAL_REGRESSION: regression_loss,
+        }
 
-        loss_dict.update({self.LOSS_FINAL_CLASSIFICATION: box_classification_loss})
-        loss_dict.update({self.LOSS_FINAL_BIN_CLASSIFICATION: bin_classification_loss})
-        loss_dict.update({self.LOSS_FINAL_REGRESSION: regression_loss})
-
-        return loss_dict, brn_loss
+        return loss_dict, rcnn_loss

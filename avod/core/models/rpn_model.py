@@ -3,6 +3,7 @@ import tensorflow as tf
 
 from avod.builders import feature_extractor_builder
 from avod.core import box_3d_encoder
+from avod.core import anchor_projector
 from avod.core import bin_based_box3d_encoder
 from avod.core import constants
 from avod.core import losses
@@ -26,7 +27,6 @@ class RpnModel(model.DetectionModel):
     ##############################
     PRED_SEG_SOFTMAX = "rpn_seg_softmax"
     PRED_SEG_GT = "rpn_seg_gt"
-    PRED_TOTAL_PTS = "rpn_total_pts"
 
     PRED_CLS = "rpn_cls"
     PRED_REG = "rpn_reg"
@@ -38,6 +38,15 @@ class RpnModel(model.DetectionModel):
 
     PRED_IOU_2D = "rpn_proposal_gt_iou_2d"
     PRED_IOU_3D = "rpn_proposal_gt_iou_3d"
+
+    ##############################
+    # Keys for SAVE RPN FEATURE
+    ##############################
+    SAVE_RPN_PTS = "save_rpn_pts"
+    SAVE_RPN_FTS = "save_rpn_fts"
+    SAVE_RPN_INTENSITY = "save_rpn_intensity"
+    SAVE_RPN_FG_MASK = "save_rpn_fg_mask"
+
     ##############################
     # Keys for Loss
     ##############################
@@ -157,52 +166,39 @@ class RpnModel(model.DetectionModel):
             # Placeholder for PC input, to be filled in with feed_dict
             pc_input_placeholder = self._add_placeholder(
                 tf.float32,
-                (self._batch_size, None, self._pc_data_dim),
+                (self._batch_size, self._pc_sample_pts, self._pc_data_dim),
                 self.PL_PC_INPUTS,
             )  # (B,P,C)
 
-            self._pc_pts_preprocessed, self._pc_fts_preprocessed = self._pc_feature_extractor.preprocess_input(
+            self._pc_pts_preprocessed, self._pc_intensities = self._pc_feature_extractor.preprocess_input(
                 pc_input_placeholder, self._config.input_config, self._is_training
             )
-            self._pc_intensities = self._pc_fts_preprocessed
 
         with tf.variable_scope("pl_labels"):
             self._add_placeholder(
-                tf.float32, [self._batch_size, None], self.PL_LABEL_SEGS
+                tf.float32, [self._batch_size, self._pc_sample_pts], self.PL_LABEL_SEGS
             )  # (B,P)
 
             self._add_placeholder(
-                tf.float32, [self._batch_size, None, 7], self.PL_LABEL_REGS
+                tf.float32,
+                [self._batch_size, self._pc_sample_pts, 7],
+                self.PL_LABEL_REGS,
             )  # (B,P,7)
 
             self._add_placeholder(
                 tf.float32, [self._batch_size, None, 7], self.PL_LABEL_BOXES
-            )  # (B,M,7)
-
-        with tf.variable_scope("pl_boxes"):
-            self._add_placeholder(
-                tf.float32, [self._batch_size, None, 7], self.PL_LABEL_BOXES
-            )  # (B,M,7)
+            )  # (B,m,7)
 
     def _set_up_feature_extractors(self):
         """Sets up feature extractors and stores feature maps and
         bottlenecks as member variables.
         """
-        if not self._use_intensity_feature:
-            self._pc_fts_preprocessed = None
-
         self._pc_pts, self._pc_fts = self._pc_feature_extractor.build(
-            self._pc_pts_preprocessed, self._pc_fts_preprocessed, self._is_training
+            self._pc_pts_preprocessed,
+            self._pc_intensities if self._use_intensity_feature else None,
+            self._is_training,
         )  # (B,P,3) (B,P,C)
 
-        self._pc_pts = tf.reshape(
-            self._pc_pts,
-            [self._batch_size, self._pc_sample_pts, self._pc_pts.shape[2].value],
-        )
-        self._pc_fts = tf.reshape(
-            self._pc_fts,
-            [self._batch_size, self._pc_sample_pts, self._pc_fts.shape[2].value],
-        )
         tf.summary.histogram("pc_fts", self._pc_fts)
 
     def _gather_residuals(
@@ -286,7 +282,7 @@ class RpnModel(model.DetectionModel):
 
         return mean_sizes
 
-    def build(self):
+    def build(self, **kwargs):
 
         # Setup input placeholders
         self._set_up_input_pls()
@@ -346,34 +342,30 @@ class RpnModel(model.DetectionModel):
         )
         res_y = tf.squeeze(res_y, [-1])
 
-        # Decode bin-based 3D Box
-        bin_x = tf.argmax(bin_x_logits, axis=-1, output_type=tf.int32)  # (B,P)
-        bin_z = tf.argmax(bin_z_logits, axis=-1, output_type=tf.int32)  # (B,P)
-        bin_theta = tf.argmax(bin_theta_logits, axis=-1, output_type=tf.int32)  # (B,P)
-
-        res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
-            res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
-        )
-
-        mean_sizes = self._gather_mean_sizes(
-            tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
-            seg_preds,
-        )
-
-        with tf.variable_scope("histograms_rpn"):
-            with tf.variable_scope("bin_based_proposal"):
-                for fc_layer in fc_layers:
-                    # fix the name to avoid tf warnings
-                    tf.summary.histogram(fc_layer.name.replace(":", "_"), fc_layer)
-
         # Return the proposals
         ######################################################
         with tf.variable_scope("proposals"):
+            bin_x = tf.argmax(bin_x_logits, axis=-1, output_type=tf.int32)  # (B,P)
+            bin_z = tf.argmax(bin_z_logits, axis=-1, output_type=tf.int32)  # (B,P)
+            bin_theta = tf.argmax(
+                bin_theta_logits, axis=-1, output_type=tf.int32
+            )  # (B,P)
+
+            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
+            )
+
+            mean_sizes = self._gather_mean_sizes(
+                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
+                seg_preds,
+            )
+
+            # NMS
             if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
                 print("Skip RPN-NMS during training")
-                # nms_indices = tf.zeros([self._batch_size, self._post_nms_size], tf.int32)
             else:
+                # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
                     proposals = bin_based_box3d_encoder.tf_decode(
                         self._pc_pts,
@@ -440,16 +432,34 @@ class RpnModel(model.DetectionModel):
                             sb_nms_indices = compute_iou.oriented_nms_tf(
                                 sb_boxes, sb_scores, self._nms_iou_thresh
                             )
-                            sb_nms_indices = sb_nms_indices[: self._post_nms_size]
+                            sb_nms_indices = sb_nms_indices[
+                                : tf.minimum(
+                                    self._post_nms_size, tf.shape(sb_nms_indices)[0]
+                                )
+                            ]
                         else:
+                            # ortho rotating
+                            sb_box_anchors = box_3d_encoder.tf_box_3d_to_anchor(
+                                sb_boxes
+                            )
+                            sb_bev_boxes, _ = anchor_projector.project_to_bev(
+                                sb_box_anchors, self._bev_extents
+                            )
+                            sb_bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(
+                                sb_bev_boxes
+                            )
                             sb_nms_indices = tf.image.non_max_suppression(
-                                sb_boxes,
+                                sb_bev_boxes_tf_order,
                                 sb_scores,
                                 max_output_size=self._post_nms_size,
                                 iou_threshold=self._nms_iou_thresh,
                             )
 
-                            sb_nms_indices = tf.pad(
+                        sb_nms_indices = tf.cond(
+                            tf.greater(
+                                self._post_nms_size, tf.shape(sb_nms_indices)[0]
+                            ),
+                            true_fn=lambda: tf.pad(
                                 sb_nms_indices,
                                 [
                                     [
@@ -460,7 +470,10 @@ class RpnModel(model.DetectionModel):
                                 ],
                                 mode="CONSTANT",
                                 constant_values=-1,
-                            )
+                            ),
+                            false_fn=lambda: sb_nms_indices,
+                        )
+
                         return sb_nms_indices, tf.shape(sb_nms_indices)[0]
 
                     nms_indices, num_proposals_before_padding = tf.map_fn(
@@ -522,19 +535,14 @@ class RpnModel(model.DetectionModel):
 
             with tf.variable_scope("segmentation_accuracy"):
                 self._foreground_mask = label_cls > 0  # (B,P)
-                num_foreground_pts = (
+                avg_num_foreground_pts = (
                     tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32))
                     / self._batch_size
                 )
-                tf.summary.scalar("foreground_points_num", num_foreground_pts)
+                tf.summary.scalar("avg_foreground_points_num", avg_num_foreground_pts)
                 # seg accuracy
-                all_ones = tf.ones_like(seg_preds, dtype=tf.float32)
-                num_total_pts = tf.reduce_sum(all_ones)
                 seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls))
-                # seg_accuracy = tf.reduce_mean(seg_correct)
-                seg_accuracy = (
-                    tf.reduce_sum(tf.cast(seg_correct, tf.float32)) / num_total_pts
-                )
+                seg_accuracy = tf.reduce_mean(seg_correct)
                 tf.summary.scalar("segmentation_accuracy", seg_accuracy)
 
             # Ground Truth Box Cls/Reg
@@ -586,7 +594,6 @@ class RpnModel(model.DetectionModel):
             predictions = dict()
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_SEG_GT] = segs_gt_one_hot
-            predictions[self.PRED_TOTAL_PTS] = num_total_pts
 
             # Foreground BOX predictions
             predictions[self.PRED_CLS] = (bin_x_logits, bin_z_logits, bin_theta_logits)
@@ -618,9 +625,21 @@ class RpnModel(model.DetectionModel):
                 predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
         else:
             # self._train_val_test == 'test'
+            self._foreground_mask = seg_preds > 0  # (B,P)
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_PROPOSALS] = post_nms_proposals
             predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
+
+        if (
+            self._train_val_test in ["val", "test"]
+            and "save_rpn_feature" in kwargs
+            and kwargs["save_rpn_feature"]
+        ):
+            predictions[self.SAVE_RPN_PTS] = self._pc_pts
+            predictions[self.SAVE_RPN_FTS] = self._pc_fts
+            predictions[self.SAVE_RPN_INTENSITY] = self._pc_intensities
+            predictions[self.SAVE_RPN_FG_MASK] = self._foreground_mask
+
         return predictions
 
     def _parse_rpn_output(self, rpn_output):
@@ -720,22 +739,24 @@ class RpnModel(model.DetectionModel):
             if self._train_val_test == "train":
                 # Get the a random sample from the remaining epoch
                 batch_data, sample_names = self.dataset.next_batch(
-                    batch_size, self._pc_sample_pts
+                    batch_size, True, model="rpn", pc_sample_pts=self._pc_sample_pts
                 )
 
             else:  # self._train_val_test == "val"
                 # Load samples in order for validation
                 batch_data, sample_names = self.dataset.next_batch(
-                    batch_size, self._pc_sample_pts, shuffle=False
+                    batch_size, False, model="rpn", pc_sample_pts=self._pc_sample_pts
                 )
         else:
             # For testing, any sample should work
             if sample_index is not None:
-                samples = self.dataset.load_samples([sample_index], self._pc_sample_pts)
+                samples = self.dataset.load_samples(
+                    [sample_index], model="rpn", pc_sample_pts=self._pc_sample_pts
+                )
                 batch_data, sample_names = self.dataset.collate_batch(samples)
             else:
                 batch_data, sample_names = self.dataset.next_batch(
-                    batch_size, self._pc_sample_pts, shuffle=False
+                    batch_size, False, model="rpn", pc_sample_pts=self._pc_sample_pts
                 )
 
         # this is a list to match the explicit shape for the placeholder
@@ -780,7 +801,7 @@ class RpnModel(model.DetectionModel):
                     seg_softmax, seg_gt, weight=seg_loss_weight
                 )
                 with tf.variable_scope("seg_norm"):
-                    num_total_pts = prediction_dict[self.PRED_TOTAL_PTS]
+                    num_total_pts = self._batch_size * self._pc_sample_pts
                     segmentation_loss /= num_total_pts
                     tf.summary.scalar("segmentation", segmentation_loss)
 

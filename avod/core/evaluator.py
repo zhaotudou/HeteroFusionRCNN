@@ -116,7 +116,9 @@ class Evaluator:
             self._sess = tf.Session()
 
         # The model should return a dictionary of predictions
-        self._prediction_dict = self.model.build()
+        self._prediction_dict = self.model.build(
+            save_rpn_feature=eval_config.save_rpn_feature
+        )
         if eval_mode == "val":
             # Setup loss and summary writer in val mode only
             self._loss_dict, self._total_loss = self.model.loss(self._prediction_dict)
@@ -185,16 +187,27 @@ class Evaluator:
                 )
             )
 
+            if self.eval_config.save_rpn_feature:
+                rpn_feature_dir = predictions_base_dir + "/rpn_feature/{}/{}".format(
+                    data_split, global_step
+                )
+                trainer_utils.create_dir(rpn_feature_dir)
+                os.system(
+                    "ln -snf {} {}".format(
+                        rpn_feature_dir, self.model.dataset.rpn_feature_dir
+                    )
+                )
+
             if validation:
                 eval_rpn_stats = self._create_rpn_stats_dict()
                 # Add folders to save proposals info, i.e. IoUs with GT Boxes
-                prop_info_dir = predictions_base_dir + "/proposals_info/{}/{}".format(
+                prop_iou_dir = predictions_base_dir + "/proposals_iou/{}/{}".format(
                     data_split, global_step
                 )
-                trainer_utils.create_dir(prop_info_dir)
+                trainer_utils.create_dir(prop_iou_dir)
                 os.system(
                     "ln -snf {} {}".format(
-                        prop_info_dir, self.model.dataset.proposal_info_dir
+                        prop_iou_dir, self.model.dataset.proposal_iou_dir
                     )
                 )
 
@@ -232,6 +245,13 @@ class Evaluator:
                 if os.path.exists(rpn_file_paths[0]):
                     continue
 
+                if self.eval_config.save_rpn_feature:
+                    # File paths for saving rpn features
+                    rpn_feature_paths = [
+                        rpn_feature_dir + "/{}.npy".format(sample_name)
+                        for sample_name in sample_names
+                    ]
+
             num_valid_samples += self._batch_size
             print(
                 "Step {}: {} / {}, Inference on sample {}".format(
@@ -268,17 +288,6 @@ class Evaluator:
                     self._update_avod_box_cls_loc_losses(
                         eval_avod_stats, eval_losses, eval_total_loss, global_step
                     )
-                    """
-                    if box_rep != 'box_3d':
-                        # Save box corners for all box reps
-                        # except for box_3d which is not a corner rep
-                        predicted_box_corners_and_scores = \
-                            self.get_avod_predicted_box_corners_and_scores(
-                                predictions, box_rep)
-                        np.savetxt(avod_box_corners_file_path,
-                                   predicted_box_corners_and_scores,
-                                   fmt='%.5f')
-                    """
                 else:
                     rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
                     rpn_bin_classification_loss = eval_losses[
@@ -297,10 +306,12 @@ class Evaluator:
 
                     # Save proposals
                     self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
+                    if self.eval_config.save_rpn_feature:
+                        self.save_rpn_features(predictions, rpn_feature_paths)
 
                     # Save proposals info
-                    prop_info_files = [
-                        prop_info_dir + "/{}.txt".format(sample_name)
+                    prop_iou_files = [
+                        prop_iou_dir + "/{}.txt".format(sample_name)
                         for sample_name in sample_names
                     ]
                     self.calculate_proposals_info(
@@ -308,7 +319,7 @@ class Evaluator:
                         predictions[RpnModel.PRED_IOU_3D],
                         rpn_file_paths,
                         sample_names,
-                        prop_info_files,
+                        prop_iou_files,
                         eval_rpn_stats,
                         global_step,
                     )
@@ -342,6 +353,8 @@ class Evaluator:
                     )
                 else:
                     self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
+                    if self.eval_config.save_rpn_feature:
+                        self.save_rpn_features(predictions, rpn_feature_paths)
 
         # end while current_epoch == model.dataset.epochs_completed:
 
@@ -948,6 +961,7 @@ class Evaluator:
         softmax_scores = predictions[RpnModel.PRED_OBJECTNESS_SOFTMAX]
 
         batch = proposals.shape[0]
+        assert batch == len(rpn_file_paths)
         for b in range(batch):
             top_proposals = proposals[b, :]
             top_scores = softmax_scores[b, :][:, np.newaxis]
@@ -955,13 +969,32 @@ class Evaluator:
 
             np.savetxt(rpn_file_paths[b], proposals_and_scores, fmt="%.3f")
 
+    def save_rpn_features(self, predictions, rpn_feature_paths):
+        batch_rpn_pts = predictions[RpnModel.SAVE_RPN_PTS]
+        batch_rpn_fts = predictions[RpnModel.SAVE_RPN_FTS]
+        batch_rpn_intensity = predictions[RpnModel.SAVE_RPN_INTENSITY]
+        batch_rpn_fg_mask = predictions[RpnModel.SAVE_RPN_FG_MASK]
+
+        batch = batch_rpn_pts.shape[0]
+        assert batch == len(rpn_feature_paths)
+        for b in range(batch):
+            rpn_pts = batch_rpn_pts[b, :]
+            rpn_fts = batch_rpn_fts[b, :]
+            rpn_intensity = batch_rpn_intensity[b, :]
+            rpn_fg_mask = batch_rpn_fg_mask[b, :].reshape((-1, 1))
+
+            np.save(
+                rpn_feature_paths[b],
+                np.hstack((rpn_pts, rpn_intensity, rpn_fg_mask, rpn_fts)),
+            )
+
     def calculate_proposals_info(
         self,
         proposal_gt_iou2ds,
         proposal_gt_iou3ds,
         rpn_file_paths,
         sample_names,
-        prop_info_files,
+        prop_iou_files,
         eval_rpn_stats,
         global_step,
     ):
@@ -970,7 +1003,7 @@ class Evaluator:
         for i in range(len(rpn_file_paths)):
             rpn_file = rpn_file_paths[i]
             sample_name = sample_names[i]
-            prop_info_file = prop_info_files[i]
+            prop_iou_file = prop_iou_files[i]
 
             top_proposals = np.loadtxt(rpn_file).reshape((-1, 8))[:, 0:7]
 
@@ -992,7 +1025,7 @@ class Evaluator:
             ]
             label_classes = np.asarray(label_classes, dtype=np.int32)
 
-            recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = box_util.compute_recall_iou(
+            recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls, mx_iou3ds = box_util.compute_recall_iou(
                 top_proposals,
                 label_boxes_3d,
                 label_classes,
@@ -1003,15 +1036,7 @@ class Evaluator:
             num_props = top_proposals.shape[0]
             num_labels = label_boxes_3d.shape[0]
 
-            proposals_info = np.column_stack(
-                [
-                    iou2ds.reshape((num_props, 1)),
-                    iou3ds.reshape((num_props, 1)),
-                    iou3ds_gt_boxes.reshape((num_props, 7)),
-                    iou3ds_gt_cls.reshape((num_props, 1)),
-                ]
-            )
-            np.savetxt(prop_info_file, proposals_info, fmt="%.3f")
+            np.savetxt(prop_iou_file, mx_iou3ds, fmt="%.3f")
 
             sum_rpn_recall_50 = eval_rpn_stats[KEY_SUM_RPN_RECALL_50]
             sum_rpn_recall_70 = eval_rpn_stats[KEY_SUM_RPN_RECALL_70]

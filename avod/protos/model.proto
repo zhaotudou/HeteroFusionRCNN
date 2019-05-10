@@ -1,6 +1,5 @@
 package avod.protos;
 
-import "avod/protos/mini_batch.proto";
 import "avod/protos/layers.proto";
 
 // Message for configuring the DetectionModel.
@@ -123,8 +122,6 @@ message AvodConfig {
 
     required float avod_pooling_context_length = 11; 
     
-    optional MiniBatchConfig mini_batch_config = 12;
-
     // Whether to use intensity feature along with mask and distance to sensor features
     required bool avod_use_intensity_feature = 13;
 }
