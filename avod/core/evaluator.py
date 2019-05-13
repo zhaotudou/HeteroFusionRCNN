@@ -230,11 +230,11 @@ class Evaluator:
             sample_names = self.model._sample_names
 
             if self.full_model:
-                assert len(sample_names) == 1
-                avod_file_path = avod_predictions_dir + "/{}.txt".format(
-                    sample_names[0]
-                )
-                if os.path.exists(avod_file_path):
+                avod_file_paths = [
+                    avod_predictions_dir + "/{}.txt".format(sample_name)
+                    for sample_name in sample_names
+                ]
+                if os.path.exists(avod_file_paths[0]):
                     continue
             else:
                 # File paths for saving proposals and predictions
@@ -282,7 +282,7 @@ class Evaluator:
                 if self.full_model:
                     # Save predictions
                     self.save_avod_predicted_boxes_3d_and_scores(
-                        predictions, avod_file_path
+                        predictions, avod_file_paths
                     )
 
                     self._update_avod_box_cls_loc_losses(
@@ -349,7 +349,7 @@ class Evaluator:
 
                 if self.full_model:
                     self.save_avod_predicted_boxes_3d_and_scores(
-                        predictions, avod_file_path
+                        predictions, avod_file_paths
                     )
                 else:
                     self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
@@ -600,7 +600,7 @@ class Evaluator:
         sum_avod_total_loss = eval_avod_stats[KEY_SUM_AVOD_TOTAL_LOSS]
 
         # for the full model, we expect a total of 4 losses
-        assert len(eval_losses) > 3
+        assert len(eval_losses) >= 3
         avod_classification_loss = eval_losses[AvodModel.LOSS_FINAL_CLASSIFICATION]
         avod_bin_classification_loss = eval_losses[
             AvodModel.LOSS_FINAL_BIN_CLASSIFICATION
@@ -1070,7 +1070,7 @@ class Evaluator:
                 )
             )
 
-    def save_avod_predicted_boxes_3d_and_scores(self, predictions, avod_file_path):
+    def save_avod_predicted_boxes_3d_and_scores(self, predictions, avod_file_paths):
         """Returns the predictions and scores stacked for saving to file.
 
         Args:
@@ -1084,28 +1084,60 @@ class Evaluator:
                 boxes, orientations, scores, and types.
         """
 
-        final_pred_boxes_3d = predictions[AvodModel.PRED_TOP_PREDICTION_BOXES_3D]
+        batch_pred_boxes_3d = predictions[AvodModel.PRED_BOXES]
 
         # Append score and class index (object type)
-        final_pred_softmax = predictions[AvodModel.PRED_TOP_PREDICTION_SOFTMAX]
+        batch_pred_softmax = predictions[AvodModel.PRED_SOFTMAX]
 
-        # Find max class score index
-        not_bkg_scores = final_pred_softmax[:, 1:]
-        final_pred_types = np.argmax(not_bkg_scores, axis=1)
+        batch_non_empty_box_mask = predictions[AvodModel.PRED_NON_EMPTY_BOX_MASK]
+        batch_nms_indices = predictions[AvodModel.PRED_NMS_INDICES]
 
-        # Take max class score (ignoring background)
-        final_pred_scores = np.array([])
-        for pred_idx in range(len(final_pred_boxes_3d)):
-            all_class_scores = not_bkg_scores[pred_idx]
-            max_class_score = all_class_scores[final_pred_types[pred_idx]]
-            final_pred_scores = np.append(final_pred_scores, max_class_score)
+        Batch = batch_nms_indices.shape[0]
+        NMS = batch_nms_indices.shape[1]
+        for b in range(Batch):
+            sb_pred_boxes_3d = batch_pred_boxes_3d[b]
+            sb_pred_softmax = batch_pred_softmax[b]
+            sb_non_empty_box_mask = batch_non_empty_box_mask[b]
+            sb_nms_indices = batch_nms_indices[b]
+            # filter out empty preds
+            non_empty_boxes_3d = sb_pred_boxes_3d[sb_non_empty_box_mask]
+            non_empty_softmax = sb_pred_softmax[sb_non_empty_box_mask]
+            # apply nms filter
+            final_pred_boxes_3d = []
+            final_pred_softmax = []
+            for n in range(NMS):
+                idx = sb_nms_indices[n]
+                if idx == -1:
+                    break
+                final_pred_boxes_3d.append(non_empty_boxes_3d[idx])
+                final_pred_softmax.append(non_empty_softmax[idx])
+            final_pred_boxes_3d = np.asarray(final_pred_boxes_3d).reshape((-1, 7))
+            final_pred_softmax = np.asarray(final_pred_softmax).reshape(
+                (-1, sb_pred_softmax.shape[-1])
+            )
+            # remove duplicate preds
+            final_pred_boxes_3d, uniq_idx = np.unique(
+                final_pred_boxes_3d, axis=0, return_index=True
+            )
+            final_pred_softmax = final_pred_softmax[uniq_idx]
 
-        # Stack into prediction format
-        predictions_and_scores = np.column_stack(
-            [final_pred_boxes_3d, final_pred_scores, final_pred_types]
-        )
+            # Find max class score index
+            not_bkg_scores = final_pred_softmax[:, 1:]
+            final_pred_types = np.argmax(not_bkg_scores, axis=1)
 
-        np.savetxt(avod_file_path, predictions_and_scores, fmt="%.5f")
+            # Take max class score (ignoring background)
+            final_pred_scores = np.array([])
+            for pred_idx in range(len(final_pred_boxes_3d)):
+                all_class_scores = not_bkg_scores[pred_idx]
+                max_class_score = all_class_scores[final_pred_types[pred_idx]]
+                final_pred_scores = np.append(final_pred_scores, max_class_score)
+
+            # Stack into prediction format
+            predictions_and_scores = np.column_stack(
+                [final_pred_boxes_3d, final_pred_scores, final_pred_types]
+            )
+
+            np.savetxt(avod_file_paths[b], predictions_and_scores, fmt="%.5f")
 
     def get_avod_predicted_box_corners_and_scores(self, predictions, box_rep):
 

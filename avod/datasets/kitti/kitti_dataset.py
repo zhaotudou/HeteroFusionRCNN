@@ -448,24 +448,34 @@ class KittiDataset:
                     ]
                 )
 
+                gt_info = np.hstack((gt_boxes3d, gt_classes.reshape((-1, 1))))
+
+                iou3d = self.get_proposal_iou(sample.name).reshape(
+                    (-1, gt_boxes3d.shape[0])
+                )
+
             rpn_pts, rpn_intensity, rpn_fg_mask, rpn_fts = self.get_rpn_features(
                 sample.name
             )
             roi_boxes3d = self.get_proposal(sample.name)
 
-            if self.has_labels:
-                iou3d = self.get_proposal_iou(sample.name).reshape(
-                    (-1, gt_boxes3d.shape[0])
-                )
-                gt_info = np.hstack((gt_boxes3d, gt_classes.reshape((-1, 1))))
-                rois, iou_of_rois, gt_of_rois = self.sample_rois_for_rcnn(
+            if self.train_val_test == "train":
+                rois, iou_of_rois, gt_of_rois = self.sample_rois_for_rcnn_training(
                     roi_boxes3d, iou3d, gt_info
                 )
+            elif self.train_val_test == "val":
+                rois = roi_boxes3d
+                iou_of_rois = iou3d.max(axis=1)
+                gt_of_rois = gt_info[iou3d.argmax(axis=1)]
+            elif self.train_val_test == "test":
+                rois = roi_boxes3d
+                iou_of_rois = np.zeros(rois.shape[0])
+                gt_of_rois = np.zeros((rois.shape[0], 8))
             else:
-                rois = np.zeros((self.roi_per_sample, 7))
-                iou_of_rois = np.zeros(self.roi_per_sample)
-                gt_of_rois = np.zeros((self.roi_per_sample, 8))
-                pass
+                raise ValueError(
+                    "Invalid train_val_test value,"
+                    'should be one of ["train", "val", "test"]'
+                )
 
             sample_dict = {
                 constants.KEY_RPN_PTS: rpn_pts,
@@ -482,7 +492,7 @@ class KittiDataset:
 
         return sample_dicts
 
-    def sample_rois_for_rcnn(self, roi_boxes3d, iou3d, gt_info):
+    def sample_rois_for_rcnn_training(self, roi_boxes3d, iou3d, gt_info):
         """
         :param roi_boxes3d: (m, 7)
         :param iou3d: (m, n)

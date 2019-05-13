@@ -53,7 +53,10 @@ def inference(model_config, eval_config, dataset_config):
             if eval_config.save_rpn_feature:
                 raise ValueError("Full Model don't support --save_rpn_feature")
             model = AvodModel(
-                model_config, train_val_test=eval_config.eval_mode, dataset=dataset
+                model_config,
+                train_val_test=eval_config.eval_mode,
+                dataset=dataset,
+                batch_size=eval_config.batch_size,
             )
         elif model_name == "rpn_model":
             model = RpnModel(

@@ -542,7 +542,7 @@ class RpnModel(model.DetectionModel):
                 tf.summary.scalar("avg_foreground_points_num", avg_num_foreground_pts)
                 # seg accuracy
                 seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls))
-                seg_accuracy = tf.reduce_mean(seg_correct)
+                seg_accuracy = tf.reduce_mean(tf.to_float(seg_correct))
                 tf.summary.scalar("segmentation_accuracy", seg_accuracy)
 
             # Ground Truth Box Cls/Reg
