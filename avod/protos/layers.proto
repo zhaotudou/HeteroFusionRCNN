@@ -18,6 +18,8 @@ message FeatureExtractor {
 
         PyramidLayersConfig img_vgg_pyr = 3;
         PyramidLayersConfig bev_vgg_pyr = 4;
+
+        PointCNNLayersConfig pc_pointnet = 5;
     }
 }
 
