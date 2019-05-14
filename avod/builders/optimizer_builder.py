@@ -16,6 +16,7 @@
 """Functions to build DetectionModel training optimizers."""
 
 import tensorflow as tf
+import horovod.tensorflow as hvd
 
 slim = tf.contrib.slim
 
@@ -101,7 +102,7 @@ def _create_learning_rate(learning_rate_config, global_summaries, global_step):
     elif learning_rate_type == "exponential_decay_learning_rate":
         config = learning_rate_config.exponential_decay_learning_rate
         learning_rate = tf.train.exponential_decay(
-            config.initial_learning_rate,
+            config.initial_learning_rate * hvd.size(),
             global_step,
             config.decay_steps,
             config.decay_factor,
