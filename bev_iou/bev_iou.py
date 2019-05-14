@@ -60,7 +60,9 @@ if __name__ == "__main__":
     print("\nbev_iou:")
     print(bev_iou)
 
-    boxes = np.asarray([[0, 0, 1, 1, 0], [2, 2, 3, 3, 0]], dtype=np.float32)
+    boxes = np.asarray(
+        [[0, 0, 1, 1, 0], [2, 2, 3, 3, 0], [0, 0, 0.75, 0.75, 0]], dtype=np.float32
+    )
     threshold = 0.5
 
     keep_idxs = oriented_nms(boxes, threshold)
