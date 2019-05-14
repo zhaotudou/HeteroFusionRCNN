@@ -105,6 +105,12 @@ class OrientedNMSOp: public OpKernel{
         }
       }
 
+      // pad the rest of keep data with the first value of selected
+      // I would assume it must be 0
+      for (; num_to_keep < boxes_num; num_to_keep++) {
+        keep_data_cpu[num_to_keep] = keep_data_cpu[0];
+      }
+
       // copy output from cpu to gpu
       CHECK_ERROR(cudaMemcpy(keep_data, &keep_data_cpu[0], boxes_num * sizeof(int),
                             cudaMemcpyHostToDevice));

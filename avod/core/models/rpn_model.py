@@ -2,8 +2,6 @@ import numpy as np
 import tensorflow as tf
 
 from avod.builders import feature_extractor_builder
-from avod.core import box_3d_encoder
-from avod.core import anchor_projector
 from avod.core import bin_based_box3d_encoder
 from avod.core import constants
 from avod.core import losses
@@ -11,6 +9,7 @@ from avod.core import model
 from avod.core import pointfly as pf
 from avod.core.anchor_generators import grid_anchor_3d_generator
 from avod.core import compute_iou
+from avod.core.models import model_util
 
 
 class RpnModel(model.DetectionModel):
@@ -35,6 +34,7 @@ class RpnModel(model.DetectionModel):
 
     PRED_PROPOSALS = "rpn_proposals"
     PRED_OBJECTNESS_SOFTMAX = "rpn_objectness_softmax"
+    PRED_NUM_PROPOSALS_BEFORE_PADDING = "rpn_num_proposals_before_padding"
 
     PRED_IOU_2D = "rpn_proposal_gt_iou_2d"
     PRED_IOU_3D = "rpn_proposal_gt_iou_3d"
@@ -91,6 +91,7 @@ class RpnModel(model.DetectionModel):
         rpn_config = self._config.rpn_config
         self._use_intensity_feature = rpn_config.rpn_use_intensity_feature
         self._fusion_method = rpn_config.rpn_fusion_method
+        self._fixed_num_proposal_nms = rpn_config.rpn_fixed_num_proposal_nms
 
         if self._train_val_test in ["train", "val"]:
             self._pre_nms_size = rpn_config.rpn_train_pre_nms_size
@@ -100,6 +101,10 @@ class RpnModel(model.DetectionModel):
             self._pre_nms_size = rpn_config.rpn_test_pre_nms_size
             self._post_nms_size = rpn_config.rpn_test_post_nms_size
             self._nms_iou_thresh = rpn_config.rpn_test_nms_iou_thresh
+
+        assert (
+            self._pre_nms_size >= self._post_nms_size
+        ), "post nms size must be no greater than pre nms size"
 
         self.S = rpn_config.rpn_xz_search_range
         self.DELTA = rpn_config.rpn_xz_bin_len
@@ -309,11 +314,42 @@ class RpnModel(model.DetectionModel):
                 seg_softmax[:, :, 1:], axis=-1, name="seg_scores"
             )  # (B,P)
 
+        label_cls = self.placeholders[self.PL_LABEL_SEGS]  # (B,P)
+        label_reg = self.placeholders[self.PL_LABEL_REGS]  # (B,P,7)
+
+        proposal_pts = self._pc_pts
+        proposal_fts = self._pc_fts
+        proposal_preds = seg_preds
+        proposal_scores = seg_scores
+        proposal_label_reg = label_reg
+
+        # foreground point masking
+        with tf.variable_scope("foreground_masking"):
+            if self._train_val_test in ["train", "val"]:
+                self._foreground_mask = label_cls > 0  # (B,P)
+            else:
+                self._foreground_mask = seg_preds > 0  # (B,P)
+
+            if (
+                self._train_val_test in ["val", "test"]
+                and not self._fixed_num_proposal_nms
+            ):
+                proposal_pts, proposal_fts, proposal_preds, proposal_scores, proposal_label_reg = model_util.foreground_masking(
+                    self._foreground_mask,
+                    self.NUM_FG_POINT,
+                    self._batch_size,
+                    self._pc_pts,
+                    self._pc_fts,
+                    seg_preds,
+                    seg_scores,
+                    label_reg,
+                )
+
         # branch-2: bin-based 3D proposal generation
         #########################################
         with tf.variable_scope("bin_based_rpn"):
             # Parse rpn layers config
-            fc_layers = [self._pc_fts]
+            fc_layers = [proposal_fts]
             layers_config = self._config.layers_config.rpn_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
                 C = layer_param.C
@@ -368,7 +404,7 @@ class RpnModel(model.DetectionModel):
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
                     proposals = bin_based_box3d_encoder.tf_decode(
-                        self._pc_pts,
+                        proposal_pts,
                         0,
                         bin_x,
                         res_x_norm,
@@ -385,39 +421,29 @@ class RpnModel(model.DetectionModel):
                         self.DELTA_THETA,
                     )  # (B,P,7)
 
-                # bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
-                # bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
-                # bin_theta_scores = tf.reduce_max(
-                #     tf.nn.softmax(bin_theta_logits), axis=-1
-                # )
-
-                # confidence = (
-                #     seg_scores
-                #     * bin_x_scores
-                #     * bin_z_scores
-                #     * bin_theta_scores
-                # ) # (B,P)
-                confidences = seg_scores
-
-                # get _pre_nms_size number of proposals for NMS
-                _, sorted_idxs = tf.nn.top_k(
-                    confidences, k=self._pre_nms_size, sorted=True
-                )
-
-                def gather_top_n(sb_data):
-                    sb_proposals, sb_confidences, sb_seg_scores, sb_sorted_idxs = (
-                        sb_data
+                if self._fixed_num_proposal_nms:
+                    confidences = proposal_scores
+                    # get _pre_nms_size number of proposals for NMS
+                    _, sorted_idxs = tf.nn.top_k(
+                        confidences, k=self._pre_nms_size, sorted=True
                     )
-                    sorted_confidences = tf.gather(sb_confidences, sb_sorted_idxs)
-                    sorted_proposals = tf.gather(sb_proposals, sb_sorted_idxs)
-                    sorted_seg_scores = tf.gather(sb_seg_scores, sb_sorted_idxs)
-                    return sorted_proposals, sorted_confidences, sorted_seg_scores
 
-                pre_nms_proposals, pre_nms_confidences, pre_nms_seg_scores = tf.map_fn(
-                    gather_top_n,
-                    elems=(proposals, confidences, seg_scores, sorted_idxs),
-                    dtype=(tf.float32, tf.float32, tf.float32),
-                )
+                    pre_nms_proposals, pre_nms_confidences = tf.map_fn(
+                        model_util.gather_top_n,
+                        elems=(proposals, confidences, sorted_idxs),
+                        dtype=(tf.float32, tf.float32, tf.float32),
+                    )
+                else:
+                    bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
+                    bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
+                    bin_theta_scores = tf.reduce_max(
+                        tf.nn.softmax(bin_theta_logits), axis=-1
+                    )
+
+                    confidences = (
+                        proposal_scores * bin_x_scores * bin_z_scores * bin_theta_scores
+                    )  # (B,P)
+                    pre_nms_proposals, pre_nms_confidences = (proposals, confidences)
 
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
@@ -426,93 +452,32 @@ class RpnModel(model.DetectionModel):
                 # BEV-NMS and ignore multiclass
                 with tf.variable_scope("bev_nms"):
 
-                    def sb_nms_fn(args):
-                        (sb_boxes, sb_scores) = args
-                        if oriented_NMS:
-                            sb_nms_indices = compute_iou.oriented_nms_tf(
-                                sb_boxes, sb_scores, self._nms_iou_thresh
-                            )
-                            sb_nms_indices = sb_nms_indices[
-                                : tf.minimum(
-                                    self._post_nms_size, tf.shape(sb_nms_indices)[0]
-                                )
-                            ]
-                        else:
-                            # ortho rotating
-                            sb_box_anchors = box_3d_encoder.tf_box_3d_to_anchor(
-                                sb_boxes
-                            )
-                            sb_bev_boxes, _ = anchor_projector.project_to_bev(
-                                sb_box_anchors, self._bev_extents
-                            )
-                            sb_bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(
-                                sb_bev_boxes
-                            )
-                            sb_nms_indices = tf.image.non_max_suppression(
-                                sb_bev_boxes_tf_order,
-                                sb_scores,
-                                max_output_size=self._post_nms_size,
-                                iou_threshold=self._nms_iou_thresh,
-                            )
-
-                        sb_nms_indices = tf.cond(
-                            tf.greater(
-                                self._post_nms_size, tf.shape(sb_nms_indices)[0]
-                            ),
-                            true_fn=lambda: tf.pad(
-                                sb_nms_indices,
-                                [
-                                    [
-                                        0,
-                                        self._post_nms_size
-                                        - tf.shape(sb_nms_indices)[0],
-                                    ]
-                                ],
-                                mode="CONSTANT",
-                                constant_values=-1,
-                            ),
-                            false_fn=lambda: sb_nms_indices,
+                    def sb_nms_fn(x):
+                        return model_util.sb_nms_fn(
+                            x,
+                            oriented_NMS,
+                            self._nms_iou_thresh,
+                            self._post_nms_size,
+                            self._fixed_num_proposal_nms,
+                            self._bev_extents,
                         )
-
-                        return sb_nms_indices, tf.shape(sb_nms_indices)[0]
 
                     nms_indices, num_proposals_before_padding = tf.map_fn(
                         sb_nms_fn,
                         elems=[pre_nms_proposals, pre_nms_confidences],
                         dtype=(tf.int32, tf.int32),
                     )
-
-                    tf.summary.scalar(
-                        "(avg) sum_proposals_before_padding",
-                        tf.reduce_sum(num_proposals_before_padding) / self._batch_size,
+                    post_nms_proposals, post_nms_confidences = tf.map_fn(
+                        model_util.sb_nms_selection,
+                        elems=(pre_nms_proposals, pre_nms_confidences, nms_indices),
+                        dtype=(tf.float32, tf.float32),
                     )
 
                 # Compute IOUs
                 if self._train_val_test == "val":
                     with tf.variable_scope("compute_ious"):
-
-                        def sb_nms_selection(args):
-                            sb_proposals, sb_scores, sb_nms_indices = args
-                            sb_post_nms_proposals = tf.gather(
-                                sb_proposals, sb_nms_indices, axis=0
-                            )
-                            sb_post_nms_scores = tf.gather(
-                                sb_scores, sb_nms_indices, axis=0
-                            )
-                            return sb_post_nms_proposals, sb_post_nms_scores
-
-                        post_nms_proposals, post_nms_seg_scores = tf.map_fn(
-                            sb_nms_selection,
-                            elems=(pre_nms_proposals, pre_nms_seg_scores, nms_indices),
-                            dtype=(tf.float32, tf.float32),
-                        )
-
-                        def sb_compute_iou(args):
-                            proposal_boxes, gt_boxes = args
-                            return compute_iou.box3d_iou_tf(proposal_boxes, gt_boxes)
-
                         iou3ds, iou2ds = tf.map_fn(
-                            sb_compute_iou,
+                            model_util.sb_compute_iou,
                             elems=(
                                 post_nms_proposals,
                                 self.placeholders[self.PL_LABEL_BOXES],
@@ -521,8 +486,6 @@ class RpnModel(model.DetectionModel):
                         )
 
         if self._train_val_test in ["train", "val"]:
-            label_cls = self.placeholders[self.PL_LABEL_SEGS]  # (B,P)
-            label_reg = self.placeholders[self.PL_LABEL_REGS]  # (B,P,7)
             ######################################################
             # GTs for the loss function & metrics
             ######################################################
@@ -534,7 +497,6 @@ class RpnModel(model.DetectionModel):
                 )
 
             with tf.variable_scope("segmentation_accuracy"):
-                self._foreground_mask = label_cls > 0  # (B,P)
                 avg_num_foreground_pts = (
                     tf.reduce_sum(tf.cast(self._foreground_mask, tf.float32))
                     / self._batch_size
@@ -557,9 +519,9 @@ class RpnModel(model.DetectionModel):
                     res_y_gt,
                     res_size_gt,
                 ) = bin_based_box3d_encoder.tf_encode(
-                    self._pc_pts,
+                    proposal_pts,
                     0,
-                    label_reg,
+                    proposal_label_reg,
                     mean_sizes,
                     self.S,
                     self.DELTA,
@@ -567,25 +529,14 @@ class RpnModel(model.DetectionModel):
                     self.DELTA_THETA,
                 )
 
-                bin_x_gt_one_hot = tf.one_hot(
-                    tf.to_int32(bin_x_gt),
-                    depth=int(2 * self.S / self.DELTA),
-                    on_value=1.0,
-                    off_value=0.0,
-                )
-
-                bin_z_gt_one_hot = tf.one_hot(
-                    tf.to_int32(bin_z_gt),
-                    depth=int(2 * self.S / self.DELTA),
-                    on_value=1.0,
-                    off_value=0.0,
-                )
-
-                bin_theta_gt_one_hot = tf.one_hot(
-                    tf.to_int32(bin_theta_gt),
-                    depth=int(2 * self.R / self.DELTA_THETA),
-                    on_value=1.0,
-                    off_value=0.0,
+                bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = model_util.x_z_theta_one_hot_encoding(
+                    bin_x_gt,
+                    bin_z_gt,
+                    bin_theta_gt,
+                    self.S,
+                    self.DELTA,
+                    self.R,
+                    self.DELTA_THETA,
                 )
 
             ######################################################
@@ -622,13 +573,18 @@ class RpnModel(model.DetectionModel):
                 predictions[self.PRED_IOU_2D] = iou2ds
                 predictions[self.PRED_IOU_3D] = iou3ds
                 predictions[self.PRED_PROPOSALS] = post_nms_proposals
-                predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
+                predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_confidences
+                predictions[
+                    self.PRED_NUM_PROPOSALS_BEFORE_PADDING
+                ] = num_proposals_before_padding
         else:
             # self._train_val_test == 'test'
-            self._foreground_mask = seg_preds > 0  # (B,P)
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_PROPOSALS] = post_nms_proposals
-            predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_seg_scores
+            predictions[self.PRED_OBJECTNESS_SOFTMAX] = post_nms_confidences
+            predictions[
+                self.PRED_NUM_PROPOSALS_BEFORE_PADDING
+            ] = num_proposals_before_padding
 
         if (
             self._train_val_test in ["val", "test"]
@@ -639,7 +595,6 @@ class RpnModel(model.DetectionModel):
             predictions[self.SAVE_RPN_FTS] = self._pc_fts
             predictions[self.SAVE_RPN_INTENSITY] = self._pc_intensities
             predictions[self.SAVE_RPN_FG_MASK] = self._foreground_mask
-
         return predictions
 
     def _parse_rpn_output(self, rpn_output):

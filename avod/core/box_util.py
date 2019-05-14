@@ -148,8 +148,8 @@ def compute_recall_iou(
     """
     n = pred_boxes_3d.shape[0]
     m = label_boxes_3d.shape[0]
-    mx_iou2ds = proposal_gt_iou2d[:, :m]
-    mx_iou3ds = proposal_gt_iou3d[:, :m]
+    mx_iou2ds = proposal_gt_iou2d[:n, :m]
+    mx_iou3ds = proposal_gt_iou3d[:n, :m]
     iou2ds = np.zeros((n), dtype=np.float32)
     iou3ds = np.zeros((n), dtype=np.float32)
     iou3ds_gt_boxes = np.zeros((n, 7), dtype=np.float32)

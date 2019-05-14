@@ -959,12 +959,19 @@ class Evaluator:
         """
         proposals = predictions[RpnModel.PRED_PROPOSALS]
         softmax_scores = predictions[RpnModel.PRED_OBJECTNESS_SOFTMAX]
+        num_proposals_before_padding = [len(sb_proposals) for sb_proposals in proposals]
+        if not self.model_config.rpn_config.rpn_fixed_num_proposal_nms:
+            num_proposals_before_padding = predictions[
+                RpnModel.PRED_NUM_PROPOSALS_BEFORE_PADDING
+            ]
 
         batch = proposals.shape[0]
         assert batch == len(rpn_file_paths)
         for b in range(batch):
-            top_proposals = proposals[b, :]
-            top_scores = softmax_scores[b, :][:, np.newaxis]
+            top_proposals = proposals[b, : num_proposals_before_padding[b]]
+            top_scores = softmax_scores[b, : num_proposals_before_padding[b]][
+                :, np.newaxis
+            ]
             proposals_and_scores = np.hstack((top_proposals, top_scores))
 
             np.savetxt(rpn_file_paths[b], proposals_and_scores, fmt="%.3f")
