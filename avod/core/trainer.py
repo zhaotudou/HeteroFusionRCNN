@@ -123,84 +123,85 @@ def train(model, train_config):
         input_pcs=summary_pc_images,
     )
 
-    allow_gpu_mem_growth = train_config.allow_gpu_mem_growth
-    if allow_gpu_mem_growth:
-        # GPU memory config
-        config = tf.ConfigProto()
-        config.gpu_options.allow_growth = allow_gpu_mem_growth
-        sess = tf.Session(config=config)
-    else:
-        sess = tf.Session()
-    # sess = tf_debug.LocalCLIDebugWrapperSession(sess, dump_root='/data/ljh/HeteroFusion/dump')
+    with tf.contrib.tfprof.ProfileContext("/tmp/train_dir"):
+        allow_gpu_mem_growth = train_config.allow_gpu_mem_growth
+        if allow_gpu_mem_growth:
+            # GPU memory config
+            config = tf.ConfigProto()
+            config.gpu_options.allow_growth = allow_gpu_mem_growth
+            sess = tf.Session(config=config)
+        else:
+            sess = tf.Session()
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess, dump_root='/data/ljh/HeteroFusion/dump')
 
-    # Create unique folder name using datetime for summary writer
-    datetime_str = str(datetime.datetime.now())
-    logdir = logdir + "/train"
-    train_writer = tf.summary.FileWriter(logdir + "/" + datetime_str, sess.graph)
+        # Create unique folder name using datetime for summary writer
+        datetime_str = str(datetime.datetime.now())
+        logdir = logdir + "/train"
+        train_writer = tf.summary.FileWriter(logdir + "/" + datetime_str, sess.graph)
 
-    # Create init op
-    init = tf.global_variables_initializer()
+        # Create init op
+        init = tf.global_variables_initializer()
 
-    # Continue from last saved checkpoint
-    if not train_config.overwrite_checkpoints:
-        trainer_utils.load_checkpoints(checkpoint_dir, saver)
-        if len(saver.last_checkpoints) > 0:
-            checkpoint_to_restore = saver.last_checkpoints[-1]
-            if model_config.alternating_training_step in [2]:
-                sess.run(init)
-                trainer_utils.load_model_weights(sess, checkpoint_to_restore)
+        # Continue from last saved checkpoint
+        if not train_config.overwrite_checkpoints:
+            trainer_utils.load_checkpoints(checkpoint_dir, saver)
+            if len(saver.last_checkpoints) > 0:
+                checkpoint_to_restore = saver.last_checkpoints[-1]
+                if model_config.alternating_training_step in [2]:
+                    sess.run(init)
+                    trainer_utils.load_model_weights(sess, checkpoint_to_restore)
+                else:
+                    saver.restore(sess, checkpoint_to_restore)
             else:
-                saver.restore(sess, checkpoint_to_restore)
+                # Initialize the variables
+                sess.run(init)
         else:
             # Initialize the variables
             sess.run(init)
-    else:
-        # Initialize the variables
-        sess.run(init)
 
-    # Read the global step if restored
-    global_step = tf.train.global_step(sess, global_step_tensor)
-    print("Starting from step {} / {}".format(global_step, max_iterations))
+        # Read the global step if restored
+        global_step = tf.train.global_step(sess, global_step_tensor)
+        print("Starting from step {} / {}".format(global_step, max_iterations))
 
-    # Main Training Loop
-    last_time = time.time()
-    for step in range(global_step, max_iterations + 1):
+        # Main Training Loop
+        last_time = time.time()
+        for step in range(global_step, max_iterations + 1):
 
-        # Save checkpoint
-        if step % checkpoint_interval == 0:
-            global_step = tf.train.global_step(sess, global_step_tensor)
+            # Save checkpoint
+            if step % checkpoint_interval == 0:
+                global_step = tf.train.global_step(sess, global_step_tensor)
 
-            saver.save(sess, save_path=checkpoint_path, global_step=global_step)
+                saver.save(sess, save_path=checkpoint_path, global_step=global_step)
 
-            print(
-                "Step {} / {}, Checkpoint saved to {}-{:08d}".format(
-                    step, max_iterations, checkpoint_path, global_step
+                print(
+                    "Step {} / {}, Checkpoint saved to {}-{:08d}".format(
+                        step, max_iterations, checkpoint_path, global_step
+                    )
                 )
-            )
 
-        # Create feed_dict for inferencing
-        feed_dict = model.create_feed_dict(batch_size)
+            # Create feed_dict for inferencing
+            feed_dict = model.create_feed_dict(batch_size)
 
-        # Write summaries and train op
-        if step % summary_interval == 0:
-            current_time = time.time()
-            time_elapsed = current_time - last_time
-            last_time = current_time
+            # Write summaries and train op
+            if step % summary_interval == 0:
+                current_time = time.time()
+                time_elapsed = current_time - last_time
+                last_time = current_time
 
-            train_op_loss, summary_out = sess.run(
-                [train_op, summary_merged], feed_dict=feed_dict
-            )
-
-            print(
-                "Step {}, Total Loss {:0.3f}, Time Elapsed {:0.3f} s".format(
-                    step, train_op_loss, time_elapsed
+                train_op_loss, summary_out = sess.run(
+                    [train_op, summary_merged], feed_dict=feed_dict
                 )
-            )
-            train_writer.add_summary(summary_out, step)
 
-        else:
-            # Run the train op only
-            sess.run(train_op, feed_dict)
+                print(
+                    "Step {}, Total Loss {:0.3f}, Time Elapsed {:0.3f} s".format(
+                        step, train_op_loss, time_elapsed
+                    )
+                )
+                train_writer.add_summary(summary_out, step)
+
+            else:
+                # Run the train op only
+                sess.run(train_op, feed_dict)
 
     # Close the summary writers
     train_writer.close()

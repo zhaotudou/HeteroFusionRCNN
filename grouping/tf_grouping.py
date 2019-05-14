@@ -73,21 +73,24 @@ def knn_point(k, xyz1, xyz2):
     # n = xyz1.get_shape()[1].value
     # c = xyz1.get_shape()[2].value
     # m = xyz2.get_shape()[1].value
-    b = tf.shape(xyz1)[0]
-    n = tf.shape(xyz1)[1]
-    c = tf.shape(xyz1)[2]
-    m = tf.shape(xyz2)[1]
     # print b, n, c, m
     # print xyz1, (b,1,n,c)
-    xyz1 = tf.tile(tf.reshape(xyz1, (b, 1, n, c)), [1, m, 1, 1])
-    xyz2 = tf.tile(tf.reshape(xyz2, (b, m, 1, c)), [1, 1, n, 1])
-    dist = tf.reduce_sum((xyz1 - xyz2) ** 2, -1)
+    # xyz1 = tf.tile(tf.reshape(xyz1, (b, 1, n, c)), [1, m, 1, 1])
+    # xyz2 = tf.tile(tf.reshape(xyz2, (b, m, 1, c)), [1, 1, n, 1])
+    # dist = tf.reduce_sum((xyz1 - xyz2) ** 2, -1)
+
+    r_xyz1 = tf.reduce_sum(xyz1 * xyz1, axis=2, keep_dims=True)  # (N, P_A, 1) (b, n, 1)
+    r_xyz2 = tf.reduce_sum(xyz2 * xyz2, axis=2, keep_dims=True)  # (N, P_B, 1) (b, m, 1)
+    mul = tf.matmul(xyz2, tf.transpose(xyz1, perm=(0, 2, 1)))  # (N, P_A, P_B) (b, m, n)
+    # D = r_A - 2 * m + tf.transpose(r_B, perm=(0, 2, 1))  # (N, P_A, P_B)
+    dist = r_xyz2 - 2 * mul + tf.transpose(r_xyz1, perm=(0, 2, 1))
+
     # print dist, k
-    outi, out = select_top_k(k, dist)
-    idx = tf.slice(outi, [0, 0, 0], [-1, -1, k])
-    val = tf.slice(out, [0, 0, 0], [-1, -1, k])
+    # outi, out = select_top_k(k, dist)
+    # idx = tf.slice(outi, [0, 0, 0], [-1, -1, k])
+    # val = tf.slice(out, [0, 0, 0], [-1, -1, k])
     # print idx, val
-    # val, idx = tf.nn.top_k(-dist, k=k) # ONLY SUPPORT CPU
+    val, idx = tf.nn.top_k(-dist, k=k)  # ONLY SUPPORT CPU
     return val, idx
 
 

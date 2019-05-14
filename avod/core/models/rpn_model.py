@@ -398,11 +398,11 @@ class RpnModel(model.DetectionModel):
             proposal_preds,
         )
 
-        with tf.variable_scope("histograms_rpn"):
-            with tf.variable_scope("bin_based_proposal"):
-                for fc_layer in fc_layers:
-                    # fix the name to avoid tf warnings
-                    tf.summary.histogram(fc_layer.name.replace(":", "_"), fc_layer)
+        # with tf.variable_scope("histograms_rpn"):
+        #     with tf.variable_scope("bin_based_proposal"):
+        #         for fc_layer in fc_layers:
+        #             # fix the name to avoid tf warnings
+        #             tf.summary.histogram(fc_layer.name.replace(":", "_"), fc_layer)
 
         # Return the proposals
         ######################################################
