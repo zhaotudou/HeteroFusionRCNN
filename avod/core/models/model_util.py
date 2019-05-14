@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 from avod.core import compute_iou
+from avod.core import box_3d_encoder
+from avod.core import anchor_projector
 
 # --------------------------------------
 # Shared subgraphs for models
@@ -73,15 +75,19 @@ def foreground_masking(
 
 
 def gather_top_n(sb_data):
-    sb_proposals, sb_confidences, sb_seg_scores, sb_sorted_idxs = sb_data
+    sb_proposals, sb_confidences, sb_sorted_idxs = sb_data
     sorted_confidences = tf.gather(sb_confidences, sb_sorted_idxs)
     sorted_proposals = tf.gather(sb_proposals, sb_sorted_idxs)
-    sorted_seg_scores = tf.gather(sb_seg_scores, sb_sorted_idxs)
-    return sorted_proposals, sorted_confidences, sorted_seg_scores
+    return sorted_proposals, sorted_confidences
 
 
 def sb_nms_fn(
-    boxes_and_scores, oriented_nms, nms_iou_thresh, nms_size, fixed_num_proposal_nms
+    boxes_and_scores,
+    oriented_nms,
+    nms_iou_thresh,
+    nms_size,
+    fixed_num_proposal_nms,
+    bev_extents,
 ):
     """NMS on singel batch.
     Input:
@@ -109,7 +115,9 @@ def sb_nms_fn(
             sb_boxes, sb_scores, nms_iou_thresh
         )
 
-        sb_nms_indices = sb_nms_indices[:nms_size]
+        sb_nms_indices = sb_nms_indices[
+            : tf.minimum(nms_size, tf.shape(sb_nms_indices)[0])
+        ]
         if not fixed_num_proposal_nms:
             # sb_nms_indices append duplicated indices to make
             # sure sb_nms_indices has the same size as sb_boxes.
@@ -118,8 +126,15 @@ def sb_nms_fn(
             sb_nms_indices, _ = tf.unique(sb_nms_indices)
 
     else:
+        # ortho rotating
+        sb_box_anchors = box_3d_encoder.tf_box_3d_to_anchor(sb_boxes)
+        sb_bev_boxes, _ = anchor_projector.project_to_bev(sb_box_anchors, bev_extents)
+        sb_bev_boxes_tf_order = anchor_projector.reorder_projected_boxes(sb_bev_boxes)
         sb_nms_indices = tf.image.non_max_suppression(
-            sb_boxes, sb_scores, max_output_size=nms_size, iou_threshold=nms_iou_thresh
+            sb_bev_boxes_tf_order,
+            sb_scores,
+            max_output_size=nms_size,
+            iou_threshold=nms_iou_thresh,
         )
 
     # sb_nms_indices = tf.Print(
@@ -128,11 +143,15 @@ def sb_nms_fn(
     #     "(avg) num_proposals_before_padding: ",
     # )
 
-    sb_nms_indices_padded = tf.pad(
-        sb_nms_indices,
-        [[0, nms_size - tf.shape(sb_nms_indices)[0]]],
-        mode="CONSTANT",
-        constant_values=-1,
+    sb_nms_indices_padded = tf.cond(
+        tf.greater(nms_size, tf.shape(sb_nms_indices)[0]),
+        true_fn=lambda: tf.pad(
+            sb_nms_indices,
+            [[0, nms_size - tf.shape(sb_nms_indices)[0]]],
+            mode="CONSTANT",
+            constant_values=-1,
+        ),
+        false_fn=lambda: sb_nms_indices,
     )
     return sb_nms_indices_padded, tf.shape(sb_nms_indices)[0]
 

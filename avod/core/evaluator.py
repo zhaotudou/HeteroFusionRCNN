@@ -116,7 +116,9 @@ class Evaluator:
             self._sess = tf.Session()
 
         # The model should return a dictionary of predictions
-        self._prediction_dict = self.model.build()
+        self._prediction_dict = self.model.build(
+            save_rpn_feature=eval_config.save_rpn_feature
+        )
         if eval_mode == "val":
             # Setup loss and summary writer in val mode only
             self._loss_dict, self._total_loss = self.model.loss(self._prediction_dict)
@@ -185,16 +187,27 @@ class Evaluator:
                 )
             )
 
+            if self.eval_config.save_rpn_feature:
+                rpn_feature_dir = predictions_base_dir + "/rpn_feature/{}/{}".format(
+                    data_split, global_step
+                )
+                trainer_utils.create_dir(rpn_feature_dir)
+                os.system(
+                    "ln -snf {} {}".format(
+                        rpn_feature_dir, self.model.dataset.rpn_feature_dir
+                    )
+                )
+
             if validation:
                 eval_rpn_stats = self._create_rpn_stats_dict()
                 # Add folders to save proposals info, i.e. IoUs with GT Boxes
-                prop_info_dir = predictions_base_dir + "/proposals_info/{}/{}".format(
+                prop_iou_dir = predictions_base_dir + "/proposals_iou/{}/{}".format(
                     data_split, global_step
                 )
-                trainer_utils.create_dir(prop_info_dir)
+                trainer_utils.create_dir(prop_iou_dir)
                 os.system(
                     "ln -snf {} {}".format(
-                        prop_info_dir, self.model.dataset.proposal_info_dir
+                        prop_iou_dir, self.model.dataset.proposal_iou_dir
                     )
                 )
 
@@ -217,11 +230,11 @@ class Evaluator:
             sample_names = self.model._sample_names
 
             if self.full_model:
-                assert len(sample_names) == 1
-                avod_file_path = avod_predictions_dir + "/{}.txt".format(
-                    sample_names[0]
-                )
-                if os.path.exists(avod_file_path):
+                avod_file_paths = [
+                    avod_predictions_dir + "/{}.txt".format(sample_name)
+                    for sample_name in sample_names
+                ]
+                if os.path.exists(avod_file_paths[0]):
                     continue
             else:
                 # File paths for saving proposals and predictions
@@ -231,6 +244,13 @@ class Evaluator:
                 ]
                 if os.path.exists(rpn_file_paths[0]):
                     continue
+
+                if self.eval_config.save_rpn_feature:
+                    # File paths for saving rpn features
+                    rpn_feature_paths = [
+                        rpn_feature_dir + "/{}.npy".format(sample_name)
+                        for sample_name in sample_names
+                    ]
 
             num_valid_samples += self._batch_size
             print(
@@ -262,23 +282,12 @@ class Evaluator:
                 if self.full_model:
                     # Save predictions
                     self.save_avod_predicted_boxes_3d_and_scores(
-                        predictions, avod_file_path
+                        predictions, avod_file_paths
                     )
 
                     self._update_avod_box_cls_loc_losses(
                         eval_avod_stats, eval_losses, eval_total_loss, global_step
                     )
-                    """
-                    if box_rep != 'box_3d':
-                        # Save box corners for all box reps
-                        # except for box_3d which is not a corner rep
-                        predicted_box_corners_and_scores = \
-                            self.get_avod_predicted_box_corners_and_scores(
-                                predictions, box_rep)
-                        np.savetxt(avod_box_corners_file_path,
-                                   predicted_box_corners_and_scores,
-                                   fmt='%.5f')
-                    """
                 else:
                     rpn_segmentation_loss = eval_losses[RpnModel.LOSS_RPN_SEGMENTATION]
                     rpn_bin_classification_loss = eval_losses[
@@ -297,10 +306,12 @@ class Evaluator:
 
                     # Save proposals
                     self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
+                    if self.eval_config.save_rpn_feature:
+                        self.save_rpn_features(predictions, rpn_feature_paths)
 
                     # Save proposals info
-                    prop_info_files = [
-                        prop_info_dir + "/{}.txt".format(sample_name)
+                    prop_iou_files = [
+                        prop_iou_dir + "/{}.txt".format(sample_name)
                         for sample_name in sample_names
                     ]
                     self.calculate_proposals_info(
@@ -308,7 +319,7 @@ class Evaluator:
                         predictions[RpnModel.PRED_IOU_3D],
                         rpn_file_paths,
                         sample_names,
-                        prop_info_files,
+                        prop_iou_files,
                         eval_rpn_stats,
                         global_step,
                     )
@@ -338,10 +349,12 @@ class Evaluator:
 
                 if self.full_model:
                     self.save_avod_predicted_boxes_3d_and_scores(
-                        predictions, avod_file_path
+                        predictions, avod_file_paths
                     )
                 else:
                     self.save_rpn_proposals_and_scores(predictions, rpn_file_paths)
+                    if self.eval_config.save_rpn_feature:
+                        self.save_rpn_features(predictions, rpn_feature_paths)
 
         # end while current_epoch == model.dataset.epochs_completed:
 
@@ -587,7 +600,7 @@ class Evaluator:
         sum_avod_total_loss = eval_avod_stats[KEY_SUM_AVOD_TOTAL_LOSS]
 
         # for the full model, we expect a total of 4 losses
-        assert len(eval_losses) > 3
+        assert len(eval_losses) >= 3
         avod_classification_loss = eval_losses[AvodModel.LOSS_FINAL_CLASSIFICATION]
         avod_bin_classification_loss = eval_losses[
             AvodModel.LOSS_FINAL_BIN_CLASSIFICATION
@@ -953,6 +966,7 @@ class Evaluator:
             ]
 
         batch = proposals.shape[0]
+        assert batch == len(rpn_file_paths)
         for b in range(batch):
             top_proposals = proposals[b, : num_proposals_before_padding[b]]
             top_scores = softmax_scores[b, : num_proposals_before_padding[b]][
@@ -962,13 +976,32 @@ class Evaluator:
 
             np.savetxt(rpn_file_paths[b], proposals_and_scores, fmt="%.3f")
 
+    def save_rpn_features(self, predictions, rpn_feature_paths):
+        batch_rpn_pts = predictions[RpnModel.SAVE_RPN_PTS]
+        batch_rpn_fts = predictions[RpnModel.SAVE_RPN_FTS]
+        batch_rpn_intensity = predictions[RpnModel.SAVE_RPN_INTENSITY]
+        batch_rpn_fg_mask = predictions[RpnModel.SAVE_RPN_FG_MASK]
+
+        batch = batch_rpn_pts.shape[0]
+        assert batch == len(rpn_feature_paths)
+        for b in range(batch):
+            rpn_pts = batch_rpn_pts[b, :]
+            rpn_fts = batch_rpn_fts[b, :]
+            rpn_intensity = batch_rpn_intensity[b, :]
+            rpn_fg_mask = batch_rpn_fg_mask[b, :].reshape((-1, 1))
+
+            np.save(
+                rpn_feature_paths[b],
+                np.hstack((rpn_pts, rpn_intensity, rpn_fg_mask, rpn_fts)),
+            )
+
     def calculate_proposals_info(
         self,
         proposal_gt_iou2ds,
         proposal_gt_iou3ds,
         rpn_file_paths,
         sample_names,
-        prop_info_files,
+        prop_iou_files,
         eval_rpn_stats,
         global_step,
     ):
@@ -977,7 +1010,7 @@ class Evaluator:
         for i in range(len(rpn_file_paths)):
             rpn_file = rpn_file_paths[i]
             sample_name = sample_names[i]
-            prop_info_file = prop_info_files[i]
+            prop_iou_file = prop_iou_files[i]
 
             top_proposals = np.loadtxt(rpn_file).reshape((-1, 8))[:, 0:7]
 
@@ -999,7 +1032,7 @@ class Evaluator:
             ]
             label_classes = np.asarray(label_classes, dtype=np.int32)
 
-            recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls = box_util.compute_recall_iou(
+            recall_50, recall_70, iou2ds, iou3ds, iou3ds_gt_boxes, iou3ds_gt_cls, mx_iou3ds = box_util.compute_recall_iou(
                 top_proposals,
                 label_boxes_3d,
                 label_classes,
@@ -1010,15 +1043,7 @@ class Evaluator:
             num_props = top_proposals.shape[0]
             num_labels = label_boxes_3d.shape[0]
 
-            proposals_info = np.column_stack(
-                [
-                    iou2ds.reshape((num_props, 1)),
-                    iou3ds.reshape((num_props, 1)),
-                    iou3ds_gt_boxes.reshape((num_props, 7)),
-                    iou3ds_gt_cls.reshape((num_props, 1)),
-                ]
-            )
-            np.savetxt(prop_info_file, proposals_info, fmt="%.3f")
+            np.savetxt(prop_iou_file, mx_iou3ds, fmt="%.3f")
 
             sum_rpn_recall_50 = eval_rpn_stats[KEY_SUM_RPN_RECALL_50]
             sum_rpn_recall_70 = eval_rpn_stats[KEY_SUM_RPN_RECALL_70]
@@ -1052,7 +1077,7 @@ class Evaluator:
                 )
             )
 
-    def save_avod_predicted_boxes_3d_and_scores(self, predictions, avod_file_path):
+    def save_avod_predicted_boxes_3d_and_scores(self, predictions, avod_file_paths):
         """Returns the predictions and scores stacked for saving to file.
 
         Args:
@@ -1066,28 +1091,60 @@ class Evaluator:
                 boxes, orientations, scores, and types.
         """
 
-        final_pred_boxes_3d = predictions[AvodModel.PRED_TOP_PREDICTION_BOXES_3D]
+        batch_pred_boxes_3d = predictions[AvodModel.PRED_BOXES]
 
         # Append score and class index (object type)
-        final_pred_softmax = predictions[AvodModel.PRED_TOP_PREDICTION_SOFTMAX]
+        batch_pred_softmax = predictions[AvodModel.PRED_SOFTMAX]
 
-        # Find max class score index
-        not_bkg_scores = final_pred_softmax[:, 1:]
-        final_pred_types = np.argmax(not_bkg_scores, axis=1)
+        batch_non_empty_box_mask = predictions[AvodModel.PRED_NON_EMPTY_BOX_MASK]
+        batch_nms_indices = predictions[AvodModel.PRED_NMS_INDICES]
 
-        # Take max class score (ignoring background)
-        final_pred_scores = np.array([])
-        for pred_idx in range(len(final_pred_boxes_3d)):
-            all_class_scores = not_bkg_scores[pred_idx]
-            max_class_score = all_class_scores[final_pred_types[pred_idx]]
-            final_pred_scores = np.append(final_pred_scores, max_class_score)
+        Batch = batch_nms_indices.shape[0]
+        NMS = batch_nms_indices.shape[1]
+        for b in range(Batch):
+            sb_pred_boxes_3d = batch_pred_boxes_3d[b]
+            sb_pred_softmax = batch_pred_softmax[b]
+            sb_non_empty_box_mask = batch_non_empty_box_mask[b]
+            sb_nms_indices = batch_nms_indices[b]
+            # filter out empty preds
+            non_empty_boxes_3d = sb_pred_boxes_3d[sb_non_empty_box_mask]
+            non_empty_softmax = sb_pred_softmax[sb_non_empty_box_mask]
+            # apply nms filter
+            final_pred_boxes_3d = []
+            final_pred_softmax = []
+            for n in range(NMS):
+                idx = sb_nms_indices[n]
+                if idx == -1:
+                    break
+                final_pred_boxes_3d.append(non_empty_boxes_3d[idx])
+                final_pred_softmax.append(non_empty_softmax[idx])
+            final_pred_boxes_3d = np.asarray(final_pred_boxes_3d).reshape((-1, 7))
+            final_pred_softmax = np.asarray(final_pred_softmax).reshape(
+                (-1, sb_pred_softmax.shape[-1])
+            )
+            # remove duplicate preds
+            final_pred_boxes_3d, uniq_idx = np.unique(
+                final_pred_boxes_3d, axis=0, return_index=True
+            )
+            final_pred_softmax = final_pred_softmax[uniq_idx]
 
-        # Stack into prediction format
-        predictions_and_scores = np.column_stack(
-            [final_pred_boxes_3d, final_pred_scores, final_pred_types]
-        )
+            # Find max class score index
+            not_bkg_scores = final_pred_softmax[:, 1:]
+            final_pred_types = np.argmax(not_bkg_scores, axis=1)
 
-        np.savetxt(avod_file_path, predictions_and_scores, fmt="%.5f")
+            # Take max class score (ignoring background)
+            final_pred_scores = np.array([])
+            for pred_idx in range(len(final_pred_boxes_3d)):
+                all_class_scores = not_bkg_scores[pred_idx]
+                max_class_score = all_class_scores[final_pred_types[pred_idx]]
+                final_pred_scores = np.append(final_pred_scores, max_class_score)
+
+            # Stack into prediction format
+            predictions_and_scores = np.column_stack(
+                [final_pred_boxes_3d, final_pred_scores, final_pred_types]
+            )
+
+            np.savetxt(avod_file_paths[b], predictions_and_scores, fmt="%.5f")
 
     def get_avod_predicted_box_corners_and_scores(self, predictions, box_rep):
 

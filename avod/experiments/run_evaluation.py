@@ -68,7 +68,14 @@ def evaluate(model_config, eval_config, dataset_config):
 
     with tf.Graph().as_default():
         if model_name == "avod_model":
-            model = AvodModel(model_config, train_val_test=eval_mode, dataset=dataset)
+            if eval_config.save_rpn_feature:
+                raise ValueError("Full Model don't support --save_rpn_feature")
+            model = AvodModel(
+                model_config,
+                train_val_test=eval_mode,
+                dataset=dataset,
+                batch_size=eval_config.batch_size,
+            )
         elif model_name == "rpn_model":
             model = RpnModel(
                 model_config,
@@ -111,6 +118,13 @@ def main(_):
     )
 
     parser.add_argument(
+        "--save_rpn_feature",
+        action="store_true",
+        default=False,
+        help="save features for separately rcnn training and evaluation",
+    )
+
+    parser.add_argument(
         "--device", type=str, dest="device", default="0", help="CUDA device id"
     )
 
@@ -123,6 +137,9 @@ def main(_):
 
     # Overwrite data split
     dataset_config.data_split = args.data_split
+
+    # Overwrite save_rpn_feature
+    eval_config.save_rpn_feature = args.save_rpn_feature
 
     # Set CUDA device id
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
