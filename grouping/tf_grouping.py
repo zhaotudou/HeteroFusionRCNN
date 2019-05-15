@@ -91,6 +91,42 @@ def knn_point(k, xyz1, xyz2):
     # val = tf.slice(out, [0, 0, 0], [-1, -1, k])
     # print idx, val
     val, idx = tf.nn.top_k(-dist, k=k)  # ONLY SUPPORT CPU
+    print(idx, val)
+    return -val, idx
+
+
+def knn_point_old(k, xyz1, xyz2):
+    """
+    Input:
+        k: int32, number of k in k-nn search
+        xyz1: (batch_size, ndataset, c) float32 array, input points
+        xyz2: (batch_size, npoint, c) float32 array, query points
+    Output:
+        val: (batch_size, npoint, k) float32 array, L2 distances
+        idx: (batch_size, npoint, k) int32 array, indices to input points
+    """
+    # b = xyz1.get_shape()[0].value
+    # n = xyz1.get_shape()[1].value
+    # c = xyz1.get_shape()[2].value
+    # m = xyz2.get_shape()[1].value
+    # print b, n, c, m
+    # print xyz1, (b,1,n,c)
+    # xyz1 = tf.tile(tf.reshape(xyz1, (b, 1, n, c)), [1, m, 1, 1])
+    # xyz2 = tf.tile(tf.reshape(xyz2, (b, m, 1, c)), [1, 1, n, 1])
+    # dist = tf.reduce_sum((xyz1 - xyz2) ** 2, -1)
+
+    r_xyz1 = tf.reduce_sum(xyz1 * xyz1, axis=2, keep_dims=True)  # (N, P_A, 1) (b, n, 1)
+    r_xyz2 = tf.reduce_sum(xyz2 * xyz2, axis=2, keep_dims=True)  # (N, P_B, 1) (b, m, 1)
+    mul = tf.matmul(xyz2, tf.transpose(xyz1, perm=(0, 2, 1)))  # (N, P_A, P_B) (b, m, n)
+    # D = r_A - 2 * m + tf.transpose(r_B, perm=(0, 2, 1))  # (N, P_A, P_B)
+    dist = r_xyz2 - 2 * mul + tf.transpose(r_xyz1, perm=(0, 2, 1))
+
+    # print dist, k
+    outi, out = select_top_k(k, dist)
+    idx = tf.slice(outi, [0, 0, 0], [-1, -1, k])
+    val = tf.slice(out, [0, 0, 0], [-1, -1, k])
+    print(idx, val)
+    # val, idx = tf.nn.top_k(-dist, k=k)  # ONLY SUPPORT CPU
     return val, idx
 
 
@@ -110,8 +146,11 @@ if __name__ == "__main__":
         radius = 0.1
         nsample = 64
         if knn:
-            _, idx = knn_point(nsample, xyz1, xyz2)
+            knn_val, idx = knn_point(nsample, xyz1, xyz2)
             grouped_points = group_point(points, idx)
+
+            knn_val_old, idx_old = knn_point_old(nsample, xyz1, xyz2)
+            grouped_points_old = group_point(points, idx_old)
         else:
             idx, _ = query_ball_point(radius, nsample, xyz1, xyz2)
             grouped_points = group_point(points, idx)
@@ -119,8 +158,20 @@ if __name__ == "__main__":
             # points_grad = tf.gradients(grouped_points, points, grouped_points_grad)
     with tf.Session("") as sess:
         now = time.time()
-        for _ in range(100):
-            ret = sess.run(grouped_points)
-        print(time.time() - now)
-        print(ret.shape, ret.dtype)
-        print(ret)
+        # for _ in range(100):
+        #     ret = sess.run(grouped_points)
+        # ret = sess.run(grouped_points)
+        ret, ret_old, ret_1, ret_1_old = sess.run([knn_val, knn_val_old, idx, idx_old])
+        # assert np.allclose(ret, ret_old, atol=1e-03)
+        print("ret: ")
+        print(ret[0, 0, :5])
+        print("ret_old: ")
+        print(ret_old[0, 0, :5])
+        # assert np.allclose(ret_1, ret_1_old, atol=1e-03)
+        print("ret_1: ")
+        print(ret_1[0, 0, :5])
+        print("ret_1_old: ")
+        print(ret_1_old[0, 0, :5])
+        # print(time.time() - now)
+        # print(ret.shape, ret.dtype)
+        # print(ret)

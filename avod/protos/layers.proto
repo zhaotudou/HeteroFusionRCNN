@@ -19,7 +19,7 @@ message FeatureExtractor {
         PyramidLayersConfig img_vgg_pyr = 3;
         PyramidLayersConfig bev_vgg_pyr = 4;
 
-        PointCNNLayersConfig pc_pointnet = 5;
+        PointNetLayersConfig pc_pointnet = 5;
     }
 }
 
@@ -49,6 +49,47 @@ message PointCNNLayersConfig {
     
     // FCLayer [channel, dropout_rate]
     repeated FCLayer fc_layer = 7;
+}
+
+message PointNetLayersConfig {
+    required bool use_knn = 1;
+    required bool use_sa_msg_module = 7;
+    required bool pointcnn_like_structure = 2;
+
+    // MLP
+    message MLP {
+        repeated int32 channel = 1;
+    }
+    //  Set Abstraction (SA) Module
+    message SAModule {
+      required int32 npoint = 1;
+      required int32 nsample = 2;
+      optional float radius = 3;
+      required MLP mlp = 4;
+    }
+
+    repeated SAModule sa_module = 3;
+
+    //  Set Abstraction (SA) Multi-Scale Grouping Module
+    message SAMSGModule {
+      required int32 npoint = 1;
+      repeated int32 nsample = 2;
+      repeated float radius = 3;
+      repeated MLP mlp = 4;
+    }
+
+    repeated SAMSGModule sa_msg_module = 4;
+    
+    // Feature Propagation Module
+    message FPModule {
+      optional int32 pts_layer_idx = 1;
+      optional int32 qrs_layer_idx = 2;
+      required MLP mlp = 3;
+    }
+    repeated FPModule fp_module = 5;
+    
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer fc_layer = 6;
 }
 
 message VGGLayersConfig {
