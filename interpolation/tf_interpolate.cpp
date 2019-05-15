@@ -7,6 +7,9 @@
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/framework/common_shape_fns.h"
+#include <cuda_runtime.h>
+#include <cuda.h>
+#include <cuda_runtime_api.h>
 using namespace tensorflow;
 
 REGISTER_OP("ThreeNN")
@@ -25,12 +28,11 @@ REGISTER_OP("ThreeInterpolate")
     .Input("weight: float32")
     .Output("out: float32")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-        ::tensorflow::shape_inference::ShapeHandle dims1; // (b,m,c)
+        ::tensorflow::shape_inference::ShapeHandle dims1; // (b,c,m)
         c->WithRank(c->input(0), 3, &dims1);
         ::tensorflow::shape_inference::ShapeHandle dims2; // (b,n,3)
         c->WithRank(c->input(1), 3, &dims2);
-        // (b,n,c)
-        ::tensorflow::shape_inference::ShapeHandle output = c->MakeShape({c->Dim(dims1, 0), c->Dim(dims2, 1), c->Dim(dims1, 2)});
+        ::tensorflow::shape_inference::ShapeHandle output = c->MakeShape({c->Dim(dims1, 0), c->Dim(dims1, 1), c->Dim(dims2, 1)});
         c->set_output(0, output);
         return Status::OK();
     });
@@ -54,109 +56,13 @@ static double get_time(){
     return tp.tv_sec+tp.tv_nsec*1e-9;
 }
 
-// Find three nearest neigbors with square distance
-// input: xyz1 (b,n,3), xyz2(b,m,3)
-// output: dist (b,n,3), idx (b,n,3)
-void threenn_cpu(int b, int n, int m, const float *xyz1, const float *xyz2, float *dist, int *idx) {
-     for (int i=0;i<b;++i) {
-        for (int j=0;j<n;++j) {
-	    float x1=xyz1[j*3+0];
-	    float y1=xyz1[j*3+1];
-	    float z1=xyz1[j*3+2];
-            double best1=1e40; double best2=1e40; double best3=1e40;
-            int besti1=0; int besti2=0; int besti3=0;
-            for (int k=0;k<m;++k) {
-                float x2=xyz2[k*3+0];
-	        float y2=xyz2[k*3+1];
-	        float z2=xyz2[k*3+2];
-		//float d=max(sqrtf((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)+(z2-z1)*(z2-z1)),1e-20f);
-		double d=(x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)+(z2-z1)*(z2-z1);
-                if (d<best1) {
-                    best3=best2;
-                    besti3=besti2;
-                    best2=best1;
-                    besti2=besti1;
-                    best1=d;
-                    besti1=k;
-                } else if (d<best2) {
-                    best3=best2;
-                    besti3=besti2;
-                    best2=d;
-                    besti2=k;
-                } else if (d<best3) {
-                    best3=d;
-                    besti3=k;
-                }
-            } 
-            dist[j*3]=best1;
-            idx[j*3]=besti1;
-            dist[j*3+1]=best2;
-            idx[j*3+1]=besti2;
-            dist[j*3+2]=best3;
-            idx[j*3+2]=besti3;
-        } 
-        xyz1+=n*3;
-        xyz2+=m*3;
-        dist+=n*3;
-        idx+=n*3;
-    }
-} 
 
-// input: points (b,m,c), idx (b,n,3), weight (b,n,3)
-// output: out (b,n,c)
-void threeinterpolate_cpu(int b, int m, int c, int n, const float *points, const int *idx, const float *weight, float *out) {
-     float w1,w2,w3;
-     int i1,i2,i3;
-     for (int i=0;i<b;++i) {
-        for (int j=0;j<n;++j) {
-            w1=weight[j*3];
-            w2=weight[j*3+1];
-            w3=weight[j*3+2]; 
-            i1=idx[j*3];
-            i2=idx[j*3+1];
-            i3=idx[j*3+2];
-            for (int l=0;l<c;++l) {
-                out[j*c+l] = points[i1*c+l]*w1 + points[i2*c+l]*w2 + points[i3*c+l]*w3;
-            }
-        } 
-        points+=m*c;
-        idx+=n*3;
-        weight+=n*3;
-        out+=n*c;
-    }
-}
+void three_nn_gpu(int b, int n, int m, const float *unknown, 
+    const float *known, float *dist2, int *idx);
 
-// input: grad_out (b,n,c), idx (b,n,3), weight (b,n,3)
-// output: grad_points (b,m,c)
-void threeinterpolate_grad_cpu(int b, int n, int c, int m, const float *grad_out, const int *idx, const float *weight, float *grad_points) {
-     float w1,w2,w3;
-     int i1,i2,i3;
-     for (int i=0;i<b;++i) {
-        for (int j=0;j<n;++j) {
-            w1=weight[j*3];
-            w2=weight[j*3+1];
-            w3=weight[j*3+2]; 
-            i1=idx[j*3];
-            i2=idx[j*3+1];
-            i3=idx[j*3+2];
-            for (int l=0;l<c;++l) {
-                grad_points[i1*c+l] += grad_out[j*c+l]*w1;
-                grad_points[i2*c+l] += grad_out[j*c+l]*w2;
-                grad_points[i3*c+l] += grad_out[j*c+l]*w3;
-            }
-        } 
-        grad_out+=n*c;
-        idx+=n*3;
-        weight+=n*3;
-        grad_points+=m*c;
-    }
-}
-
-
-
-class ThreeNNOp : public OpKernel {
+class ThreeNNGpuOp : public OpKernel {
     public:
-        explicit ThreeNNOp(OpKernelConstruction* context) : OpKernel(context) {}
+        explicit ThreeNNGpuOp(OpKernelConstruction* context) : OpKernel(context) {}
 
         void Compute(OpKernelContext* context) override {
             const Tensor& xyz1_tensor = context->input(0);
@@ -181,23 +87,28 @@ class ThreeNNOp : public OpKernel {
             float *dist = &(dist_flat(0));
             auto idx_flat = idx_tensor->flat<int>();
             int *idx = &(idx_flat(0));
-            threenn_cpu(b,n,m,xyz1,xyz2,dist,idx);
+
+            cudaMemset(dist, 0, b * n * 3 * sizeof(float));
+            cudaMemset(idx, 0, b * n * 3 * sizeof(float));
+            three_nn_gpu(b,n,m,xyz1,xyz2,dist,idx);
         }
 };
-REGISTER_KERNEL_BUILDER(Name("ThreeNN").Device(DEVICE_CPU), ThreeNNOp);
+REGISTER_KERNEL_BUILDER(Name("ThreeNN").Device(DEVICE_GPU), ThreeNNGpuOp);
 
 
+void three_interpolate_gpu(int b, int c, int m, int n, 
+    const float *points, const int *idx, const float *weight, float *out);
 
-class ThreeInterpolateOp: public OpKernel{
+class ThreeInterpolateGpuOp: public OpKernel{
     public:
-        explicit ThreeInterpolateOp(OpKernelConstruction * context):OpKernel(context){}
+        explicit ThreeInterpolateGpuOp(OpKernelConstruction * context):OpKernel(context){}
 
         void Compute(OpKernelContext * context) override {
             const Tensor& points_tensor=context->input(0);
-            OP_REQUIRES(context, points_tensor.dims()==3, errors::InvalidArgument("ThreeInterpolate expects (b,m,c) points shape"));
+            OP_REQUIRES(context, points_tensor.dims()==3, errors::InvalidArgument("ThreeInterpolate expects (b,c,m) points shape"));
             int b = points_tensor.shape().dim_size(0);
-            int m = points_tensor.shape().dim_size(1);
-            int c = points_tensor.shape().dim_size(2);
+            int c = points_tensor.shape().dim_size(1);
+            int m = points_tensor.shape().dim_size(2);
 
             const Tensor& idx_tensor=context->input(1);
             OP_REQUIRES(context,idx_tensor.dims()==3 && idx_tensor.shape().dim_size(0)==b && idx_tensor.shape().dim_size(2)==3, errors::InvalidArgument("ThreeInterpolate expects (b,n,3) idx shape"));
@@ -206,7 +117,7 @@ class ThreeInterpolateOp: public OpKernel{
             OP_REQUIRES(context,weight_tensor.dims()==3 && weight_tensor.shape().dim_size(0)==b && weight_tensor.shape().dim_size(1)==n && weight_tensor.shape().dim_size(2)==3, errors::InvalidArgument("ThreeInterpolate expects (b,n,3) weight shape"));
 
             Tensor * out_tensor = nullptr;
-            OP_REQUIRES_OK(context, context->allocate_output(0,TensorShape{b,n,c}, &out_tensor));
+            OP_REQUIRES_OK(context, context->allocate_output(0,TensorShape{b,c,n}, &out_tensor));
 
             auto points_flat = points_tensor.flat<float>();
             const float *points = &(points_flat(0));
@@ -216,22 +127,30 @@ class ThreeInterpolateOp: public OpKernel{
             const float *weight = &(weight_flat(0));
             auto out_flat = out_tensor->flat<float>();
             float *out = &(out_flat(0));
-            threeinterpolate_cpu(b,m,c,n,points,idx,weight,out);
+            cudaMemset(out, 0, b * n * c * sizeof(float));
+            cudaError_t err = cudaGetLastError();
+            if (cudaSuccess != err) {
+                fprintf(stderr, "CUDA kernel failed : %s\n", cudaGetErrorString(err));
+                exit(-1);
+            }
+            three_interpolate_gpu(b,c,m,n,points,idx,weight,out);
         }
 };
-REGISTER_KERNEL_BUILDER(Name("ThreeInterpolate").Device(DEVICE_CPU),ThreeInterpolateOp);
+REGISTER_KERNEL_BUILDER(Name("ThreeInterpolate").Device(DEVICE_GPU),ThreeInterpolateGpuOp);
 
+void three_interpolate_grad_gpu(int b, int c, int n, int m, const float *grad_out, 
+    const int *idx, const float *weight, float *grad_points);
 
-class ThreeInterpolateGradOp: public OpKernel{
+class ThreeInterpolateGradGpuOp: public OpKernel{
     public:
-        explicit ThreeInterpolateGradOp(OpKernelConstruction * context):OpKernel(context){}
+        explicit ThreeInterpolateGradGpuOp(OpKernelConstruction * context):OpKernel(context){}
 
         void Compute(OpKernelContext * context) override {
             const Tensor& points_tensor=context->input(0);
-            OP_REQUIRES(context, points_tensor.dims()==3, errors::InvalidArgument("ThreeInterpolateGrad expects (b,m,c) points shape"));
+            OP_REQUIRES(context, points_tensor.dims()==3, errors::InvalidArgument("ThreeInterpolateGrad expects (b,c,m) points shape"));
             int b = points_tensor.shape().dim_size(0);
-            int m = points_tensor.shape().dim_size(1);
-            int c = points_tensor.shape().dim_size(2);
+            int c = points_tensor.shape().dim_size(1);
+            int m = points_tensor.shape().dim_size(2);
 
             const Tensor& idx_tensor=context->input(1);
             OP_REQUIRES(context,idx_tensor.dims()==3 && idx_tensor.shape().dim_size(0)==b, errors::InvalidArgument("ThreeInterpolateGrad expects (b,n,3) idx shape"));
@@ -240,10 +159,10 @@ class ThreeInterpolateGradOp: public OpKernel{
             OP_REQUIRES(context,weight_tensor.dims()==3 && weight_tensor.shape().dim_size(0)==b && weight_tensor.shape().dim_size(1)==n && weight_tensor.shape().dim_size(2)==3, errors::InvalidArgument("ThreeInterpolateGrad expects (b,n,3) weight shape"));
 
             const Tensor& grad_out_tensor=context->input(3);
-            OP_REQUIRES(context,grad_out_tensor.dims()==3 && grad_out_tensor.shape().dim_size(0)==b && grad_out_tensor.shape().dim_size(1)==n && grad_out_tensor.shape().dim_size(2)==c, errors::InvalidArgument("ThreeInterpolateGrad expects (b,n,c) grad_out shape"));
+            OP_REQUIRES(context,grad_out_tensor.dims()==3 && grad_out_tensor.shape().dim_size(0)==b && grad_out_tensor.shape().dim_size(1)==c && grad_out_tensor.shape().dim_size(2)==n, errors::InvalidArgument("ThreeInterpolateGrad expects (b,c,n) grad_out shape"));
 
             Tensor * grad_points_tensor = nullptr;
-            OP_REQUIRES_OK(context, context->allocate_output(0,TensorShape{b,m,c}, &grad_points_tensor));
+            OP_REQUIRES_OK(context, context->allocate_output(0,TensorShape{b,c,m}, &grad_points_tensor));
 
             auto points_flat = points_tensor.flat<float>();
             const float *points = &(points_flat(0));
@@ -255,10 +174,9 @@ class ThreeInterpolateGradOp: public OpKernel{
             const float *grad_out = &(grad_out_flat(0));
             auto grad_points_flat = grad_points_tensor->flat<float>();
             float *grad_points = &(grad_points_flat(0));
-            memset(grad_points, 0, sizeof(float)*b*m*c);
-            threeinterpolate_grad_cpu(b,n,c,m,grad_out,idx,weight,grad_points);
+            // memset(grad_points, 0, sizeof(float)*b*m*c);
+            cudaMemset(grad_points, 0, b * m * c * sizeof(float));
+            three_interpolate_grad_gpu(b,c,n,m,grad_out,idx,weight,grad_points);
         }
 };
-REGISTER_KERNEL_BUILDER(Name("ThreeInterpolateGrad").Device(DEVICE_CPU),ThreeInterpolateGradOp);
-
-
+REGISTER_KERNEL_BUILDER(Name("ThreeInterpolateGrad").Device(DEVICE_GPU),ThreeInterpolateGradGpuOp);

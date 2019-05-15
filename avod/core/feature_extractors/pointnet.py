@@ -127,7 +127,6 @@ class PointNet(pc_feature_extractor.PcFeatureExtractor):
                 )
 
                 if layer_idx != len(fc_layers) - 1:
-                    print(is_training)
                     output_feature = dropout(
                         output_feature,
                         keep_prob=dropout_rate,

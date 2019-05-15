@@ -11,4 +11,5 @@ PYTHON_VERSION=$($PYTHON -c 'import sys; print("%d.%d"%(sys.version_info[0], sys
 # TF_PATH=/data/ljh/anaconda2/envs/HeteroFusion/lib/python$PYTHON_VERSION/site-packages/tensorflow/include
 # TF_PATH=/home/liangcheng/anaconda2/envs/pointrcnn/lib/python$PYTHON_VERSION/site-packages/tensorflow/include
 TF_PATH=$TF_LIB/include
-g++ -std=c++11 tf_interpolate.cpp -o tf_interpolate_so.so -shared -fPIC -L$TF_LIB -ltensorflow_framework -I $TF_PATH/external/nsync/public/ -I $TF_PATH -I $CUDA_PATH/include -lcudart -L $CUDA_PATH/lib64/ -O2 -D_GLIBCXX_USE_CXX11_ABI=0
+$CUDA_PATH/bin/nvcc tf_interpolate_g.cu -o tf_interpolate_g.cu.o -c -O2 -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -g
+g++ -std=c++11 tf_interpolate.cpp tf_interpolate_g.cu.o -o tf_interpolate_so.so -shared -fPIC -L$TF_LIB -ltensorflow_framework -I $TF_PATH/external/nsync/public/ -I $TF_PATH -I $CUDA_PATH/include -lcudart -L $CUDA_PATH/lib64/ -O2 -D_GLIBCXX_USE_CXX11_ABI=0
