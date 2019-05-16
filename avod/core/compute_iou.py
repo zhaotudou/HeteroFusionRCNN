@@ -74,7 +74,7 @@ def oriented_nms_tf(boxes, scores, thresh):
         keep_idx: (N)
     """
     boxes_bev = boxes3d_to_bev_tf(boxes)
-    _, sorted_idxs = tf.nn.top_k(scores, k=scores.shape[0])
+    _, sorted_idxs = tf.nn.top_k(scores, k=tf.shape(scores)[0])
     boxes_bev = tf.gather(boxes_bev, sorted_idxs)
     keep_idx = bev_iou.oriented_nms(boxes_bev, thresh)
     return tf.gather(sorted_idxs, keep_idx)

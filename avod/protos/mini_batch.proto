@@ -4,6 +4,10 @@ message MiniBatchConfig {
 
     required MiniBatchIouThresholds cls_iou_3d_thresholds = 1;
     required MiniBatchIouThresholds reg_iou_3d_thresholds = 2;
+
+    optional int32 roi_per_sample = 3 [default = 64];
+    optional float fg_ratio = 4 [default = 0.5];
+    optional float hard_bg_ratio = 5 [default = 0.8];
 }
 
 message MiniBatchIouThresholds {

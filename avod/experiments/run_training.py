@@ -8,6 +8,7 @@ import os
 import datetime
 
 import tensorflow as tf
+import horovod.tensorflow as hvd
 
 import avod
 import avod.builders.config_builder_util as config_builder
@@ -53,7 +54,6 @@ def main(_):
     # Defaults
     default_pipeline_config_path = avod.root_dir() + "/configs/avod_cars_example.config"
     default_data_split = "train"
-    default_device = "0"
 
     parser.add_argument(
         "--pipeline_config",
@@ -71,14 +71,6 @@ def main(_):
         help="Data split for training",
     )
 
-    parser.add_argument(
-        "--device",
-        type=str,
-        dest="device",
-        default=default_device,
-        help="CUDA device id",
-    )
-
     args = parser.parse_args()
 
     # Parse pipeline config
@@ -89,14 +81,18 @@ def main(_):
     # Overwrite data split
     dataset_config.data_split = args.data_split
 
-    # Set CUDA device id
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.device
-
-    print("training started at: ", str(datetime.datetime.now()))
-
+    hvd.init()
+    print(
+        "Rank {} training started at: {}".format(
+            hvd.rank(), str(datetime.datetime.now())
+        )
+    )
     train(model_config, train_config, dataset_config)
-
-    print("training finished at: ", str(datetime.datetime.now()))
+    print(
+        "Rank {} training finished at: {}".format(
+            hvd.rank(), str(datetime.datetime.now())
+        )
+    )
 
 
 if __name__ == "__main__":
