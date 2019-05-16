@@ -1,10 +1,9 @@
 from avod.core.feature_extractors.pointcnn import PointCNN
+from avod.core.feature_extractors.pointnet import PointNet
 from avod.core.feature_extractors.bev_vgg_pyramid import BevVggPyr
 
 from avod.core.feature_extractors.img_vgg import ImgVgg
 from avod.core.feature_extractors.img_vgg_pyramid import ImgVggPyr
-
-from avod.core.feature_extractors.pointnet import PointNet
 
 
 def get_extractor(extractor_config):
