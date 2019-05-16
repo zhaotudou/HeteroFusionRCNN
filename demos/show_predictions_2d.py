@@ -1,8 +1,10 @@
 import os
 import sys
 import time
+import argparse
 
 import numpy as np
+from google.protobuf import text_format
 
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -19,6 +21,7 @@ from avod.builders.dataset_builder import DatasetBuilder
 from avod.core import box_3d_encoder
 from avod.core import box_3d_projector
 from avod.core import anchor_projector
+from avod.protos import pipeline_pb2
 
 
 BOX_COLOUR_SCHEME = {
@@ -40,6 +43,21 @@ def main():
     The prediction score and IoU with ground truth can be toggled on or off
     as well, shown as (score, IoU) above the detection.
     """
+
+    parser = argparse.ArgumentParser()
+
+    # Defaults
+    default_pipeline_config_path = avod.root_dir() + "/configs/rpn_cars.config"
+
+    parser.add_argument(
+        "--pipeline_config",
+        type=str,
+        dest="pipeline_config_path",
+        default=default_pipeline_config_path,
+        help="Path to the pipeline config",
+    )
+    args = parser.parse_args()
+
     dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_TRAIN)
 
     ##############################
@@ -84,8 +102,17 @@ def main():
     dataset = DatasetBuilder.build_kitti_dataset(dataset_config)
 
     # Setup Paths
+    pipeline_config = pipeline_pb2.NetworkPipelineConfig()
+    with open(args.pipeline_config_path, "r") as f:
+        text_format.Merge(f.read(), pipeline_config)
+    post_nms_size = pipeline_config.model_config.rpn_config.rpn_train_post_nms_size
     predictions_dir = (
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
+        avod.root_dir()
+        + "/data/outputs/"
+        + checkpoint_name
+        + "/predictions"
+        + "/NMS_"
+        + str(post_nms_size)
     )
 
     proposals_and_scores_dir = (
