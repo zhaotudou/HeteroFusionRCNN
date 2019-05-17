@@ -387,7 +387,7 @@ def project_box3d_to_image(corners_3d, p):
     return calib_utils.project_to_image(corners_3d, p), face_idx
 
 
-def compute_orientation_3d(obj, p):
+def compute_orientation_3d(obj, p=None):
     """Computes the orientation given object and camera matrix
 
     Keyword arguments:
@@ -410,13 +410,16 @@ def compute_orientation_3d(obj, p):
     orientation3d[0, :] = orientation3d[0, :] + obj.t[0]
     orientation3d[1, :] = orientation3d[1, :] + obj.t[1]
     orientation3d[2, :] = orientation3d[2, :] + obj.t[2]
-
+    ''' 
     # only draw for boxes that are in front of the camera
     for idx in np.arange(orientation3d.shape[1]):
         if orientation3d[2, idx] < 0.1:
             return None
-
-    return calib_utils.project_to_image(orientation3d, p)
+    '''
+    if p:
+        return calib_utils.project_to_image(orientation3d, p)
+    else:
+        return orientation3d
 
 
 def is_point_inside(points, box_corners):
