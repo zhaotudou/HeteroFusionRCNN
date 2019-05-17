@@ -249,19 +249,19 @@ class RpnModel(model.DetectionModel):
 
         return res_x_norm, res_z_norm, res_theta_norm
 
-    def _gather_mean_sizes(self, cluster_sizes, cls_preds):
+    def _gather_mean_sizes(self, cluster_sizes, cls):
         """
         Input:
             cluster_sizes: (Klass, Cluster=1, 3) [l,w,h], Klass is 0-based
-            cls_preds: (B,p), [klass], kclass is 1-based, 0-background
+            cls: (B,p), [klass], kclass is 1-based, 0-background
         Output
             mean_sizes: (B,p,3) [l,w,h]
 
         TF version: (if p is not None)
         ##########
         """
-        B = cls_preds.shape[0].value
-        p = cls_preds.shape[1].value
+        B = cls.shape[0].value
+        p = cls.shape[1].value
 
         Bs = tf.range(B)
         ps = tf.range(p)
@@ -269,10 +269,13 @@ class RpnModel(model.DetectionModel):
         Bp = tf.stack([tf.transpose(mB), tf.transpose(mp)], axis=2)  # (B,p,2)
 
         K_mean_sizes = tf.reshape(cluster_sizes, [-1, 3])
+        K_mean_sizes = tf.concat(
+            [tf.constant([[1000.0, 1000.0, 1000.0]]), K_mean_sizes], axis=0
+        )
         pK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [p, 1, 1])
         BpK_mean_sizes = tf.tile(tf.expand_dims(pK_mean_sizes, 0), [B, 1, 1, 1])
 
-        BpK = tf.concat([Bp, tf.reshape(cls_preds, [B, p, 1])], axis=2)  # (B,p,3)
+        BpK = tf.concat([Bp, tf.reshape(cls, [B, p, 1])], axis=2)  # (B,p,3)
 
         mean_sizes = tf.gather_nd(BpK_mean_sizes, BpK)
 
@@ -280,8 +283,8 @@ class RpnModel(model.DetectionModel):
         NumPy version: if p is None, by using tf.py_func, p should be determined
         #############
         K_mean_sizes = np.reshape(cluster_sizes, (-1,3))
-        K_mean_sizes = np.vstack([np.asarray([0.0, 0.0, 0.0]), K_mean_sizes]) # insert 0-background
-        mean_sizes = K_mean_sizes[cls_preds]
+        K_mean_sizes = np.vstack([np.asarray([1000.0, 1000.0, 1000.0]), K_mean_sizes]) # insert 0-background
+        mean_sizes = K_mean_sizes[cls]
         return mean_sizes.astype(np.float32)
         """
 
@@ -322,6 +325,7 @@ class RpnModel(model.DetectionModel):
         proposal_preds = seg_preds
         proposal_scores = seg_scores
         proposal_label_reg = label_reg
+        proposal_label_cls = label_cls
 
         # foreground point masking
         with tf.variable_scope("foreground_masking"):
@@ -334,7 +338,7 @@ class RpnModel(model.DetectionModel):
                 self._train_val_test in ["val", "test"]
                 and not self._fixed_num_proposal_nms
             ):
-                proposal_pts, proposal_fts, proposal_preds, proposal_scores, proposal_label_reg = model_util.foreground_masking(
+                proposal_pts, proposal_fts, proposal_preds, proposal_scores, proposal_label_reg, proposal_label_cls = model_util.foreground_masking(
                     self._foreground_mask,
                     self.NUM_FG_POINT,
                     self._batch_size,
@@ -343,6 +347,7 @@ class RpnModel(model.DetectionModel):
                     seg_preds,
                     seg_scores,
                     label_reg,
+                    label_cls,
                 )
 
         # branch-2: bin-based 3D proposal generation
@@ -373,7 +378,7 @@ class RpnModel(model.DetectionModel):
                 activation=None,
             )
 
-        bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size = self._parse_rpn_output(
+        bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size_norm = self._parse_rpn_output(
             fc_output
         )
         res_y = tf.squeeze(res_y, [-1])
@@ -391,16 +396,17 @@ class RpnModel(model.DetectionModel):
                 res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
             )
 
-            mean_sizes = self._gather_mean_sizes(
-                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
-                seg_preds,
-            )
-
             # NMS
             if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
                 print("Skip RPN-NMS during training")
             else:
+                mean_sizes = self._gather_mean_sizes(
+                    tf.convert_to_tensor(
+                        np.asarray(self._cluster_sizes, dtype=np.float32)
+                    ),
+                    seg_preds,
+                )
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
                     proposals = bin_based_box3d_encoder.tf_decode(
@@ -413,7 +419,7 @@ class RpnModel(model.DetectionModel):
                         bin_theta,
                         res_theta_norm,
                         res_y,
-                        res_size,
+                        res_size_norm,
                         mean_sizes,
                         self.S,
                         self.DELTA,
@@ -431,7 +437,7 @@ class RpnModel(model.DetectionModel):
                     pre_nms_proposals, pre_nms_confidences = tf.map_fn(
                         model_util.gather_top_n,
                         elems=(proposals, confidences, sorted_idxs),
-                        dtype=(tf.float32, tf.float32, tf.float32),
+                        dtype=(tf.float32, tf.float32),
                     )
                 else:
                     bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
@@ -509,6 +515,12 @@ class RpnModel(model.DetectionModel):
 
             # Ground Truth Box Cls/Reg
             with tf.variable_scope("box_cls_reg_gt"):
+                mean_sizes = self._gather_mean_sizes(
+                    tf.convert_to_tensor(
+                        np.asarray(self._cluster_sizes, dtype=np.float32)
+                    ),
+                    tf.to_int32(proposal_label_cls),
+                )
                 (
                     bin_x_gt,
                     res_x_gt,
@@ -517,7 +529,7 @@ class RpnModel(model.DetectionModel):
                     bin_theta_gt,
                     res_theta_gt,
                     res_y_gt,
-                    res_size_gt,
+                    res_size_norm_gt,
                 ) = bin_based_box3d_encoder.tf_encode(
                     proposal_pts,
                     0,
@@ -553,7 +565,7 @@ class RpnModel(model.DetectionModel):
                 res_z_norm,
                 res_theta_norm,
                 res_y,
-                res_size,
+                res_size_norm,
             )
 
             # Foreground BOX ground truth
@@ -567,7 +579,7 @@ class RpnModel(model.DetectionModel):
                 res_z_gt,
                 res_theta_gt,
                 res_y_gt,
-                res_size_gt,
+                res_size_norm_gt,
             )
             if self._train_val_test == "val":
                 predictions[self.PRED_IOU_2D] = iou2ds
@@ -613,7 +625,7 @@ class RpnModel(model.DetectionModel):
 
             res_y
 
-            res_size: (l,w,h)
+            res_size_norm: (l,w,h)
         """
         bin_x_logits = tf.slice(rpn_output, [0, 0, 0], [-1, -1, self.NUM_BIN_X])
         res_x_norms = tf.slice(
@@ -646,7 +658,7 @@ class RpnModel(model.DetectionModel):
             [-1, -1, 1],
         )
 
-        res_size = tf.slice(
+        res_size_norm = tf.slice(
             rpn_output,
             [
                 0,
@@ -664,7 +676,7 @@ class RpnModel(model.DetectionModel):
             bin_theta_logits,
             res_theta_norms,
             res_y,
-            res_size,
+            res_size_norm,
         )
 
     def create_feed_dict(self, batch_size=2, sample_index=None):
@@ -797,8 +809,8 @@ class RpnModel(model.DetectionModel):
                 reg_loss = losses.WeightedSmoothL1Loss()
                 reg_loss_weight = self._config.loss_config.reg_loss_weight
                 regression_loss = 0.0
-                # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size = prediction_dict[self.PRED_FG_REG]
-                # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_gt = prediction_dict[self.PRED_FG_REG_GT]
+                # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size_norm = prediction_dict[self.PRED_FG_REG]
+                # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_norm_gt = prediction_dict[self.PRED_FG_REG_GT]
                 for elem in zip(
                     prediction_dict[self.PRED_REG], prediction_dict[self.PRED_REG_GT]
                 ):

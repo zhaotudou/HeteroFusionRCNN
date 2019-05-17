@@ -29,5 +29,5 @@ message EvalConfig {
 
     optional uint32 batch_size = 9 [default=1];
     
-    optional bool save_rpn_feature = 10 [default = false];
+    optional bool save_rpn_feature = 10 [default = true];
 }

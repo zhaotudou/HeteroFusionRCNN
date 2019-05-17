@@ -42,7 +42,15 @@ def point_cloud_masking(mask, npoint=2048):
 
 
 def foreground_masking(
-    mask, num_fg_point, batch_size, pc_pts, pc_fts, seg_preds, seg_scores, label_box_3d
+    mask,
+    num_fg_point,
+    batch_size,
+    pc_pts,
+    pc_fts,
+    seg_preds,
+    seg_scores,
+    label_box_3d,
+    label_cls,
 ):
     """ Select foreground points and their features, segmentation scores etc. according to a given mask.
     Note the output number of foreground points is fixed by a given parameter. This is achived by sampling or padding.
@@ -65,12 +73,16 @@ def foreground_masking(
     foreground_label_boxes_3d = tf.reshape(
         tf.gather_nd(label_box_3d, fg_indices), [batch_size, num_fg_point, 7]
     )  # (B,F,7)
+    foreground_label_cls = tf.reshape(
+        tf.gather_nd(label_cls, fg_indices), [batch_size, num_fg_point]
+    )  # (B,F)
     return (
         foreground_pts,
         foreground_fts,
         foreground_preds,
         foreground_scores,
         foreground_label_boxes_3d,
+        foreground_label_cls,
     )
 
 

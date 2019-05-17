@@ -41,7 +41,6 @@ class KittiDataset:
         """
         # Parse config
         self.config = dataset_config
-
         self.name = self.config.name
         self.data_split = self.config.data_split
         self.dataset_dir = os.path.expanduser(self.config.dataset_dir)
@@ -55,7 +54,7 @@ class KittiDataset:
         self.num_clusters = np.asarray(self.config.num_clusters)
 
         self.aug_list = self.config.aug_list
-        self.reg_aug_method = self.config.reg_aug_method
+        self.aug_roi_method = self.config.aug_roi_method
 
         # Determines the network mode. This is initialized to 'train' but
         # is overwritten inside the model based on the mode.
@@ -161,6 +160,8 @@ class KittiDataset:
         self.roi_per_sample = mini_batch_config.roi_per_sample
         self.fg_ratio = mini_batch_config.fg_ratio
         self.hard_bg_ratio = mini_batch_config.hard_bg_ratio
+
+        self._stats_rcnn_sample = None
 
     # Paths
     @property
@@ -342,7 +343,9 @@ class KittiDataset:
                 choice = np.arange(0, len(pts_rect), dtype=np.int32)
                 if pc_sample_pts > len(pts_rect):
                     extra_choice = np.random.choice(
-                        choice, pc_sample_pts - len(pts_rect), replace=False
+                        choice,
+                        pc_sample_pts - len(pts_rect),
+                        replace=False if pc_sample_pts <= 2 * len(pts_rect) else True,
                     )
                     choice = np.concatenate((choice, extra_choice), axis=0)
                 np.random.shuffle(choice)
@@ -561,9 +564,13 @@ class KittiDataset:
         if fg_rois_per_this_image > 0:
             fg_rois_src = roi_boxes3d[fg_inds].copy()
             gt_of_fg_rois = gt_info[gt_assignment[fg_inds]]
-            fg_rois, fg_iou3d = self.aug_roi_by_noise(
-                fg_rois_src, gt_of_fg_rois[:, :7], aug_times=10
-            )
+            if self.aug_roi_method != "":
+                fg_rois, fg_iou3d = self.aug_roi_by_noise(
+                    fg_rois_src, gt_of_fg_rois[:, :7], aug_times=10
+                )
+            else:
+                fg_rois = fg_rois_src
+                fg_iou3d = max_overlaps[fg_inds]
             roi_list.append(fg_rois)
             roi_iou_list.append(fg_iou3d)
             roi_gt_list.append(gt_of_fg_rois)
@@ -571,9 +578,13 @@ class KittiDataset:
         if bg_rois_per_this_image > 0:
             bg_rois_src = roi_boxes3d[bg_inds].copy()
             gt_of_bg_rois = gt_info[gt_assignment[bg_inds]]
-            bg_rois, bg_iou3d = self.aug_roi_by_noise(
-                bg_rois_src, gt_of_bg_rois[:, :7], aug_times=1
-            )
+            if self.aug_roi_method != "":
+                bg_rois, bg_iou3d = self.aug_roi_by_noise(
+                    bg_rois_src, gt_of_bg_rois[:, :7], aug_times=1
+                )
+            else:
+                bg_rois = bg_rois_src
+                bg_iou3d = max_overlaps[bg_inds]
             roi_list.append(bg_rois)
             roi_iou_list.append(bg_iou3d)
             roi_gt_list.append(gt_of_bg_rois)
@@ -581,6 +592,12 @@ class KittiDataset:
         rois = np.concatenate(roi_list, axis=0)
         iou_of_rois = np.concatenate(roi_iou_list, axis=0)
         gt_of_rois = np.concatenate(roi_gt_list, axis=0)
+
+        if self._stats_rcnn_sample:
+            self._stats_rcnn_sample["num_fg"].append(fg_num_rois)
+            self._stats_rcnn_sample["num_bg"].append(bg_num_rois)
+            self._stats_rcnn_sample["sampled_num_fg"].append(fg_rois_per_this_image)
+            self._stats_rcnn_sample["sampled_num_bg"].append(bg_rois_per_this_image)
 
         return rois, iou_of_rois, gt_of_rois
 
@@ -655,7 +672,7 @@ class KittiDataset:
         :param box3d: (7) [x, y, z, h, w, l, ry]
         random shift, scale, orientation
         """
-        if self.reg_aug_method == "single":
+        if self.aug_roi_method == "single":
             pos_shift = np.random.rand(3) - 0.5  # [-0.5 ~ 0.5]
             hwl_scale = (np.random.rand(3) - 0.5) / (0.5 / 0.15) + 1.0  #
             angle_rot = (np.random.rand(1) - 0.5) / (
@@ -666,7 +683,7 @@ class KittiDataset:
                 [box3d[0:3] + pos_shift, box3d[3:6] * hwl_scale, box3d[6:7] + angle_rot]
             )
             return aug_box3d
-        elif self.reg_aug_method == "multiple":
+        elif self.aug_roi_method == "multiple":
             # pos_range, hwl_range, angle_range, mean_iou
             range_config = [
                 [0.2, 0.1, np.pi / 12, 0.7],
@@ -685,7 +702,7 @@ class KittiDataset:
                 [box3d[0:3] + pos_shift, box3d[3:6] * hwl_scale, box3d[6:7] + angle_rot]
             )
             return aug_box3d
-        elif self.reg_aug_method == "normal":
+        elif self.aug_roi_method == "normal":
             x_shift = np.random.normal(loc=0, scale=0.3)
             y_shift = np.random.normal(loc=0, scale=0.2)
             z_shift = np.random.normal(loc=0, scale=0.3)
@@ -817,3 +834,66 @@ class KittiDataset:
                     batch_data[key] = np.array(batch_data[key], dtype=np.float32)
 
         return batch_data, sample_names
+
+
+def main():
+    import argparse
+    import avod
+    import avod.builders.config_builder_util as config_builder
+    from avod.builders.dataset_builder import DatasetBuilder
+
+    parser = argparse.ArgumentParser()
+
+    # Defaults
+    default_pipeline_config_path = avod.root_dir() + "/configs/avod_cars.config"
+    default_data_split = "train"
+
+    parser.add_argument(
+        "--pipeline_config",
+        type=str,
+        dest="pipeline_config_path",
+        default=default_pipeline_config_path,
+        help="Path to the pipeline config",
+    )
+
+    parser.add_argument(
+        "--data_split",
+        type=str,
+        dest="data_split",
+        default=default_data_split,
+        help="Data split for training",
+    )
+
+    args = parser.parse_args()
+
+    # Parse pipeline config
+    model_config, train_config, _, dataset_config = config_builder.get_configs_from_pipeline_file(
+        args.pipeline_config_path, is_training=True
+    )
+
+    # Overwrite data split
+    dataset_config.data_split = args.data_split
+
+    dataset = DatasetBuilder.build_kitti_dataset(dataset_config, use_defaults=False)
+    dataset._stats_rcnn_sample = {
+        "num_fg": [],
+        "num_bg": [],
+        "sampled_num_fg": [],
+        "sampled_num_bg": [],
+    }
+    # Run through a single epoch
+    current_epoch = dataset.epochs_completed
+    while current_epoch == dataset.epochs_completed:
+        dataset.next_batch(1, False, model="rcnn")
+
+    def print_summary(a):
+        a = np.asarray(a)
+        print(a.min(), a.max(), a.mean(), a.std(), np.median(a))
+
+    for key, stat in dataset._stats_rcnn_sample.items():
+        print(key)
+        print_summary(stat)
+
+
+if __name__ == "__main__":
+    main()

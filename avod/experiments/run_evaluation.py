@@ -68,8 +68,6 @@ def evaluate(model_config, eval_config, dataset_config):
 
     with tf.Graph().as_default():
         if model_name == "avod_model":
-            if eval_config.save_rpn_feature:
-                raise ValueError("Full Model don't support --save_rpn_feature")
             model = AvodModel(
                 model_config,
                 train_val_test=eval_mode,
@@ -120,8 +118,15 @@ def main(_):
     parser.add_argument(
         "--save_rpn_feature",
         action="store_true",
-        default=False,
+        default=True,
         help="save features for separately rcnn training and evaluation",
+    )
+
+    parser.add_argument(
+        "--for_rcnn_train",
+        action="store_true",
+        default=False,
+        help="for separately rcnn training or evaluation, different NMS size used",
     )
 
     parser.add_argument(
@@ -140,6 +145,21 @@ def main(_):
 
     # Overwrite save_rpn_feature
     eval_config.save_rpn_feature = args.save_rpn_feature
+
+    if model_config.model_name == "rpn_model":
+        if args.for_rcnn_train:
+            model_config.paths_config.pred_dir += "_for_rcnn_train"
+        else:
+            model_config.paths_config.pred_dir += "_for_rcnn_eval"
+            model_config.rpn_config.rpn_train_pre_nms_size = (
+                model_config.rpn_config.rpn_test_pre_nms_size
+            )
+            model_config.rpn_config.rpn_train_post_nms_size = (
+                model_config.rpn_config.rpn_test_post_nms_size
+            )
+            model_config.rpn_config.rpn_train_nms_iou_thresh = (
+                model_config.rpn_config.rpn_test_nms_iou_thresh
+            )
 
     # Set CUDA device id
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device

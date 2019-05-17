@@ -256,25 +256,26 @@ class AvodModel(model.DetectionModel):
 
         return res_x_norm, res_z_norm, res_theta_norm
 
-    def _gather_mean_sizes(self, cluster_sizes, cls_preds):
+    def _gather_mean_sizes(self, cluster_sizes, cls):
         """
         Input:
             cluster_sizes: (Klass, Cluster=1, 3) [l,w,h], Klass is 0-based
-            cls_preds: (N), [klass], kclass is 1-based, 0-background
+            cls: (N), [klass], kclass is 1-based, 0-background
         Output
             mean_sizes: (N,3) [l,w,h]
         """
         """
         #TF version: (if N is not None)
         ##########
-        N = cls_preds.shape[0].value
+        N = cls.shape[0].value
         
         Ns = tf.reshape(tf.range(N), [N,1])
 
         K_mean_sizes = tf.reshape(cluster_sizes, [-1,3])
+        K_mean_sizes = tf.concat([tf.constant([[1000.0, 1000.0, 1000.0]]), K_mean_sizes], axis=0)
         NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N,1,1])
 
-        NK = tf.concat([Ns, tf.reshape(cls_preds, [N,1])], axis=1) # (N,2)
+        NK = tf.concat([Ns, tf.reshape(cls, [N,1])], axis=1) # (N,2)
         
         mean_sizes = tf.gather_nd(NK_mean_sizes, NK)
         return mean_sizes
@@ -284,9 +285,9 @@ class AvodModel(model.DetectionModel):
         #############
         K_mean_sizes = np.reshape(cluster_sizes, (-1, 3))
         K_mean_sizes = np.vstack(
-            [np.asarray([0.0, 0.0, 0.0]), K_mean_sizes]
+            [np.asarray([1000.0, 1000.0, 1000.0]), K_mean_sizes]
         )  # insert 0-background
-        mean_sizes = K_mean_sizes[cls_preds]
+        mean_sizes = K_mean_sizes[cls]
 
         return mean_sizes.astype(np.float32)
 
@@ -327,11 +328,11 @@ class AvodModel(model.DetectionModel):
             # Expand proposals' size
             with tf.variable_scope("expand_proposal"):
                 expand_length = self._pooling_context_length
-                expanded_size = proposals[:, :, 3:6] + expand_length
+                expanded_size = proposals[:, :, 3:6] + 2 * expand_length
                 expanded_proposals = tf.stack(
                     [
                         proposals[:, :, 0],
-                        proposals[:, :, 1],
+                        proposals[:, :, 1] + expand_length,
                         proposals[:, :, 2],
                         expanded_size[:, :, 0],
                         expanded_size[:, :, 1],
@@ -488,7 +489,7 @@ class AvodModel(model.DetectionModel):
                 activation=None,
             )
 
-        bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size = self._parse_brn_output(
+        bin_x_logits, res_x_norms, bin_z_logits, res_z_norms, bin_theta_logits, res_theta_norms, res_y, res_size_norm = self._parse_brn_output(
             fc_output
         )
         res_y = tf.squeeze(res_y, [-1])
@@ -506,17 +507,16 @@ class AvodModel(model.DetectionModel):
                 (tf.float32, tf.float32, tf.float32),
             )
 
-            mean_sizes = tf.py_func(
-                self._gather_mean_sizes,
-                [tf.convert_to_tensor(np.asarray(self._cluster_sizes)), cls_preds],
-                tf.float32,
-            )
-
             # NMS
             if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
                 print("Skip BRN-NMS during training")
             else:
+                mean_sizes = tf.py_func(
+                    self._gather_mean_sizes,
+                    [tf.convert_to_tensor(np.asarray(self._cluster_sizes)), cls_preds],
+                    tf.float32,
+                )
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
                     reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
@@ -529,7 +529,7 @@ class AvodModel(model.DetectionModel):
                         bin_theta,
                         res_theta_norm,
                         res_y,
-                        res_size,
+                        res_size_norm,
                         mean_sizes,
                         self.S,
                         self.DELTA,
@@ -641,6 +641,14 @@ class AvodModel(model.DetectionModel):
             )
             pos_reg_mask = tf.logical_and(pos_reg_mask, non_empty_box_mask)
 
+            mean_sizes = tf.py_func(
+                self._gather_mean_sizes,
+                [
+                    tf.convert_to_tensor(np.asarray(self._cluster_sizes)),
+                    tf.to_int32(proposals_gt_cls),
+                ],
+                tf.float32,
+            )
             # reg gt
             (
                 bin_x_gt,
@@ -650,7 +658,7 @@ class AvodModel(model.DetectionModel):
                 bin_theta_gt,
                 res_theta_gt,
                 res_y_gt,
-                res_size_gt,
+                res_size_norm_gt,
             ) = bin_based_box3d_encoder.tf_encode(
                 proposals[:, :3],
                 proposals[:, 6],
@@ -704,7 +712,7 @@ class AvodModel(model.DetectionModel):
                 res_z_norm,
                 res_theta_norm,
                 res_y,
-                res_size,
+                res_size_norm,
             )
 
             # reg Mini batch gt
@@ -718,7 +726,7 @@ class AvodModel(model.DetectionModel):
                 res_z_gt,
                 res_theta_gt,
                 res_y_gt,
-                res_size_gt,
+                res_size_norm_gt,
             )
 
             # reg Mini batch pos mask
@@ -752,7 +760,7 @@ class AvodModel(model.DetectionModel):
             
             res_y
 
-            res_size: (l,w,h)
+            res_size_norm: (l,w,h)
         """
         bin_x_logits = tf.slice(brn_output, [0, 0], [-1, self.NUM_BIN_X])
         res_x_norms = tf.slice(brn_output, [0, self.NUM_BIN_X], [-1, self.NUM_BIN_X])
@@ -781,7 +789,7 @@ class AvodModel(model.DetectionModel):
             [-1, 1],
         )
 
-        res_size = tf.slice(
+        res_size_norm = tf.slice(
             brn_output,
             [0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 1],
             [-1, 3],
@@ -795,7 +803,7 @@ class AvodModel(model.DetectionModel):
             bin_theta_logits,
             res_theta_norms,
             res_y,
-            res_size,
+            res_size_norm,
         )
 
     def create_feed_dict(self, batch_size=1, sample_index=None):
@@ -919,8 +927,8 @@ class AvodModel(model.DetectionModel):
                 reg_loss = losses.WeightedSmoothL1Loss()
                 reg_loss_weight = self._config.loss_config.reg_loss_weight
                 regression_loss = 0.0
-                # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size = prediction_dict[self.PRED_MB_REG]
-                # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_gt = prediction_dict[self.PRED_MB_REG_GT]
+                # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size_norm = prediction_dict[self.PRED_MB_REG]
+                # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_norm_gt = prediction_dict[self.PRED_MB_REG_GT]
                 for elem in zip(
                     prediction_dict[self.PRED_MB_REG],
                     prediction_dict[self.PRED_MB_REG_GT],

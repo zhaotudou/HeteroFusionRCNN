@@ -34,7 +34,7 @@ message KittiDatasetConfig {
     repeated string aug_list = 10;
     
     // ROI Augmentations (e.g. ['single', 'multiple', 'normal'])
-    optional string reg_aug_method = 11 [default = 'multiple'];
+    optional string aug_roi_method = 11 [default = 'multiple'];
 
     // KittiUtils configuration
     optional KittiUtilsConfig kitti_utils_config = 20;
