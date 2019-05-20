@@ -89,6 +89,8 @@ class PointNet(pc_feature_extractor.PcFeatureExtractor):
                     denser_point = layer_points[qrs_layer_idx + 1]
                     denser_feature = layer_features[qrs_layer_idx + 1]
 
+                    # output feature is dense with respect to last layer,
+                    # but sparse with respect to this layer
                     output_feature = pointnet_fp_module(
                         denser_point,
                         sparser_point,

@@ -32,11 +32,17 @@ message PointCNNLayersConfig {
     required string sampling = 1;
     required bool with_X_transformation = 2;
     required bool with_global = 3;
+    optional bool pointnet_like_structure = 8 [default=false];
     optional string sorting_method = 4 [default = ''];
 
-    // XConv layer [K, D, P, C, links]
+
+    //[K, D, P, C, links]
+    message XConvParam {
+      repeated int32 param = 1;
+    }
+
     message XConvLayer {
-      repeated int32 xconv_param = 1;
+      repeated XConvParam xconv_param = 1;
       repeated int32 links = 2;
     }
     repeated XConvLayer xconv_layer = 5;

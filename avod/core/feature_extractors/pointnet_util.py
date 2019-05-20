@@ -292,7 +292,7 @@ def pointnet_fp_module(
     """ PointNet Feature Propogation (FP) Module
         Input:
             xyz1: (batch_size, ndataset1, 3) TF tensor
-            xyz2: (batch_size, ndataset2, 3) TF tensor, sparser than xyz1
+            xyz2: (batch_size, ndataset2, 3) TF tensor, sparser than xyz1, i.e., ndataset1 > ndataset2
             points1: (batch_size, ndataset1, nchannel1) TF tensor
             points2: (batch_size, ndataset2, nchannel2) TF tensor
             mlp: list of int32 -- output size for MLP on each point

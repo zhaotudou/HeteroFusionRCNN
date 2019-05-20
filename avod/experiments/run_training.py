@@ -52,7 +52,9 @@ def main(_):
     parser = argparse.ArgumentParser()
 
     # Defaults
-    default_pipeline_config_path = avod.root_dir() + "/configs/avod_cars_example.config"
+    default_pipeline_config_path = (
+        avod.root_dir() + "/configs/rpn_cars_pointcnn_paper.config"
+    )
     default_data_split = "train"
 
     parser.add_argument(
