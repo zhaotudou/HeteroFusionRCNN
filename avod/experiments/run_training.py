@@ -52,7 +52,9 @@ def main(_):
     parser = argparse.ArgumentParser()
 
     # Defaults
-    default_pipeline_config_path = avod.root_dir() + "/configs/avod_cars_example.config"
+    default_pipeline_config_path = (
+        avod.root_dir() + "/configs/rpn_cars_pointcnn_paper.config"
+    )
     default_data_split = "train"
 
     parser.add_argument(
@@ -82,9 +84,17 @@ def main(_):
     dataset_config.data_split = args.data_split
 
     hvd.init()
-    print("Rank {} training started at: {}".format(hvd.rank(), str(datetime.datetime.now())))
+    print(
+        "Rank {} training started at: {}".format(
+            hvd.rank(), str(datetime.datetime.now())
+        )
+    )
     train(model_config, train_config, dataset_config)
-    print("Rank {} training finished at: {}".format(hvd.rank(), str(datetime.datetime.now())))
+    print(
+        "Rank {} training finished at: {}".format(
+            hvd.rank(), str(datetime.datetime.now())
+        )
+    )
 
 
 if __name__ == "__main__":
