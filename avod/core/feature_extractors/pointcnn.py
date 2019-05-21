@@ -171,8 +171,8 @@ def parse_xconv_params(xconv_layers):
     return xconv_layers_dict
 
 
-def parse_xdconv_params(xdconv_layers, pointnet_like_structure):
-    if not pointnet_like_structure:
+def parse_xdconv_params(xdconv_layers, multi_scale_grouping):
+    if not multi_scale_grouping:
         xdconv_param_name = ("K", "D", "pts_layer_idx", "qrs_layer_idx")
     else:
         xdconv_param_name = ("K", "D", "P", "C")
@@ -191,7 +191,7 @@ class PointCNN(pc_feature_extractor.PcFeatureExtractor):
         with tf.variable_scope(scope):
             with_X_transformation = self.config.with_X_transformation
             sorting_method = self.config.sorting_method
-            pointnet_like_structure = self.config.pointnet_like_structure
+            multi_scale_grouping = self.config.multi_scale_grouping
             B = tf.shape(points)[0]
 
             if self.config.sampling == "fps":
@@ -283,9 +283,9 @@ class PointCNN(pc_feature_extractor.PcFeatureExtractor):
 
             # XDConv Layers
             xdconv_layers = self.config.xdconv_layer
-            xdconv_params = parse_xdconv_params(xdconv_layers, pointnet_like_structure)
+            xdconv_params = parse_xdconv_params(xdconv_layers, multi_scale_grouping)
 
-            if not pointnet_like_structure:
+            if not multi_scale_grouping:
                 for layer_idx, layer_param in enumerate(xdconv_params):
                     print(layer_param)
                     tag = "xdconv_" + str(layer_idx + 1) + "_"
@@ -367,7 +367,7 @@ class PointCNN(pc_feature_extractor.PcFeatureExtractor):
                     )
 
             output_ft = (
-                self.layer_fts[-1] if not pointnet_like_structure else self.layer_fts[0]
+                self.layer_fts[-1] if not multi_scale_grouping else self.layer_fts[0]
             )
             fc_layers = self.config.fc_layer
             for layer_idx, layer_param in enumerate(fc_layers):
@@ -384,5 +384,5 @@ class PointCNN(pc_feature_extractor.PcFeatureExtractor):
                     name="fc{:d}_drop".format(layer_idx),
                 )
 
-            output_pt_idx = -1 if not pointnet_like_structure else 0
+            output_pt_idx = -1 if not multi_scale_grouping else 0
             return self.layer_pts[output_pt_idx], output_ft

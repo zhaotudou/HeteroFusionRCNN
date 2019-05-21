@@ -32,7 +32,7 @@ message PointCNNLayersConfig {
     required string sampling = 1;
     required bool with_X_transformation = 2;
     required bool with_global = 3;
-    optional bool pointnet_like_structure = 8 [default=false];
+    optional bool multi_scale_grouping = 8 [default=false];
     optional string sorting_method = 4 [default = ''];
 
 
