@@ -71,8 +71,6 @@ def get_configs_from_pipeline_file(pipeline_config_path, is_training):
 
     # Make sure the checkpoint name matches the config filename
     config_file_name = os.path.split(pipeline_config_path)[1].split(".")[0]
-    if "NMS" in config_file_name.split("_"):
-        config_file_name = "_".join(config_file_name.split("_")[:-2])
     checkpoint_name = model_config.checkpoint_name
     if config_file_name != checkpoint_name:
         raise ValueError("Config and checkpoint names must match.")
@@ -94,10 +92,7 @@ def get_configs_from_pipeline_file(pipeline_config_path, is_training):
         paths_config.logdir = output_root_dir + "/logs/"
 
     if not paths_config.pred_dir:
-        post_nms_size = pipeline_config.model_config.rpn_config.rpn_train_post_nms_size
-        paths_config.pred_dir = (
-            output_root_dir + "/predictions" + "/NMS_" + str(post_nms_size)
-        )
+        paths_config.pred_dir = output_root_dir + "/predictions"
 
     train_config = pipeline_config.train_config
     eval_config = pipeline_config.eval_config
