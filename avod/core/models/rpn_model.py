@@ -431,7 +431,7 @@ class RpnModel(model.DetectionModel):
                     pre_nms_proposals, pre_nms_confidences = tf.map_fn(
                         model_util.gather_top_n,
                         elems=(proposals, confidences, sorted_idxs),
-                        dtype=(tf.float32, tf.float32, tf.float32),
+                        dtype=(tf.float32, tf.float32),
                     )
                 else:
                     bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)

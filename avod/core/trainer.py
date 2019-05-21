@@ -72,7 +72,7 @@ def train(model, train_config):
         train_config.optimizer, global_summaries, global_step_tensor
     )
     training_optimizer = hvd.DistributedOptimizer(training_optimizer)
-    # hooks = [hvd.BroadcastGlobalVariablesHook(0)]
+    hooks = [hvd.BroadcastGlobalVariablesHook(0)]
     bcast_op = hvd.broadcast_global_variables(0)
 
     # Create the train op
