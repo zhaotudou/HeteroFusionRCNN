@@ -80,13 +80,7 @@ def get_configs_from_pipeline_file(pipeline_config_path, is_training):
     # Construct paths
     paths_config = model_config.paths_config
     if not paths_config.checkpoint_dir:
-        checkpoint_dir = output_root_dir + "/checkpoints"
-
-        if is_training:
-            if not os.path.exists(checkpoint_dir):
-                os.makedirs(checkpoint_dir)
-
-        paths_config.checkpoint_dir = checkpoint_dir
+        paths_config.checkpoint_dir = output_root_dir + "/checkpoints"
 
     if not paths_config.logdir:
         paths_config.logdir = output_root_dir + "/logs/"

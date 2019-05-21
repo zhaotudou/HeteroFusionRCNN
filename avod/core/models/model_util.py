@@ -126,7 +126,6 @@ def sb_nms_fn(
         sb_nms_indices = compute_iou.oriented_nms_tf(
             sb_boxes, sb_scores, nms_iou_thresh
         )
-
         sb_nms_indices = sb_nms_indices[
             : tf.minimum(nms_size, tf.shape(sb_nms_indices)[0])
         ]
@@ -148,12 +147,6 @@ def sb_nms_fn(
             max_output_size=nms_size,
             iou_threshold=nms_iou_thresh,
         )
-
-    # sb_nms_indices = tf.Print(
-    #     sb_nms_indices,
-    #     [tf.shape(sb_nms_indices)[0]],
-    #     "(avg) num_proposals_before_padding: ",
-    # )
 
     sb_nms_indices_padded = tf.cond(
         tf.greater(nms_size, tf.shape(sb_nms_indices)[0]),

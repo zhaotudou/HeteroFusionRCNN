@@ -3,6 +3,7 @@ This module converts data to and from the 'box_3d' format
  [x, y, z, l, w, h, ry]
 """
 import tensorflow as tf
+import numpy as np
 
 from wavedata.tools.obj_detection import obj_utils
 
@@ -49,7 +50,7 @@ def tf_decode(
         boxes_3d: (B,p,7) 3D box in box_3d format [x, y, z, l, w, h, ry]
     """
     ndims = ref_pts.shape.ndims
-    if ndims == 3:
+    if ndims == 3:  # rpn
         dx = (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * 0.5 * DELTA
         dz = (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * 0.5 * DELTA
         if isinstance(ref_theta, tf.Tensor):
@@ -73,11 +74,12 @@ def tf_decode(
             dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=2)
             dx = dxz_rot[:, :, 0]
             dz = dxz_rot[:, :, 1]
-
+        else:
+            assert ref_theta == 0
         x = dx + ref_pts[:, :, 0]
         z = dz + ref_pts[:, :, 2]
         y = ref_pts[:, :, 1] + res_y
-    elif ndims == 2:
+    elif ndims == 2:  # rcnn
         dx = (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * 0.5 * DELTA
         dz = (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * 0.5 * DELTA
         if isinstance(ref_theta, tf.Tensor):
@@ -101,7 +103,8 @@ def tf_decode(
             dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=1)
             dx = dxz_rot[:, 0]
             dz = dxz_rot[:, 1]
-
+        else:
+            assert ref_theta == 0
         x = dx + ref_pts[:, 0]
         z = dz + ref_pts[:, 2]
         y = ref_pts[:, 1] + res_y
@@ -154,7 +157,7 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
         res_size_norm: (B,p,3), residual w.r.t. the average object size [l,w,h]
     """
     ndims = ref_pts.shape.ndims
-    if ndims == 3:
+    if ndims == 3:  # rpn
         dx = boxes_3d[:, :, 0] - ref_pts[:, :, 0]
         dy = boxes_3d[:, :, 1] - ref_pts[:, :, 1]  # - boxes_3d[:,:,5] / 2
         dz = boxes_3d[:, :, 2] - ref_pts[:, :, 2]
@@ -179,10 +182,14 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
             dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=2)
             dx = dxz_rot[:, :, 0]
             dz = dxz_rot[:, :, 1]
+        else:
+            assert ref_theta == 0
 
         dsize = boxes_3d[:, :, 3:6] - mean_sizes
+
         dtheta = boxes_3d[:, :, 6] - ref_theta
-    elif ndims == 2:
+        dtheta_shift = tf.clip_by_value(dtheta + R, 0.0, 2.0 * R - 1e-3)
+    elif ndims == 2:  # rcnn
         dx = boxes_3d[:, 0] - ref_pts[:, 0]
         dy = boxes_3d[:, 1] - ref_pts[:, 1]  # - boxes_3d[:,5] / 2
         dz = boxes_3d[:, 2] - ref_pts[:, 2]
@@ -207,9 +214,22 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
             dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=1)
             dx = dxz_rot[:, 0]
             dz = dxz_rot[:, 1]
+        else:
+            assert ref_theta == 0
 
         dsize = boxes_3d[:, 3:6] - mean_sizes
-        dtheta = boxes_3d[:, 6] - ref_theta
+
+        dtheta = boxes_3d[:, 6] - tf.mod(ref_theta, 2 * np.pi)
+        dtheta = tf.mod(dtheta, 2 * np.pi)
+        dtheta = tf.where(
+            tf.logical_and(
+                tf.greater(dtheta, 0.5 * np.pi), tf.less(dtheta, 1.5 * np.pi)
+            ),
+            x=tf.mod(dtheta + np.pi, 2 * np.pi),
+            y=dtheta,
+        )
+        dtheta_shift = tf.mod(dtheta + 0.5 * np.pi, 2 * np.pi)
+        dtheta_shift = tf.clip_by_value(dtheta_shift - R, 1e-3, 2.0 * R - 1e-3)
 
     dx_shift = tf.clip_by_value(dx + S, 0.0, 2.0 * S - 1e-3)
     bin_x = tf.floor(dx_shift / DELTA)
@@ -219,7 +239,6 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
     bin_z = tf.floor(dz_shift / DELTA)
     res_z_norm = (dz_shift - (bin_z + 0.5) * DELTA) / (0.5 * DELTA)
 
-    dtheta_shift = tf.clip_by_value(dtheta + R, 0.0, 2.0 * R - 1e-3)
     bin_theta = tf.floor(dtheta_shift / DELTA_THETA)
     res_theta_norm = (dtheta_shift - (bin_theta + 0.5) * DELTA_THETA) / (
         0.5 * DELTA_THETA

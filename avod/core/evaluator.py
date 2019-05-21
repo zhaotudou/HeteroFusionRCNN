@@ -1098,9 +1098,9 @@ class Evaluator:
 
         batch_non_empty_box_mask = predictions[AvodModel.PRED_NON_EMPTY_BOX_MASK]
         batch_nms_indices = predictions[AvodModel.PRED_NMS_INDICES]
+        num_boxes_before_padding = predictions[AvodModel.PRED_NUM_BOXES_BEFORE_PADDING]
 
         Batch = batch_nms_indices.shape[0]
-        NMS = batch_nms_indices.shape[1]
         for b in range(Batch):
             sb_pred_boxes_3d = batch_pred_boxes_3d[b]
             sb_pred_softmax = batch_pred_softmax[b]
@@ -1110,18 +1110,12 @@ class Evaluator:
             non_empty_boxes_3d = sb_pred_boxes_3d[sb_non_empty_box_mask]
             non_empty_softmax = sb_pred_softmax[sb_non_empty_box_mask]
             # apply nms filter
-            final_pred_boxes_3d = []
-            final_pred_softmax = []
-            for n in range(NMS):
-                idx = sb_nms_indices[n]
-                if idx == -1:
-                    break
-                final_pred_boxes_3d.append(non_empty_boxes_3d[idx])
-                final_pred_softmax.append(non_empty_softmax[idx])
-            final_pred_boxes_3d = np.asarray(final_pred_boxes_3d).reshape((-1, 7))
-            final_pred_softmax = np.asarray(final_pred_softmax).reshape(
-                (-1, sb_pred_softmax.shape[-1])
-            )
+            final_pred_boxes_3d = non_empty_boxes_3d[
+                sb_nms_indices[: num_boxes_before_padding[b]]
+            ]
+            final_pred_softmax = non_empty_softmax[
+                sb_nms_indices[: num_boxes_before_padding[b]]
+            ]
             # remove duplicate preds
             final_pred_boxes_3d, uniq_idx = np.unique(
                 final_pred_boxes_3d, axis=0, return_index=True

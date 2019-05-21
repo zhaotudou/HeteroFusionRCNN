@@ -269,8 +269,10 @@ class RpnModel(model.DetectionModel):
         Bp = tf.stack([tf.transpose(mB), tf.transpose(mp)], axis=2)  # (B,p,2)
 
         K_mean_sizes = tf.reshape(cluster_sizes, [-1, 3])
+        # insert 0-background mean size as mean size of all foreground class
         K_mean_sizes = tf.concat(
-            [tf.constant([[1000.0, 1000.0, 1000.0]]), K_mean_sizes], axis=0
+            [tf.expand_dims(tf.reduce_mean(K_mean_sizes, 0), axis=0), K_mean_sizes],
+            axis=0,
         )
         pK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [p, 1, 1])
         BpK_mean_sizes = tf.tile(tf.expand_dims(pK_mean_sizes, 0), [B, 1, 1, 1])
@@ -283,7 +285,7 @@ class RpnModel(model.DetectionModel):
         NumPy version: if p is None, by using tf.py_func, p should be determined
         #############
         K_mean_sizes = np.reshape(cluster_sizes, (-1,3))
-        K_mean_sizes = np.vstack([np.asarray([1000.0, 1000.0, 1000.0]), K_mean_sizes]) # insert 0-background
+        K_mean_sizes = np.vstack([np.mean(K_mean_sizes, axis=0), K_mean_sizes]) # insert 0-background
         mean_sizes = K_mean_sizes[cls]
         return mean_sizes.astype(np.float32)
         """
@@ -405,7 +407,7 @@ class RpnModel(model.DetectionModel):
                     tf.convert_to_tensor(
                         np.asarray(self._cluster_sizes, dtype=np.float32)
                     ),
-                    seg_preds,
+                    proposal_preds,
                 )
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
@@ -757,11 +759,11 @@ class RpnModel(model.DetectionModel):
 
     def loss(self, prediction_dict):
 
-        seg_softmax = prediction_dict[self.PRED_SEG_SOFTMAX]
-        seg_gt = prediction_dict[self.PRED_SEG_GT]
-
         with tf.variable_scope("rpn_losses"):
             with tf.variable_scope("segmentation"):
+                seg_softmax = prediction_dict[self.PRED_SEG_SOFTMAX]
+                seg_gt = prediction_dict[self.PRED_SEG_GT]
+
                 seg_loss = losses.WeightedFocalLoss()
                 seg_loss_weight = self._config.loss_config.seg_loss_weight
                 segmentation_loss = seg_loss(
@@ -801,7 +803,7 @@ class RpnModel(model.DetectionModel):
                     bin_classification_loss = tf.cond(
                         tf.greater(num_foreground_pts, 0),
                         true_fn=lambda: bin_classification_loss / num_foreground_pts,
-                        false_fn=lambda: bin_classification_loss * 0,
+                        false_fn=lambda: bin_classification_loss * 0.0,
                     )
                     tf.summary.scalar("bin_classification", bin_classification_loss)
 
@@ -830,7 +832,7 @@ class RpnModel(model.DetectionModel):
                     regression_loss = tf.cond(
                         tf.greater(num_foreground_pts, 0),
                         true_fn=lambda: regression_loss / num_foreground_pts,
-                        false_fn=lambda: regression_loss * 0,
+                        false_fn=lambda: regression_loss * 0.0,
                     )
                     tf.summary.scalar("regression", regression_loss)
 
