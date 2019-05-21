@@ -53,20 +53,20 @@ def main():
     fig_size = (10, 6.1)
 
     rpn_score_threshold = 0.5
-    avod_score_threshold = 0.5
+    avod_score_threshold = 0.1
 
     gt_classes = ["Car"]
     # gt_classes = ['Pedestrian', 'Cyclist']
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = "avod_cars"
+    checkpoint_name = "rpn_cars"
 
     # Drawing Toggles
     draw_proposals_separate = True
     draw_rpn_feature = False
     draw_overlaid = False
-    draw_predictions_separate = True
+    draw_predictions_separate = False
 
     # Show orientation for both GT and proposals/predictions
     draw_orientations_on_prop = True
@@ -84,9 +84,9 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        #avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
+        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
         #avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_eval"
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
+        #avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
     )
 
     proposals_and_scores_dir = (
@@ -196,7 +196,7 @@ def main():
                 print("\tSample {}: No proposals, skipping".format(sample_name))
                 continue
 
-            proposals_and_scores = np.loadtxt(proposals_file_path).reshape(-1, 8)
+            proposals_and_scores = np.unique(np.loadtxt(proposals_file_path).reshape(-1, 8), axis=0)
 
             proposal_boxes_3d = proposals_and_scores[:, 0:7]
             proposal_scores = proposals_and_scores[:, 7]

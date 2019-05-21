@@ -127,10 +127,14 @@ def train(model, train_config):
         input_pcs=summary_pc_images,
     )
 
+    # with tf.contrib.tfprof.ProfileContext("/tmp/train_dir"):
     config = tf.ConfigProto()
     config.gpu_options.visible_device_list = str(hvd.local_rank())
-    config.gpu_options.allow_growth = train_config.allow_gpu_mem_growth \
-        if train_config.allow_gpu_mem_growth else False
+    config.gpu_options.allow_growth = (
+        train_config.allow_gpu_mem_growth
+        if train_config.allow_gpu_mem_growth
+        else False
+    )
     sess = tf.Session(config=config)
 
     # sess = tf_debug.LocalCLIDebugWrapperSession(sess, dump_root='/data/ljh/HeteroFusion/dump')
@@ -165,12 +169,19 @@ def train(model, train_config):
 
     global_max_iterations = max_iterations
     max_iterations = int(max_iterations / hvd.size())
-    print("Global Max Iterations {}, Each Iterations {} For {} GPUs".
-          format(global_max_iterations, max_iterations, hvd.size()))
+    print(
+        "Global Max Iterations {}, Each Iterations {} For {} GPUs".format(
+            global_max_iterations, max_iterations, hvd.size()
+        )
+    )
 
     # Read the global step if restored
     global_step = tf.train.global_step(sess, global_step_tensor)
-    print("Rank {} Starting from step {} / {}".format(hvd.rank(), global_step, max_iterations))
+    print(
+        "Rank {} Starting from step {} / {}".format(
+            hvd.rank(), global_step, max_iterations
+        )
+    )
 
     # Main Training Loop
     last_time = time.time()
