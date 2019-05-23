@@ -230,10 +230,12 @@ class AvodModel(model.DetectionModel):
         
         NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N,1])], axis=1) # (N,2)
         res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta) #(N)
-    
+        """
+
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
+        """
         res_x_norm = np.take_along_axis(
             res_x_norms, np.expand_dims(bin_x, -1), axis=-1
         )  # (N,1)
@@ -277,8 +279,10 @@ class AvodModel(model.DetectionModel):
         return mean_sizes
         """
 
+        """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
+        """
         K_mean_sizes = np.reshape(cluster_sizes, (-1, 3))
         K_mean_sizes = np.vstack(
             [np.mean(K_mean_sizes, axis=0), K_mean_sizes]
@@ -435,7 +439,7 @@ class AvodModel(model.DetectionModel):
         with tf.variable_scope("pc_encoder"):
             merged_fts = tf.concat([crop_fts, fc_layers[-1]], axis=-1)  # (N,R,2C)
             encode_pts, encode_fts = self._pc_feature_extractor.build(
-                crop_pts, merged_fts, self._is_training
+                crop_pts_ct, merged_fts, self._is_training
             )  # (N,r,3), (N,r,C')
 
         # branch-1: Box classification
@@ -493,28 +497,40 @@ class AvodModel(model.DetectionModel):
         # Final Predictions
         ######################################################
         with tf.variable_scope("boxes"):
-            bin_x = tf.argmax(bin_x_logits, axis=-1)  # (N)
-            bin_z = tf.argmax(bin_z_logits, axis=-1)  # (N)
-            bin_theta = tf.argmax(bin_theta_logits, axis=-1)  # (N)
-
-            res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
-                self._gather_residuals,
-                [res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta],
-                (tf.float32, tf.float32, tf.float32),
-            )
-
             # NMS
             if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
                 print("Skip BRN-NMS during training")
             else:
-                mean_sizes = tf.py_func(
-                    self._gather_mean_sizes,
-                    [tf.convert_to_tensor(np.asarray(self._cluster_sizes)), cls_preds],
-                    tf.float32,
-                )
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
+                    bin_x = tf.argmax(bin_x_logits, axis=-1)  # (N)
+                    bin_z = tf.argmax(bin_z_logits, axis=-1)  # (N)
+                    bin_theta = tf.argmax(bin_theta_logits, axis=-1)  # (N)
+
+                    res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
+                        self._gather_residuals,
+                        [
+                            res_x_norms,
+                            res_z_norms,
+                            res_theta_norms,
+                            bin_x,
+                            bin_z,
+                            bin_theta,
+                        ],
+                        (tf.float32, tf.float32, tf.float32),
+                    )
+
+                    mean_sizes = tf.py_func(
+                        self._gather_mean_sizes,
+                        [
+                            tf.convert_to_tensor(
+                                np.asarray(self._cluster_sizes, dtype=np.float32)
+                            ),
+                            cls_preds,
+                        ],
+                        tf.float32,
+                    )
                     reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
                         proposals[:, :3],
                         proposals[:, 6],
@@ -640,7 +656,9 @@ class AvodModel(model.DetectionModel):
             mean_sizes = tf.py_func(
                 self._gather_mean_sizes,
                 [
-                    tf.convert_to_tensor(np.asarray(self._cluster_sizes)),
+                    tf.convert_to_tensor(
+                        np.asarray(self._cluster_sizes, dtype=np.float32)
+                    ),
                     tf.to_int32(proposals_gt_cls),
                 ],
                 tf.float32,
@@ -648,11 +666,11 @@ class AvodModel(model.DetectionModel):
             # reg gt
             (
                 bin_x_gt,
-                res_x_gt,
+                res_x_norm_gt,
                 bin_z_gt,
-                res_z_gt,
+                res_z_norm_gt,
                 bin_theta_gt,
-                res_theta_gt,
+                res_theta_norm_gt,
                 res_y_gt,
                 res_size_norm_gt,
             ) = bin_based_box3d_encoder.tf_encode(
@@ -666,22 +684,35 @@ class AvodModel(model.DetectionModel):
                 self.DELTA_THETA,
             )
 
+            res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
+                self._gather_residuals,
+                [
+                    res_x_norms,
+                    res_z_norms,
+                    res_theta_norms,
+                    bin_x_gt,
+                    bin_z_gt,
+                    bin_theta_gt,
+                ],
+                (tf.float32, tf.float32, tf.float32),
+            )
+
             bin_x_gt_one_hot = tf.one_hot(
-                tf.to_int32(bin_x_gt),
+                bin_x_gt,
                 depth=int(2 * self.S / self.DELTA),
                 on_value=1.0,
                 off_value=0.0,
             )
 
             bin_z_gt_one_hot = tf.one_hot(
-                tf.to_int32(bin_z_gt),
+                bin_z_gt,
                 depth=int(2 * self.S / self.DELTA),
                 on_value=1.0,
                 off_value=0.0,
             )
 
             bin_theta_gt_one_hot = tf.one_hot(
-                tf.to_int32(bin_theta_gt),
+                bin_theta_gt,
                 depth=int(2 * self.R / self.DELTA_THETA),
                 on_value=1.0,
                 off_value=0.0,
@@ -718,9 +749,9 @@ class AvodModel(model.DetectionModel):
                 bin_theta_gt_one_hot,
             )
             prediction_dict[self.PRED_MB_REG_GT] = (
-                res_x_gt,
-                res_z_gt,
-                res_theta_gt,
+                res_x_norm_gt,
+                res_z_norm_gt,
+                res_theta_norm_gt,
                 res_y_gt,
                 res_size_norm_gt,
             )
@@ -932,16 +963,32 @@ class AvodModel(model.DetectionModel):
                 reg_loss_weight = self._config.loss_config.reg_loss_weight
                 regression_loss = 0.0
                 # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size_norm = prediction_dict[self.PRED_MB_REG]
-                # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_norm_gt = prediction_dict[self.PRED_MB_REG_GT]
-                for elem in zip(
-                    prediction_dict[self.PRED_MB_REG],
-                    prediction_dict[self.PRED_MB_REG_GT],
+                # res_x_norm_gt, res_z_norm_gt, res_theta_norm_gt, res_y_gt, res_size_norm_gt = prediction_dict[self.PRED_MB_REG_GT]
+                for idx, elem in enumerate(
+                    zip(
+                        prediction_dict[self.PRED_MB_REG],
+                        prediction_dict[self.PRED_MB_REG_GT],
+                    )
                 ):
                     masked_pred_reg = tf.boolean_mask(elem[0], pos_reg_mask)
                     masked_pred_reg_gt = tf.boolean_mask(elem[1], pos_reg_mask)
-                    regression_loss += reg_loss(
+                    elem_reg_loss = reg_loss(
                         masked_pred_reg, masked_pred_reg_gt, weight=reg_loss_weight
                     )
+                    regression_loss += elem_reg_loss
+                    """
+                    with tf.variable_scope("elem_reg_norm_" + str(idx)):
+                        # normalize by the number of positive boxes
+                        # with tf.control_dependencies(
+                        #    [tf.assert_positive(num_reg_boxes)]):
+                        #    regression_loss /= num_reg_boxes
+                        elem_reg_loss = tf.cond(
+                            tf.greater(num_reg_boxes, 0),
+                            true_fn=lambda: elem_reg_loss / num_reg_boxes,
+                            false_fn=lambda: elem_reg_loss * 0.0,
+                        )
+                        tf.summary.scalar("{}_regression".format(idx), elem_reg_loss)
+                    """
                 with tf.variable_scope("reg_norm"):
                     # normalize by the number of positive boxes
                     # with tf.control_dependencies(

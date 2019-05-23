@@ -49,8 +49,6 @@ def train(model, train_config):
         os.makedirs(logdir)
 
     checkpoint_dir = paths_config.checkpoint_dir
-    if not os.path.exists(checkpoint_dir) and hvd.rank() == 0:
-        os.makedirs(checkpoint_dir)
     checkpoint_path = checkpoint_dir + "/" + model_config.checkpoint_name
 
     global_summaries = set([])

@@ -50,9 +50,9 @@ def tf_decode(
         boxes_3d: (B,p,7) 3D box in box_3d format [x, y, z, l, w, h, ry]
     """
     ndims = ref_pts.shape.ndims
+    dx = (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * DELTA
+    dz = (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * DELTA
     if ndims == 3:  # rpn
-        dx = (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * 0.5 * DELTA
-        dz = (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * 0.5 * DELTA
         if isinstance(ref_theta, tf.Tensor):
             # rotate along y
             all_rys = ref_theta
@@ -80,8 +80,6 @@ def tf_decode(
         z = dz + ref_pts[:, :, 2]
         y = ref_pts[:, :, 1] + res_y
     elif ndims == 2:  # rcnn
-        dx = (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * 0.5 * DELTA
-        dz = (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * 0.5 * DELTA
         if isinstance(ref_theta, tf.Tensor):
             # rotate along y
             all_rys = ref_theta
@@ -233,11 +231,11 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
 
     dx_shift = tf.clip_by_value(dx + S, 0.0, 2.0 * S - 1e-3)
     bin_x = tf.floor(dx_shift / DELTA)
-    res_x_norm = (dx_shift - (bin_x + 0.5) * DELTA) / (0.5 * DELTA)
+    res_x_norm = (dx_shift - (bin_x + 0.5) * DELTA) / DELTA
 
     dz_shift = tf.clip_by_value(dz + S, 0.0, 2.0 * S - 1e-3)
     bin_z = tf.floor(dz_shift / DELTA)
-    res_z_norm = (dz_shift - (bin_z + 0.5) * DELTA) / (0.5 * DELTA)
+    res_z_norm = (dz_shift - (bin_z + 0.5) * DELTA) / DELTA
 
     bin_theta = tf.floor(dtheta_shift / DELTA_THETA)
     res_theta_norm = (dtheta_shift - (bin_theta + 0.5) * DELTA_THETA) / (
@@ -248,11 +246,11 @@ def tf_encode(ref_pts, ref_theta, boxes_3d, mean_sizes, S, DELTA, R, DELTA_THETA
     res_size_norm = dsize / mean_sizes
 
     return (
-        bin_x,
+        tf.to_int32(bin_x),
         res_x_norm,
-        bin_z,
+        tf.to_int32(bin_z),
         res_z_norm,
-        bin_theta,
+        tf.to_int32(bin_theta),
         res_theta_norm,
         res_y,
         res_size_norm,

@@ -242,7 +242,7 @@ class PointCNN(pc_feature_extractor.PcFeatureExtractor):
                 # Calculate features for query points
                 fts_xconv_list = []
                 for xconv_idx, xconv_param in enumerate(layer_param):
-                    tag += str(xconv_idx) + "_"
+                    tag += str(xconv_idx + 1) + "_"
                     K = xconv_param["K"]
                     D = xconv_param["D"]
                     C = xconv_param["C"]
