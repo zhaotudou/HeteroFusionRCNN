@@ -50,7 +50,7 @@ class VoxelGrid(object):
         self.voxel_size = voxel_size
 
         # Discretize voxel coordinates to given quantization size
-        discrete_pts = np.floor(pts/voxel_size).astype(np.int32)
+        discrete_pts = np.floor(pts / voxel_size).astype(np.int32)
 
         # Use Lex Sort, sort by x, then y, then z
         x_col = discrete_pts[:, 0]
@@ -64,7 +64,8 @@ class VoxelGrid(object):
 
         # Format the array to c-contiguous array for unique function
         contiguous_array = np.ascontiguousarray(discrete_pts).view(
-                            np.dtype((np.void, discrete_pts.dtype.itemsize * discrete_pts.shape[1])))
+            np.dtype((np.void, discrete_pts.dtype.itemsize * discrete_pts.shape[1]))
+        )
 
         # The new coordinates are the discretized array with its unique indexes
         _, unique_indices = np.unique(contiguous_array, return_index=True)
@@ -96,21 +97,25 @@ class VoxelGrid(object):
             self.max_voxel_coord = np.amax(voxel_coords, axis=0)
 
         # Get the voxel grid dimensions
-        self.num_divisions = ((self.max_voxel_coord - self.min_voxel_coord) + 1).astype(np.int32)
+        self.num_divisions = ((self.max_voxel_coord - self.min_voxel_coord) + 1).astype(
+            np.int32
+        )
 
         # Bring the min voxel to the origin
         self.voxel_indices = (voxel_coords - self.min_voxel_coord).astype(int)
 
         if create_leaf_layout:
             # Create Voxel Object with -1 as empty/occluded
-            self.leaf_layout = self.VOXEL_EMPTY * \
-                               np.ones(self.num_divisions.astype(int))
+            self.leaf_layout = self.VOXEL_EMPTY * np.ones(
+                self.num_divisions.astype(int)
+            )
 
             # Fill out the leaf layout
-            self.leaf_layout[self.voxel_indices[:, 0],
-                             self.voxel_indices[:, 1],
-                             self.voxel_indices[:, 2]] = \
-                self.VOXEL_FILLED
+            self.leaf_layout[
+                self.voxel_indices[:, 0],
+                self.voxel_indices[:, 1],
+                self.voxel_indices[:, 2],
+            ] = self.VOXEL_FILLED
 
     def map_to_index(self, map_index):
         """ convert map coordinate values to 1-based discrectized grid index coordinate
@@ -122,10 +127,17 @@ class VoxelGrid(object):
         :return: N x length(dim) (grid coordinate)
                 [] if min_voxel_coord or voxel_size or grid_index or dim is not set.
         """
-        if self.voxel_size == 0 \
-                or len(self.min_voxel_coord) == 0 \
-                or len(map_index) == 0:
+        if (
+            self.voxel_size == 0
+            or len(self.min_voxel_coord) == 0
+            or len(map_index) == 0
+        ):
             return []
 
-        return np.maximum(0, np.minimum(self.num_divisions[:], np.floor(map_index/self.voxel_size)
-                                        - self.min_voxel_coord[:]))
+        return np.maximum(
+            0,
+            np.minimum(
+                self.num_divisions[:],
+                np.floor(map_index / self.voxel_size) - self.min_voxel_coord[:],
+            ),
+        )

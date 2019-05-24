@@ -40,8 +40,9 @@ class VoxelGrid2D(object):
         # Full occupancy grid, VOXEL_EMPTY or VOXEL_FILLED
         self.leaf_layout_2d = []
 
-    def voxelize_2d(self, pts, voxel_size, extents=None,
-                    ground_plane=None, create_leaf_layout=True):
+    def voxelize_2d(
+        self, pts, voxel_size, extents=None, ground_plane=None, create_leaf_layout=True
+    ):
         """Voxelizes the point cloud into a 2D voxel grid by
         projecting it down into a flat plane, and stores the maximum
         point height, and number of points corresponding to the voxel
@@ -58,8 +59,7 @@ class VoxelGrid2D(object):
         """
         # Check if points are 3D, otherwise early exit
         if pts.shape[1] != 3:
-            raise ValueError("Points have the wrong shape: {}".format(
-                pts.shape))
+            raise ValueError("Points have the wrong shape: {}".format(pts.shape))
 
         self.voxel_size = voxel_size
 
@@ -84,8 +84,10 @@ class VoxelGrid2D(object):
 
         # Format the array to c-contiguous array for unique function
         contiguous_array = np.ascontiguousarray(discrete_pts_2d).view(
-            np.dtype((np.void, discrete_pts_2d.dtype.itemsize *
-                      discrete_pts_2d.shape[1])))
+            np.dtype(
+                (np.void, discrete_pts_2d.dtype.itemsize * discrete_pts_2d.shape[1])
+            )
+        )
 
         # The new coordinates are the discretized array with its unique indexes
         _, unique_indices = np.unique(contiguous_array, return_index=True)
@@ -97,9 +99,9 @@ class VoxelGrid2D(object):
 
         # Number of points per voxel, last voxel calculated separately
         num_points_in_voxel = np.diff(unique_indices)
-        num_points_in_voxel = np.append(num_points_in_voxel,
-                                        discrete_pts_2d.shape[0] -
-                                        unique_indices[-1])
+        num_points_in_voxel = np.append(
+            num_points_in_voxel, discrete_pts_2d.shape[0] - unique_indices[-1]
+        )
 
         if ground_plane is None:
             # Use first point in voxel as highest point
@@ -107,7 +109,8 @@ class VoxelGrid2D(object):
         else:
             # Ground plane provided
             height_in_voxel = geometry_utils.dist_to_plane(
-                ground_plane, self.points[unique_indices])
+                ground_plane, self.points[unique_indices]
+            )
 
         # Set the height and number of points for each voxel
         self.heights = height_in_voxel
@@ -118,23 +121,19 @@ class VoxelGrid2D(object):
             # Check provided extents
             extents_transpose = np.array(extents).transpose()
             if extents_transpose.shape != (2, 3):
-                raise ValueError("Extents are the wrong shape {}".format(
-                    extents.shape))
+                raise ValueError("Extents are the wrong shape {}".format(extents.shape))
 
             # Set voxel grid extents
             self.min_voxel_coord = np.floor(extents_transpose[0] / voxel_size)
-            self.max_voxel_coord = \
-                np.ceil((extents_transpose[1] / voxel_size) - 1)
+            self.max_voxel_coord = np.ceil((extents_transpose[1] / voxel_size) - 1)
 
             self.min_voxel_coord[1] = 0
             self.max_voxel_coord[1] = 0
 
             # Check that points are bounded by new extents
-            if not (self.min_voxel_coord <= np.amin(voxel_coords,
-                                                    axis=0)).all():
+            if not (self.min_voxel_coord <= np.amin(voxel_coords, axis=0)).all():
                 raise ValueError("Extents are smaller than min_voxel_coord")
-            if not (self.max_voxel_coord >= np.amax(voxel_coords,
-                                                    axis=0)).all():
+            if not (self.max_voxel_coord >= np.amax(voxel_coords, axis=0)).all():
                 raise ValueError("Extents are smaller than max_voxel_coord")
 
         else:
@@ -143,21 +142,23 @@ class VoxelGrid2D(object):
             self.max_voxel_coord = np.amax(voxel_coords, axis=0)
 
         # Get the voxel grid dimensions
-        self.num_divisions = ((self.max_voxel_coord - self.min_voxel_coord)
-                              + 1).astype(np.int32)
+        self.num_divisions = ((self.max_voxel_coord - self.min_voxel_coord) + 1).astype(
+            np.int32
+        )
 
         # Bring the min voxel to the origin
         self.voxel_indices = (voxel_coords - self.min_voxel_coord).astype(int)
 
         if create_leaf_layout:
             # Create Voxel Object with -1 as empty/occluded, 0 as occupied
-            self.leaf_layout_2d = self.VOXEL_EMPTY * \
-                np.ones(self.num_divisions.astype(int))
+            self.leaf_layout_2d = self.VOXEL_EMPTY * np.ones(
+                self.num_divisions.astype(int)
+            )
 
             # Fill out the leaf layout
-            self.leaf_layout_2d[self.voxel_indices[:, 0], 0,
-                                self.voxel_indices[:, 2]] = \
-                self.VOXEL_FILLED
+            self.leaf_layout_2d[
+                self.voxel_indices[:, 0], 0, self.voxel_indices[:, 2]
+            ] = self.VOXEL_FILLED
 
     def map_to_index(self, map_index):
         """Converts map coordinate values to 1-based discretized grid index
@@ -169,9 +170,11 @@ class VoxelGrid2D(object):
         :return: N x length(dim) (grid coordinate)
             [] if min_voxel_coord or voxel_size or grid_index or dim is not set
         """
-        if self.voxel_size == 0 \
-                or len(self.min_voxel_coord) == 0 \
-                or len(map_index) == 0:
+        if (
+            self.voxel_size == 0
+            or len(self.min_voxel_coord) == 0
+            or len(map_index) == 0
+        ):
             return []
 
         num_divisions_2d = self.num_divisions[[0, 2]]

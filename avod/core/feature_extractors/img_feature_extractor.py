@@ -24,10 +24,9 @@ class ImgFeatureExtractor:
             Preprocessed tensor input
         """
         image = tf.to_float(tensor_in)
-        image_normalized = self._mean_image_subtraction(image,
-                                                        [self._R_MEAN,
-                                                         self._G_MEAN,
-                                                         self._B_MEAN])
+        image_normalized = self._mean_image_subtraction(
+            image, [self._R_MEAN, self._G_MEAN, self._B_MEAN]
+        )
         return image_normalized
 
     def _mean_image_subtraction(self, image, means):
@@ -52,15 +51,12 @@ class ImgFeatureExtractor:
             match the number of values in `means`.
         """
         if image.get_shape().ndims != 4:
-            raise ValueError('Input must be of size [batch, height, width, C>0]')
+            raise ValueError("Input must be of size [batch, height, width, C>0]")
         num_channels = image.get_shape().as_list()[-1]
         if len(means) != num_channels:
-            raise ValueError('len(means) must match the number of channels')
+            raise ValueError("len(means) must match the number of channels")
 
-        channels = tf.split(
-            axis=3,
-            num_or_size_splits=num_channels,
-            value=image)
+        channels = tf.split(axis=3, num_or_size_splits=num_channels, value=image)
         for i in range(num_channels):
             channels[i] -= means[i]
         return tf.concat(axis=3, values=channels)

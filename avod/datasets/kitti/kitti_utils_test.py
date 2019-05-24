@@ -10,8 +10,7 @@ from avod.builders.dataset_builder import DatasetBuilder
 class KittiUtilsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        dataset_config = DatasetBuilder.copy_config(
-            DatasetBuilder.KITTI_UNITTEST)
+        dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_UNITTEST)
 
         cls.dataset = DatasetBuilder.build_kitti_dataset(dataset_config)
         cls.label_dir = cls.dataset.label_dir
@@ -21,9 +20,7 @@ class KittiUtilsTest(unittest.TestCase):
         # at y=[0.0, 1.0, 3.0] with a flat ground plane along y
 
         # Create fake point cloud
-        point_cloud = np.array([[1.0, 1.0, 1.0],
-                                [0.0, 1.0, 3.0],
-                                [1.0, 1.0, 1.0]])
+        point_cloud = np.array([[1.0, 1.0, 1.0], [0.0, 1.0, 3.0], [1.0, 1.0, 1.0]])
 
         area_extents = [[-2, 2], [-5, 5], [-2, 2]]
         ground_plane = [0, 1, 0, 0]
@@ -34,8 +31,8 @@ class KittiUtilsTest(unittest.TestCase):
         expected_slice_filter = [False, True, False]
 
         slice_filter = self.dataset.kitti_utils.create_slice_filter(
-            point_cloud, area_extents, ground_plane,
-            ground_offset_dist, offset_dist)
+            point_cloud, area_extents, ground_plane, ground_offset_dist, offset_dist
+        )
 
         np.testing.assert_equal(slice_filter, expected_slice_filter)
 
@@ -52,27 +49,28 @@ class KittiUtilsTest(unittest.TestCase):
         # Expected result from np.rot90
         np_rot_90_out = np.rot90(fake_bev_map)
 
-        np.testing.assert_allclose(np_transpose_then_flip_out,
-                                   np_rot_90_out)
+        np.testing.assert_allclose(np_transpose_then_flip_out, np_rot_90_out)
 
     def test_filter_labels_by_class(self):
 
-        sample_name = '000007'
-        obj_labels = obj_utils.read_labels(self.label_dir,
-                                           int(sample_name))
+        sample_name = "000007"
+        obj_labels = obj_utils.read_labels(self.label_dir, int(sample_name))
         # This particular sample has 2 valid classes
         exp_num_valid_classes = 2
 
-        filtered_labels = \
-            self.dataset.kitti_utils.filter_labels(obj_labels, difficulty=None)
+        filtered_labels = self.dataset.kitti_utils.filter_labels(
+            obj_labels, difficulty=None
+        )
         all_types = []
         for label in filtered_labels:
             if label.type not in all_types:
                 all_types.append(label.type)
-        self.assertEqual(len(all_types),
-                         exp_num_valid_classes,
-                         msg='Wrong number of labels after filtering')
+        self.assertEqual(
+            len(all_types),
+            exp_num_valid_classes,
+            msg="Wrong number of labels after filtering",
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

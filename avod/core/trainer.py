@@ -6,6 +6,7 @@ DetectionModel.
 import datetime
 import os
 import tensorflow as tf
+import horovod.tensorflow as hvd
 import time
 
 from tensorflow.python import debug as tf_debug
@@ -31,8 +32,7 @@ def train(model, train_config):
     model_config = model.model_config
 
     # Create a variable tensor to hold the global step
-    global_step_tensor = tf.Variable(
-        0, trainable=False, name='global_step')
+    global_step_tensor = tf.Variable(0, trainable=False, name="global_step")
 
     #############################
     # Get training configurations
@@ -40,20 +40,16 @@ def train(model, train_config):
     batch_size = train_config.batch_size
     max_iterations = train_config.max_iterations
     summary_interval = train_config.summary_interval
-    checkpoint_interval = \
-        train_config.checkpoint_interval
+    checkpoint_interval = train_config.checkpoint_interval
     max_checkpoints = train_config.max_checkpoints_to_keep
 
     paths_config = model_config.paths_config
     logdir = paths_config.logdir
-    if not os.path.exists(logdir):
+    if not os.path.exists(logdir) and hvd.rank() == 0:
         os.makedirs(logdir)
 
     checkpoint_dir = paths_config.checkpoint_dir
-    if not os.path.exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir)
-    checkpoint_path = checkpoint_dir + '/' + \
-        model_config.checkpoint_name
+    checkpoint_path = checkpoint_dir + "/" + model_config.checkpoint_name
 
     global_summaries = set([])
 
@@ -71,30 +67,42 @@ def train(model, train_config):
 
     # Optimizer
     training_optimizer = optimizer_builder.build(
-        train_config.optimizer,
-        global_summaries,
-        global_step_tensor)
+        train_config.optimizer, global_summaries, global_step_tensor
+    )
+    training_optimizer = hvd.DistributedOptimizer(training_optimizer)
+    hooks = [hvd.BroadcastGlobalVariablesHook(0)]
+    bcast_op = hvd.broadcast_global_variables(0)
 
     # Create the train op
-    with tf.variable_scope('train_op'):
+    with tf.variable_scope("train_op"):
         variables_to_train = None
         if model_config.alternating_training_step == 2:
-            variables_to_train = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "avod_roi_pooling")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "local_spatial_feature")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "pc_encoder")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "classification_confidence")
-            variables_to_train += tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "bin_based_box_refinement")
+            variables_to_train = tf.get_collection(
+                tf.GraphKeys.TRAINABLE_VARIABLES, "avod_roi_pooling"
+            )
+            variables_to_train += tf.get_collection(
+                tf.GraphKeys.TRAINABLE_VARIABLES, "local_spatial_feature"
+            )
+            variables_to_train += tf.get_collection(
+                tf.GraphKeys.TRAINABLE_VARIABLES, "pc_encoder"
+            )
+            variables_to_train += tf.get_collection(
+                tf.GraphKeys.TRAINABLE_VARIABLES, "classification_confidence"
+            )
+            variables_to_train += tf.get_collection(
+                tf.GraphKeys.TRAINABLE_VARIABLES, "bin_based_box_refinement"
+            )
         train_op = slim.learning.create_train_op(
             total_loss,
             training_optimizer,
             clip_gradient_norm=1.0,
             global_step=global_step_tensor,
             summarize_gradients=False,
-            variables_to_train=variables_to_train)
+            variables_to_train=variables_to_train,
+        )
 
     # Save checkpoints regularly.
-    saver = tf.train.Saver(max_to_keep=max_checkpoints,
-                           pad_step_number=True)
+    saver = tf.train.Saver(max_to_keep=max_checkpoints, pad_step_number=True)
 
     # Add the result of the train_op to the summary
     tf.summary.scalar("training_loss", train_op)
@@ -102,12 +110,11 @@ def train(model, train_config):
     # Add maximum memory usage summary op
     # This op can only be run on device with gpu
     # so it's skipped on travis
-    is_travis = 'TRAVIS' in os.environ
+    is_travis = "TRAVIS" in os.environ
     if not is_travis:
         # tf.summary.scalar('bytes_in_use',
         #                   tf.contrib.memory_stats.BytesInUse())
-        tf.summary.scalar('max_bytes',
-                          tf.contrib.memory_stats.MaxBytesInUse())
+        tf.summary.scalar("max_bytes", tf.contrib.memory_stats.MaxBytesInUse())
 
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
     summary_merged = summary_utils.summaries_to_keep(
@@ -115,32 +122,33 @@ def train(model, train_config):
         global_summaries,
         histograms=summary_histograms,
         input_imgs=summary_img_images,
-        input_pcs=summary_pc_images
+        input_pcs=summary_pc_images,
     )
 
-    allow_gpu_mem_growth = train_config.allow_gpu_mem_growth
-    if allow_gpu_mem_growth:
-        # GPU memory config
-        config = tf.ConfigProto()
-        config.gpu_options.allow_growth = allow_gpu_mem_growth
-        sess = tf.Session(config=config)
-    else:
-        sess = tf.Session()
-    #sess = tf_debug.LocalCLIDebugWrapperSession(sess, dump_root='/data/ljh/HeteroFusion/dump')
+    # with tf.contrib.tfprof.ProfileContext("/tmp/train_dir"):
+    config = tf.ConfigProto()
+    config.gpu_options.visible_device_list = str(hvd.local_rank())
+    config.gpu_options.allow_growth = (
+        train_config.allow_gpu_mem_growth
+        if train_config.allow_gpu_mem_growth
+        else False
+    )
+    sess = tf.Session(config=config)
 
-    # Create unique folder name using datetime for summary writer
-    datetime_str = str(datetime.datetime.now())
-    logdir = logdir + '/train'
-    train_writer = tf.summary.FileWriter(logdir + '/' + datetime_str,
-                                         sess.graph)
+    # sess = tf_debug.LocalCLIDebugWrapperSession(sess, dump_root='/data/ljh/HeteroFusion/dump')
+
+    if hvd.rank() == 0:
+        # Create unique folder name using datetime for summary writer
+        datetime_str = str(datetime.datetime.now())
+        logdir = logdir + "/train"
+        train_writer = tf.summary.FileWriter(logdir + "/" + datetime_str, sess.graph)
 
     # Create init op
     init = tf.global_variables_initializer()
 
     # Continue from last saved checkpoint
     if not train_config.overwrite_checkpoints:
-        trainer_utils.load_checkpoints(checkpoint_dir,
-                                       saver)
+        trainer_utils.load_checkpoints(checkpoint_dir, saver)
         if len(saver.last_checkpoints) > 0:
             checkpoint_to_restore = saver.last_checkpoints[-1]
             if model_config.alternating_training_step in [2]:
@@ -155,48 +163,63 @@ def train(model, train_config):
         # Initialize the variables
         sess.run(init)
 
+    sess.run(bcast_op)
+
+    global_max_iterations = max_iterations
+    max_iterations = int(max_iterations / hvd.size())
+    print(
+        "Global Max Iterations {}, Each Iterations {} For {} GPUs".format(
+            global_max_iterations, max_iterations, hvd.size()
+        )
+    )
+
     # Read the global step if restored
-    global_step = tf.train.global_step(sess,
-                                       global_step_tensor)
-    print('Starting from step {} / {}'.format(
-        global_step, max_iterations))
+    global_step = tf.train.global_step(sess, global_step_tensor)
+    print(
+        "Rank {} Starting from step {} / {}".format(
+            hvd.rank(), global_step, max_iterations
+        )
+    )
 
     # Main Training Loop
     last_time = time.time()
     for step in range(global_step, max_iterations + 1):
 
         # Save checkpoint
-        if step % checkpoint_interval == 0:
-            global_step = tf.train.global_step(sess,
-                                               global_step_tensor)
+        if step % checkpoint_interval == 0 and hvd.rank() == 0:
+            global_step = tf.train.global_step(sess, global_step_tensor)
 
-            saver.save(sess,
-                       save_path=checkpoint_path,
-                       global_step=global_step)
+            saver.save(sess, save_path=checkpoint_path, global_step=global_step)
 
-            print('Step {} / {}, Checkpoint saved to {}-{:08d}'.format(
-                step, max_iterations,
-                checkpoint_path, global_step))
+            print(
+                "Step {} / {}, Checkpoint saved to {}-{:08d}".format(
+                    step, max_iterations, checkpoint_path, global_step
+                )
+            )
 
         # Create feed_dict for inferencing
         feed_dict = model.create_feed_dict(batch_size)
 
         # Write summaries and train op
-        if step % summary_interval == 0:
+        if step % summary_interval == 0 and hvd.rank() == 0:
             current_time = time.time()
             time_elapsed = current_time - last_time
             last_time = current_time
 
             train_op_loss, summary_out = sess.run(
-                [train_op, summary_merged], feed_dict=feed_dict)
+                [train_op, summary_merged], feed_dict=feed_dict
+            )
 
-            print('Step {}, Total Loss {:0.3f}, Time Elapsed {:0.3f} s'.format(
-                step, train_op_loss, time_elapsed))
+            print(
+                "Step {}, Total Loss {:0.3f}, Time Elapsed {:0.3f} s".format(
+                    step, train_op_loss, time_elapsed
+                )
+            )
             train_writer.add_summary(summary_out, step)
 
         else:
             # Run the train op only
             sess.run(train_op, feed_dict)
-
-    # Close the summary writers
-    train_writer.close()
+    if hvd.rank() == 0:
+        # Close the summary writers
+        train_writer.close()

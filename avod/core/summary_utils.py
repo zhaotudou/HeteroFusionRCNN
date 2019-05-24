@@ -23,15 +23,15 @@ def add_feature_maps(feature_maps, layer_name):
         layer_name: name of the layer which will show up in tensorboard
     """
     with tf.name_scope(layer_name):
-        batch, maps_height, maps_width, num_maps = np.array(
-            feature_maps.shape).astype(np.int32)
+        batch, maps_height, maps_width, num_maps = np.array(feature_maps.shape).astype(
+            np.int32
+        )
 
         # Resize to a visible size
         map_width_out = 300
         ratio = map_width_out / maps_width
         map_height_out = int(maps_height * ratio)
-        map_size_out = tf.convert_to_tensor([map_height_out, map_width_out],
-                                            tf.int32)
+        map_size_out = tf.convert_to_tensor([map_height_out, map_width_out], tf.int32)
 
         resized_maps = tf.image.resize_bilinear(feature_maps, map_size_out)
 
@@ -43,7 +43,8 @@ def add_feature_maps(feature_maps, layer_name):
         map_width_out += 5
         map_height_out += 5
         output = tf.image.resize_image_with_crop_or_pad(
-            output, map_height_out, map_width_out)
+            output, map_height_out, map_width_out
+        )
 
         # Find good image size for display
         map_sizes = [1, 32, 64, 128, 256, 512]
@@ -55,19 +56,19 @@ def add_feature_maps(feature_maps, layer_name):
         image_height = desired_image_size[1]
 
         # Arrange maps into a grid
-        output = tf.reshape(output,
-                            (map_height_out, map_width_out, image_height,
-                             image_width))
+        output = tf.reshape(
+            output, (map_height_out, map_width_out, image_height, image_width)
+        )
         output = tf.transpose(output, (2, 0, 3, 1))
-        output = tf.reshape(output, (1, image_height * map_height_out,
-                                     image_width * map_width_out, 1))
+        output = tf.reshape(
+            output, (1, image_height * map_height_out, image_width * map_width_out, 1)
+        )
 
-        layer_name = layer_name.split('/')[-1]
+        layer_name = layer_name.split("/")[-1]
         tf.summary.image(layer_name, output, max_outputs=16)
 
 
-def add_scalar_summary(summary_name, scalar_value,
-                       summary_writer, global_step):
+def add_scalar_summary(summary_name, scalar_value, summary_writer, global_step):
     """ Adds a single scalar summary value to the logs without adding a
         summary node to the graph
 
@@ -79,17 +80,14 @@ def add_scalar_summary(summary_name, scalar_value,
     """
 
     avg_summary = tf.Summary()
-    avg_summary.value.add(tag=summary_name,
-                          simple_value=scalar_value)
+    avg_summary.value.add(tag=summary_name, simple_value=scalar_value)
 
     summary_writer.add_summary(avg_summary, global_step)
 
 
-def summaries_to_keep(summaries,
-                      global_summaries,
-                      histograms=True,
-                      input_imgs=True,
-                      input_pcs=True):
+def summaries_to_keep(
+    summaries, global_summaries, histograms=True, input_imgs=True, input_pcs=True
+):
 
     if histograms and input_imgs and input_pcs:
         # Keep everything
@@ -98,14 +96,14 @@ def summaries_to_keep(summaries,
     else:
         for summary in summaries.copy():
             name = summary.name
-            if not histograms and name.startswith('histograms'):
+            if not histograms and name.startswith("histograms"):
                 summaries.remove(summary)
-            if not input_imgs and name.startswith('img_'):
+            if not input_imgs and name.startswith("img_"):
                 summaries.remove(summary)
-            if not input_pcs and name.startswith('pc_'):
+            if not input_pcs and name.startswith("pc_"):
                 summaries.remove(summary)
 
     # Merge all summaries together.
-    summary_op = tf.summary.merge(list(summaries), name='summary_op')
+    summary_op = tf.summary.merge(list(summaries), name="summary_op")
 
     return summary_op

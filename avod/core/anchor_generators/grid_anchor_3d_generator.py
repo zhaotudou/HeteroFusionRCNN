@@ -8,9 +8,8 @@ from avod.core import anchor_generator
 
 
 class GridAnchor3dGenerator(anchor_generator.AnchorGenerator):
-
     def name_scope(self):
-        return 'GridAnchor3dGenerator'
+        return "GridAnchor3dGenerator"
 
     def _generate(self, **params):
         """
@@ -25,21 +24,15 @@ class GridAnchor3dGenerator(anchor_generator.AnchorGenerator):
             list of 3D anchors in the form N x [x, y, z, l, w, h, ry]
         """
 
-        area_3d = params.get('area_3d')
-        anchor_3d_sizes = params.get('anchor_3d_sizes')
-        anchor_stride = params.get('anchor_stride')
-        ground_plane = params.get('ground_plane')
+        area_3d = params.get("area_3d")
+        anchor_3d_sizes = params.get("anchor_3d_sizes")
+        anchor_stride = params.get("anchor_stride")
+        ground_plane = params.get("ground_plane")
 
-        return tile_anchors_3d(area_3d,
-                               anchor_3d_sizes,
-                               anchor_stride,
-                               ground_plane)
+        return tile_anchors_3d(area_3d, anchor_3d_sizes, anchor_stride, ground_plane)
 
 
-def tile_anchors_3d(area_extents,
-                    anchor_3d_sizes,
-                    anchor_stride,
-                    ground_plane):
+def tile_anchors_3d(area_extents, anchor_3d_sizes, anchor_stride, ground_plane):
     """
     Tiles anchors over the area extents by using meshgrids to
     generate combinations of (x, y, z), (l, w, h) and ry.
@@ -62,13 +55,15 @@ def tile_anchors_3d(area_extents,
 
     x_start = area_extents[0][0] + anchor_stride[0] / 2.0
     x_end = area_extents[0][1]
-    x_centers = np.array(np.arange(x_start, x_end, step=anchor_stride_x),
-                         dtype=np.float32)
+    x_centers = np.array(
+        np.arange(x_start, x_end, step=anchor_stride_x), dtype=np.float32
+    )
 
     z_start = area_extents[2][1] - anchor_stride[1] / 2.0
     z_end = area_extents[2][0]
-    z_centers = np.array(np.arange(z_start, z_end, step=-anchor_stride_z),
-                         dtype=np.float32)
+    z_centers = np.array(
+        np.arange(z_start, z_end, step=-anchor_stride_z), dtype=np.float32
+    )
 
     # Use ranges for substitution
     size_indices = np.arange(0, len(anchor_3d_sizes))
@@ -78,11 +73,9 @@ def tile_anchors_3d(area_extents,
     # e.g. for two sizes and two rotations
     # [[x0, z0, 0, 0], [x0, z0, 0, 1], [x0, z0, 1, 0], [x0, z0, 1, 1],
     #  [x1, z0, 0, 0], [x1, z0, 0, 1], [x1, z0, 1, 0], [x1, z0, 1, 1], ...]
-    before_sub = np.stack(np.meshgrid(x_centers,
-                                      z_centers,
-                                      size_indices,
-                                      rotation_indices),
-                          axis=4).reshape(-1, 4)
+    before_sub = np.stack(
+        np.meshgrid(x_centers, z_centers, size_indices, rotation_indices), axis=4
+    ).reshape(-1, 4)
 
     # Place anchors on the ground plane
     a, b, c, d = ground_plane

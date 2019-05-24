@@ -3,6 +3,7 @@ Projects boxes into bird's eye view and image space.
 Returns the 4 points (x, y) of the corresponding box
 """
 import numpy as np
+import tensorflow as tf
 
 from wavedata.tools.core import calib_utils
 from wavedata.tools.obj_detection import obj_utils
@@ -53,9 +54,9 @@ def project_to_bev(boxes_3d, bev_extents):
     for box_idx in range(len(boxes_3d)):
         rot = ry[box_idx]
 
-        rot_mat = np.reshape([[np.cos(rot), np.sin(rot)],
-                              [-np.sin(rot), np.cos(rot)]],
-                             (2, 2))
+        rot_mat = np.reshape(
+            [[np.cos(rot), np.sin(rot)], [-np.sin(rot), np.cos(rot)]], (2, 2)
+        )
 
         box_x = x[box_idx]
         box_z = z[box_idx]
@@ -84,9 +85,9 @@ def project_to_bev(boxes_3d, bev_extents):
     return box_points, box_points_norm
 
 
-def project_to_image_space(box_3d, calib_p2,
-                           truncate=False, image_size=None,
-                           discard_before_truncation=True):
+def project_to_image_space(
+    box_3d, calib_p2, truncate=False, image_size=None, discard_before_truncation=True
+):
     """ Projects a box_3d into image space
 
     Args:
@@ -121,16 +122,18 @@ def project_to_image_space(box_3d, calib_p2,
 
     if truncate:
         if not image_size:
-            raise ValueError('Image size must be provided')
+            raise ValueError("Image size must be provided")
 
         image_w = image_size[0]
         image_h = image_size[1]
 
         # Discard invalid boxes (outside image space)
-        if img_box[0] > image_w or \
-                img_box[1] > image_h or \
-                img_box[2] < 0 or \
-                img_box[3] < 0:
+        if (
+            img_box[0] > image_w
+            or img_box[1] > image_h
+            or img_box[2] < 0
+            or img_box[3] < 0
+        ):
             return None
 
         # Discard boxes that are larger than 80% of the image width OR height
@@ -159,6 +162,7 @@ def project_to_image_space(box_3d, calib_p2,
 
     return img_box
 
+
 def tf_project_to_image_space(boxes, calib, image_shape):
     """
     Projects 3D tensor boxes into image space
@@ -177,31 +181,42 @@ def tf_project_to_image_space(boxes, calib, image_shape):
             of the image size - N x [x1, y1, x2, y2]
     """
     batch_size = boxes.shape[0]
-    corners_3d = tf.matrix_transpose(box_8c_encoder.tf_box_3d_to_box_8co(boxes)) # (B,8,3)
-    corners_3d_hom = tf.concat([corners_3d, tf.ones((batch_size,8,1))], axis=-1) # (B,8,4)
-    corners_3d_hom = tf.expand_dims(corners_3d_hom, axis=-1) # (B,8,4,1)
-    calib_tiled = tf.tile(tf.expand_dims(calib, 1), [1,8,1,1]) # (B,8,3,4)
-    projected_pts = tf.matmul(calib_tiled, corners_3d_hom) # (B,8,3,1)
-    projected_pts = tf.squeeze(projected_pts, axis=-1) # (B,8,3)
+    corners_3d = tf.matrix_transpose(
+        box_8c_encoder.tf_box_3d_to_box_8co(boxes)
+    )  # (B,8,3)
+    corners_3d_hom = tf.concat(
+        [corners_3d, tf.ones((batch_size, 8, 1))], axis=-1
+    )  # (B,8,4)
+    corners_3d_hom = tf.expand_dims(corners_3d_hom, axis=-1)  # (B,8,4,1)
+    calib_tiled = tf.tile(tf.expand_dims(calib, 1), [1, 8, 1, 1])  # (B,8,3,4)
+    projected_pts = tf.matmul(calib_tiled, corners_3d_hom)  # (B,8,3,1)
+    projected_pts = tf.squeeze(projected_pts, axis=-1)  # (B,8,3)
 
-    projected_pts_norm = projected_pts/tf.slice(projected_pts, [0,0,2], [-1,-1,1]) # divided by depth
+    projected_pts_norm = projected_pts / tf.slice(
+        projected_pts, [0, 0, 2], [-1, -1, 1]
+    )  # divided by depth
 
-    corners_2d = tf.gather(projected_pts_norm, [0,1], axis=-1) # (B,8,2)
+    corners_2d = tf.gather(projected_pts_norm, [0, 1], axis=-1)  # (B,8,2)
 
     pts_2d_min = tf.reduce_min(corners_2d, axis=1)
-    pts_2d_max = tf.reduce_max(corners_2d, axis=1) # (B, 2)
-    box_corners = tf.stack([
-        tf.gather(pts_2d_min, 0, axis=1),
-        tf.gather(pts_2d_min, 1, axis=1),
-        tf.gather(pts_2d_max, 0, axis=1),
-        tf.gather(pts_2d_max, 1, axis=1),
-        ], axis=1) # (B,4)
+    pts_2d_max = tf.reduce_max(corners_2d, axis=1)  # (B, 2)
+    box_corners = tf.stack(
+        [
+            tf.gather(pts_2d_min, 0, axis=1),
+            tf.gather(pts_2d_min, 1, axis=1),
+            tf.gather(pts_2d_max, 0, axis=1),
+            tf.gather(pts_2d_max, 1, axis=1),
+        ],
+        axis=1,
+    )  # (B,4)
 
     # Normalize
     image_shape_h = image_shape[0]
     image_shape_w = image_shape[1]
 
-    image_shape_tiled = tf.tile([[image_shape_w, image_shape_h, image_shape_w, image_shape_h]], [batch_size,1])
+    image_shape_tiled = tf.tile(
+        [[image_shape_w, image_shape_h, image_shape_w, image_shape_h]], [batch_size, 1]
+    )
 
     box_corners_norm = box_corners / tf.to_float(image_shape_tiled)
 

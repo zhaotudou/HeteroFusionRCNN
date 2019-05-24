@@ -1,6 +1,7 @@
 package avod.protos;
 
 import "avod/protos/kitti_utils.proto";
+import "avod/protos/mini_batch.proto";
 
 message KittiDatasetConfig {
 
@@ -29,12 +30,14 @@ message KittiDatasetConfig {
     // Number of clusters corresponding to each class (e.g. [2, 1, 2])
     repeated int32 num_clusters = 8;
 
-    // PC source, e.g. 'lidar'
-    required string pc_source = 9;
-
-    // Augmentations (e.g. [''], ['flipping'], ['flipping', 'pca_jitter'])
+    // Augmentations (e.g. [], ['flipping'], ['flipping', 'pca_jitter'])
     repeated string aug_list = 10;
+    
+    // ROI Augmentations (e.g. ['single', 'multiple', 'normal'])
+    optional string aug_roi_method = 11 [default = 'multiple'];
 
     // KittiUtils configuration
     optional KittiUtilsConfig kitti_utils_config = 20;
+    
+    optional MiniBatchConfig mini_batch_config = 12;
 }

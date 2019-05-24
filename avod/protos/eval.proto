@@ -28,4 +28,6 @@ message EvalConfig {
     optional int32 kitti_native_eval_step = 8;
 
     optional uint32 batch_size = 9 [default=1];
+    
+    optional bool save_rpn_feature = 10 [default = true];
 }

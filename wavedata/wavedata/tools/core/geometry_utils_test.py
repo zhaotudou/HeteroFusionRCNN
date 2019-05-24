@@ -5,7 +5,6 @@ from wavedata.tools.core import geometry_utils
 
 
 class GeometryUtilsTest(unittest.TestCase):
-
     def test_dist_to_plane(self):
 
         xy_plane = [0, 0, 1, 0]
@@ -30,12 +29,11 @@ class GeometryUtilsTest(unittest.TestCase):
         diagonal_plane_inv = [-1, -1, -1, 0]
 
         dist_from_xy_inv = geometry_utils.dist_to_plane(xy_plane_inv, point)
-        dist_from_diag_inv = geometry_utils.dist_to_plane(diagonal_plane_inv,
-                                                          point)
+        dist_from_diag_inv = geometry_utils.dist_to_plane(diagonal_plane_inv, point)
 
         self.assertAlmostEqual(dist_from_xy_inv[0], -1.0)
         self.assertAlmostEqual(dist_from_diag_inv[0], -np.sqrt(3))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

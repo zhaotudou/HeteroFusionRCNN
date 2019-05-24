@@ -31,20 +31,18 @@ def get_empty_anchor_filter(anchors, voxel_grid_3d, density_threshold=1):
     bot_right_down = np.zeros([len(anchors), 3]).astype(np.float32)
 
     # Calculate minimum corner
-    top_left_up[:, 0] = anchors[:, 0] - (anchors[:, 3] / 2.)
+    top_left_up[:, 0] = anchors[:, 0] - (anchors[:, 3] / 2.0)
     top_left_up[:, 1] = anchors[:, 1] - (anchors[:, 4])
-    top_left_up[:, 2] = anchors[:, 2] - (anchors[:, 5] / 2.)
+    top_left_up[:, 2] = anchors[:, 2] - (anchors[:, 5] / 2.0)
 
     # Calculate maximum corner
-    bot_right_down[:, 0] = anchors[:, 0] + (anchors[:, 3] / 2.)
+    bot_right_down[:, 0] = anchors[:, 0] + (anchors[:, 3] / 2.0)
     bot_right_down[:, 1] = anchors[:, 1]
-    bot_right_down[:, 2] = anchors[:, 2] + (anchors[:, 5] / 2.)
+    bot_right_down[:, 2] = anchors[:, 2] + (anchors[:, 5] / 2.0)
 
     # map_to_index() expects N x 3 points
-    cuboid_container[:, :3] = voxel_grid_3d.map_to_index(
-        top_left_up)
-    cuboid_container[:, 3:] = voxel_grid_3d.map_to_index(
-        bot_right_down)
+    cuboid_container[:, :3] = voxel_grid_3d.map_to_index(top_left_up)
+    cuboid_container[:, 3:] = voxel_grid_3d.map_to_index(bot_right_down)
 
     # Transpose to pass into query()
     cuboid_container = cuboid_container.T
@@ -94,18 +92,16 @@ def get_empty_anchor_filter_2d(anchors, voxel_grid_2d, density_threshold=1):
     bot_right_down = np.zeros([num_anchors, 2]).astype(np.float32)
 
     # Calculate minimum corner
-    top_left_up[:, 0] = anchors_2d[:, 0] - (anchors_2d[:, 2] / 2.)
-    top_left_up[:, 1] = anchors_2d[:, 1] - (anchors_2d[:, 3] / 2.)
+    top_left_up[:, 0] = anchors_2d[:, 0] - (anchors_2d[:, 2] / 2.0)
+    top_left_up[:, 1] = anchors_2d[:, 1] - (anchors_2d[:, 3] / 2.0)
 
     # Calculate maximum corner
-    bot_right_down[:, 0] = anchors_2d[:, 0] + (anchors_2d[:, 2] / 2.)
-    bot_right_down[:, 1] = anchors_2d[:, 1] + (anchors_2d[:, 3] / 2.)
+    bot_right_down[:, 0] = anchors_2d[:, 0] + (anchors_2d[:, 2] / 2.0)
+    bot_right_down[:, 1] = anchors_2d[:, 1] + (anchors_2d[:, 3] / 2.0)
 
     # map_to_index() expects N x 2 points
-    anchor_container[:, :2] = voxel_grid_2d.map_to_index(
-        top_left_up)
-    anchor_container[:, 2:] = voxel_grid_2d.map_to_index(
-        bot_right_down)
+    anchor_container[:, :2] = voxel_grid_2d.map_to_index(top_left_up)
+    anchor_container[:, 2:] = voxel_grid_2d.map_to_index(bot_right_down)
 
     # Transpose to pass into query()
     anchor_container = anchor_container.T

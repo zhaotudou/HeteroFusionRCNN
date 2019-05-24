@@ -74,8 +74,8 @@ def read_calibration(calib_dir, img_idx):
     """
     frame_calibration_info = FrameCalibrationData()
 
-    data_file = open(calib_dir + "/%06d.txt" % img_idx, 'r')
-    data_reader = csv.reader(data_file, delimiter=' ')
+    data_file = open(calib_dir + "/%06d.txt" % img_idx, "r")
+    data_reader = csv.reader(data_file, delimiter=" ")
     data = []
 
     for row in data_reader:
@@ -168,10 +168,10 @@ def krt_from_p(p, fsign=1):
 
     # Sanity checks to ensure factorization is correct
     if np.linalg.det(r) < 0:
-        print('Warning: R is not a rotation matrix.')
+        print("Warning: R is not a rotation matrix.")
 
     if k[2, 2] < 0:
-        print('Warning: K has a wrong sign.')
+        print("Warning: K has a wrong sign.")
 
     return k, r, t
 
@@ -209,7 +209,7 @@ def get_stereo_calibration(left_cam_mat, right_cam_mat):
     return stereo_calibration_info
 
 
-def depth_from_disparity(disp, stereo_calibration_info, flatten_order='C'):
+def depth_from_disparity(disp, stereo_calibration_info, flatten_order="C"):
     """Transform disparity map to 3d point cloud.
 
     Camera coordinate frame:
@@ -254,17 +254,16 @@ def depth_from_disparity(disp, stereo_calibration_info, flatten_order='C'):
     disp[disp == 0] = 0.1
 
     depth = np.ones(disp.shape, np.single)
-    depth = np.multiply(depth,
-                        stereo_calibration_info.f *
-                        stereo_calibration_info.baseline)
+    depth = np.multiply(
+        depth, stereo_calibration_info.f * stereo_calibration_info.baseline
+    )
 
     depth = np.divide(depth, np.double(disp))
 
     sz = np.shape(depth)
     depth = depth.flatten(flatten_order)
 
-    xx, yy = np.meshgrid(
-        np.arange(1, sz[1] + 1, 1), np.arange(1, sz[0] + 1, 1))
+    xx, yy = np.meshgrid(np.arange(1, sz[1] + 1, 1), np.arange(1, sz[0] + 1, 1))
 
     xx = xx.flatten(flatten_order) - stereo_calibration_info.center_u
     yy = yy.flatten(flatten_order) - stereo_calibration_info.center_v
@@ -287,9 +286,9 @@ def project_to_image(point_cloud, p):
     :return: pts_2d: the image coordinates of the 3D points in the shape (2, N)
     """
 
-    pts_2d = np.dot(p, np.append(point_cloud,
-                                 np.ones((1, point_cloud.shape[1])),
-                                 axis=0))
+    pts_2d = np.dot(
+        p, np.append(point_cloud, np.ones((1, point_cloud.shape[1])), axis=0)
+    )
 
     pts_2d[0, :] = pts_2d[0, :] / pts_2d[2, :]
     pts_2d[1, :] = pts_2d[1, :] / pts_2d[2, :]
@@ -353,7 +352,7 @@ def read_lidar(velo_dir, img_idx):
     velo_dir = velo_dir + "/%06d.bin" % img_idx
 
     if os.path.exists(velo_dir):
-        with open(velo_dir, 'rb') as fid:
+        with open(velo_dir, "rb") as fid:
             data_array = np.fromfile(fid, np.single)
 
         xyzi = data_array.reshape(-1, 4)
@@ -388,14 +387,12 @@ def lidar_to_cam_frame(xyz_lidar, frame_calib):
 
     # Pad the r0_rect matrix to a 4x4
     r0_rect_mat = frame_calib.r0_rect
-    r0_rect_mat = np.pad(r0_rect_mat, ((0, 1), (0, 1)),
-                         'constant', constant_values=0)
+    r0_rect_mat = np.pad(r0_rect_mat, ((0, 1), (0, 1)), "constant", constant_values=0)
     r0_rect_mat[3, 3] = 1
 
     # Pad the tr_vel_to_cam matrix to a 4x4
     tf_mat = frame_calib.tr_velodyne_to_cam
-    tf_mat = np.pad(tf_mat, ((0, 1), (0, 0)),
-                    'constant', constant_values=0)
+    tf_mat = np.pad(tf_mat, ((0, 1), (0, 0)), "constant", constant_values=0)
     tf_mat[3, 3] = 1
 
     # Pad the pointcloud with 1's for the transformation matrix multiplication

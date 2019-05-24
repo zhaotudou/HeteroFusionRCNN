@@ -35,7 +35,8 @@ def two_d_iou(box, boxes):
 
         boxes_area = np.multiply(
             boxes[non_empty, 2] - boxes[non_empty, 0],
-            boxes[non_empty, 3] - boxes[non_empty, 1])
+            boxes[non_empty, 3] - boxes[non_empty, 1],
+        )
 
         union_area = box_area + boxes_area - intersection_area
 
@@ -62,17 +63,20 @@ def three_d_iou(box, boxes):
     if len(boxes.shape) == 1:
         boxes = np.array([boxes])
 
-    box_diag = np.sqrt(np.square(box[1]) +
-                       np.square(box[2]) +
-                       np.square(box[3])) / 2
+    box_diag = np.sqrt(np.square(box[1]) + np.square(box[2]) + np.square(box[3])) / 2
 
-    boxes_diag = np.sqrt(np.square(boxes[:, 1]) +
-                         np.square(boxes[:, 2]) +
-                         np.square(boxes[:, 3])) / 2
+    boxes_diag = (
+        np.sqrt(
+            np.square(boxes[:, 1]) + np.square(boxes[:, 2]) + np.square(boxes[:, 3])
+        )
+        / 2
+    )
 
-    dist = np.sqrt(np.square(boxes[:, 4] - box[4]) +
-                   np.square(boxes[:, 5] - box[5]) +
-                   np.square(boxes[:, 6] - box[6]))
+    dist = np.sqrt(
+        np.square(boxes[:, 4] - box[4])
+        + np.square(boxes[:, 5] - box[5])
+        + np.square(boxes[:, 6] - box[6])
+    )
 
     non_empty = box_diag + boxes_diag >= dist
 
@@ -127,9 +131,11 @@ def height_metrics(box, boxes):
     offsets = min_of_maxs - max_of_mins
     height_intersection = np.maximum(0, offsets)
 
-    height_union = np.maximum(min_y_box, boxes_centroid_heights) \
-        - np.minimum(min_y_box, min_y_boxes) - \
-        np.maximum(0, -offsets)
+    height_union = (
+        np.maximum(min_y_box, boxes_centroid_heights)
+        - np.minimum(min_y_box, min_y_boxes)
+        - np.maximum(0, -offsets)
+    )
 
     return height_intersection, height_union
 
@@ -158,8 +164,9 @@ def get_rotated_3d_bb(boxes):
     z = np.array([[]])
 
     for i in boxes:
-        rot_mat = np.array([[np.cos(i[0]), np.sin(i[0])],
-                            [-np.sin(i[0]), np.cos(i[0])]])
+        rot_mat = np.array(
+            [[np.cos(i[0]), np.sin(i[0])], [-np.sin(i[0]), np.cos(i[0])]]
+        )
 
         x_corners = np.multiply(i[1] / 2, np.array([1, 1, -1, -1]))
         z_corners = np.multiply(i[3] / 2, np.array([1, -1, -1, 1]))
@@ -216,8 +223,12 @@ def get_rectangular_metrics(box, boxes):
     for i in range(np.size(boxes, 0)):
         x_i = x_boxes[i, :]
         z_i = z_boxes[i, :]
-        test = max_x_box < np.min(x_i) or np.max(x_i) < min_x_box \
-            or max_z_box < np.min(z_i) or np.max(z_i) < min_z_box
+        test = (
+            max_x_box < np.min(x_i)
+            or np.max(x_i) < min_x_box
+            or max_z_box < np.min(z_i)
+            or np.max(z_i) < min_z_box
+        )
 
         if test:
             continue
@@ -236,27 +247,28 @@ def get_rectangular_metrics(box, boxes):
         # Drawing a binary image of the base of the two bounding boxes.
         # Then compute the element wise and of the two images to get the intersection.
         # Minor precision loss due to discretization.
-        img = Image.new('L', (mask_dims[0], mask_dims[1]), 0)
-        draw = ImageDraw.Draw(img, 'L')
-        rect_coordinates = np.reshape(np.transpose(np.array([mask_box_x,
-                                                             mask_box_z])), 8)
+        img = Image.new("L", (mask_dims[0], mask_dims[1]), 0)
+        draw = ImageDraw.Draw(img, "L")
+        rect_coordinates = np.reshape(
+            np.transpose(np.array([mask_box_x, mask_box_z])), 8
+        )
         rect_coordinates = np.append(rect_coordinates, rect_coordinates[0:2])
         draw.polygon(rect_coordinates.ravel().tolist(), outline=255, fill=255)
         del draw
         mask_box = np.asarray(img)
 
-        img2 = Image.new('L', (mask_dims[0], mask_dims[1]), 0)
-        draw = ImageDraw.Draw(img2, 'L')
-        i_coordinates = np.reshape(np.transpose(np.array([mask_i_x,
-                                                          mask_i_z])), 8)
+        img2 = Image.new("L", (mask_dims[0], mask_dims[1]), 0)
+        draw = ImageDraw.Draw(img2, "L")
+        i_coordinates = np.reshape(np.transpose(np.array([mask_i_x, mask_i_z])), 8)
         i_coordinates = np.append(i_coordinates, i_coordinates[0:2])
         draw.polygon(i_coordinates.ravel().tolist(), outline=255, fill=255)
         del draw
         mask_i = np.asarray(img2)
 
         mask_intersection = np.logical_and(mask_box, mask_i)
-        intersection[i] = min(100, np.size(np.flatnonzero(
-            mask_intersection)) * np.square(mask_res))
+        intersection[i] = min(
+            100, np.size(np.flatnonzero(mask_intersection)) * np.square(mask_res)
+        )
 
     if intersection.shape[0] == 1:
         intersection = intersection[0]

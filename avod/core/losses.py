@@ -18,14 +18,17 @@ from avod.core import ops
 
 class Loss(object):
     """Abstract base class for loss functions."""
+
     __metaclass__ = ABCMeta
 
-    def __call__(self,
-                 prediction_tensor,
-                 target_tensor,
-                 ignore_nan_targets=False,
-                 scope=None,
-                 **params):
+    def __call__(
+        self,
+        prediction_tensor,
+        target_tensor,
+        ignore_nan_targets=False,
+        scope=None,
+        **params
+    ):
         """Call the loss function.
 
         Args:
@@ -42,14 +45,14 @@ class Loss(object):
         Returns:
             loss: a tensor representing the value of the loss function.
         """
-        with tf.name_scope(scope, 'Loss',
-                           [prediction_tensor, target_tensor, params]) as scope:
+        with tf.name_scope(
+            scope, "Loss", [prediction_tensor, target_tensor, params]
+        ) as scope:
             if ignore_nan_targets:
-                target_tensor = tf.where(tf.is_nan(target_tensor),
-                                         prediction_tensor,
-                                         target_tensor)
-            return self._compute_loss(
-                prediction_tensor, target_tensor, **params)
+                target_tensor = tf.where(
+                    tf.is_nan(target_tensor), prediction_tensor, target_tensor
+                )
+            return self._compute_loss(prediction_tensor, target_tensor, **params)
 
     @abstractmethod
     def _compute_loss(self, prediction_tensor, target_tensor, **params):
@@ -87,8 +90,7 @@ class WeightedL2LocalizationLoss(Loss):
           loss: a (scalar) tensor representing the value of the loss function
                 or a float tensor of shape [batch_size, num_anchors]
         """
-        weighted_diff = (prediction_tensor - target_tensor) * tf.expand_dims(
-            weights, 2)
+        weighted_diff = (prediction_tensor - target_tensor) * tf.expand_dims(weights, 2)
         square_diff = 0.5 * tf.square(weighted_diff)
         return tf.reduce_sum(square_diff)
 
@@ -96,11 +98,9 @@ class WeightedL2LocalizationLoss(Loss):
 class WeightedSigmoidClassificationLoss(Loss):
     """Sigmoid cross entropy classification loss function."""
 
-    def _compute_loss(self,
-                      prediction_tensor,
-                      target_tensor,
-                      weights,
-                      class_indices=None):
+    def _compute_loss(
+        self, prediction_tensor, target_tensor, weights, class_indices=None
+    ):
         """Compute loss function.
         Args:
             prediction_tensor: A float tensor of shape [batch_size, num_anchors,
@@ -117,11 +117,14 @@ class WeightedSigmoidClassificationLoss(Loss):
         weights = tf.expand_dims(weights, 2)
         if class_indices is not None:
             weights *= tf.reshape(
-                ops.indices_to_dense_vector(class_indices,
-                                            tf.shape(prediction_tensor)[2]),
-                [1, 1, -1])
-        per_entry_cross_ent = (tf.nn.sigmoid_cross_entropy_with_logits(
-            labels=target_tensor, logits=prediction_tensor))
+                ops.indices_to_dense_vector(
+                    class_indices, tf.shape(prediction_tensor)[2]
+                ),
+                [1, 1, -1],
+            )
+        per_entry_cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(
+            labels=target_tensor, logits=prediction_tensor
+        )
         return tf.reduce_sum(per_entry_cross_ent * weights)
 
 
@@ -148,10 +151,16 @@ class WeightedSmoothL1Loss(Loss):
         abs_diff = tf.abs(diff)
         abs_diff_lt_1 = tf.less(abs_diff, 1)
 
-        smooth_l1norm = tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5)
-        
+        smooth_l1norm = tf.where(
+            abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5
+        )
+
         if mask is not None:
-            rank = prediction_tensor.shape.ndims if prediction_tensor.shape else target_tensor.shape.ndims
+            rank = (
+                prediction_tensor.shape.ndims
+                if prediction_tensor.shape
+                else target_tensor.shape.ndims
+            )
             if rank > mask.shape.ndims:
                 smooth_l1norm = tf.reduce_sum(smooth_l1norm, -1)
             masked_smooth_l1norm = smooth_l1norm * tf.cast(mask, tf.float32)
@@ -175,19 +184,22 @@ class WeightedSoftmaxLoss(Loss):
           loss: a (scalar) tensor representing the value of the loss function
         """
         num_classes = prediction_tensor.get_shape().as_list()[-1]
-        per_row_cross_ent = (tf.nn.softmax_cross_entropy_with_logits(
+        per_row_cross_ent = tf.nn.softmax_cross_entropy_with_logits(
             labels=tf.reshape(target_tensor, [-1, num_classes]),
-            logits=tf.reshape(prediction_tensor, [-1, num_classes])))
-        
+            logits=tf.reshape(prediction_tensor, [-1, num_classes]),
+        )
+
         if mask is not None:
-            masked_cross_ent = per_row_cross_ent * tf.cast(tf.reshape(mask, [-1]), tf.float32)
+            masked_cross_ent = per_row_cross_ent * tf.cast(
+                tf.reshape(mask, [-1]), tf.float32
+            )
         else:
             masked_cross_ent = per_row_cross_ent
 
         return tf.reduce_sum(masked_cross_ent) * weight
 
+
 class WeightedFocalLoss(Loss):
-    
     def _compute_loss(self, pred, target, weight, alpha=0.25, gamma=2):
         """
         Args:
@@ -199,7 +211,7 @@ class WeightedFocalLoss(Loss):
         epsilon = 1e-07
 
         pred = tf.clip_by_value(pred, epsilon, 1.0 - epsilon)
-        
+
         cross_entropy = -target * tf.log(pred)
 
         f_weight = alpha * target * tf.pow((1 - pred), gamma)

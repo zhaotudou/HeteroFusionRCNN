@@ -28,8 +28,9 @@ def main():
     num_samples = len(sample_list)
     for sample_idx in range(num_samples):
 
-        sys.stdout.write("\rClustering labels {} / {}".format(
-            sample_idx + 1, num_samples))
+        sys.stdout.write(
+            "\rClustering labels {} / {}".format(sample_idx + 1, num_samples)
+        )
         sys.stdout.flush()
 
         sample_name = sample_list[sample_idx]
@@ -37,7 +38,8 @@ def main():
 
         obj_labels = obj_utils.read_labels(dataset.label_dir, img_idx)
         filtered_lwh = LabelClusterUtils._filter_labels_by_class(
-                obj_labels, dataset.classes)
+            obj_labels, dataset.classes
+        )
 
         if filtered_lwh[0]:
             all_dims.extend(filtered_lwh[0])
@@ -46,11 +48,10 @@ def main():
     print("\nFinished reading labels, clustering data...\n")
 
     # Print 3 decimal places
-    np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
+    np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
     # Calculate average cluster
-    k_means = KMeans(n_clusters=1,
-                     random_state=0).fit(all_dims)
+    k_means = KMeans(n_clusters=1, random_state=0).fit(all_dims)
 
     cluster_centre = k_means.cluster_centers_[0]
 
@@ -74,10 +75,10 @@ def main():
     small_std_dev_2 = np.std(small_dims_2, axis=0)
     small_std_dev_3 = np.std(small_dims_3, axis=0)
 
-    print('small_k_means_2:', small_k_means_2.cluster_centers_)
-    print('small_k_means_3:', small_k_means_3.cluster_centers_)
-    print('small_std_dev_2:', small_std_dev_2)
-    print('small_std_dev_3:', small_std_dev_3)
+    print("small_k_means_2:", small_k_means_2.cluster_centers_)
+    print("small_k_means_3:", small_k_means_3.cluster_centers_)
+    print("small_std_dev_2:", small_std_dev_2)
+    print("small_std_dev_3:", small_std_dev_3)
 
     # Calculate 2 and 3 standard deviations above the mean
     two_sigma_length_hi = cluster_centre[0] + 2 * std_dev[0]
@@ -97,11 +98,11 @@ def main():
     large_std_dev_2 = np.std(large_dims_2, axis=0)
     large_std_dev_3 = np.std(large_dims_3, axis=0)
 
-    print('large_k_means_2:', large_k_means_2.cluster_centers_)
-    print('large_k_means_3:', large_k_means_3.cluster_centers_)
-    print('large_std_dev_2:', large_std_dev_2)
-    print('large_std_dev_3:', large_std_dev_3)
+    print("large_k_means_2:", large_k_means_2.cluster_centers_)
+    print("large_k_means_3:", large_k_means_3.cluster_centers_)
+    print("large_std_dev_2:", large_std_dev_2)
+    print("large_std_dev_3:", large_std_dev_3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

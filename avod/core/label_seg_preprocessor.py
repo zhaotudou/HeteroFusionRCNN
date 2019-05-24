@@ -8,11 +8,9 @@ from wavedata.tools.obj_detection import obj_utils
 
 from avod.core import box_3d_encoder
 
+
 class LabelSegPreprocessor(object):
-    def __init__(self,
-                 dataset,
-                 label_seg_dir,
-                 expand_gt_size):
+    def __init__(self, dataset, label_seg_dir, expand_gt_size):
         """Preprocesses label segs and saves to files for RPN-seg training
 
         Args:
@@ -42,9 +40,9 @@ class LabelSegPreprocessor(object):
         classes_name = dataset.classes_name
 
         # Make folder if it doesn't exist yet
-        output_dir = self.label_seg_utils.get_file_path(classes_name,
-                                                         expand_gt_size,
-                                                         sample_name=None)
+        output_dir = self.label_seg_utils.get_file_path(
+            classes_name, expand_gt_size, sample_name=None
+        )
         os.makedirs(output_dir, exist_ok=True)
 
         # Load indices of data_split
@@ -61,10 +59,12 @@ class LabelSegPreprocessor(object):
             img_idx = int(sample_name)
 
             # Check for existing files and skip to the next
-            if self._check_for_existing(classes_name, expand_gt_size,
-                                        sample_name):
-                print("{} / {}: Sample already preprocessed".format(
-                    sample_idx + 1, num_samples, sample_name))
+            if self._check_for_existing(classes_name, expand_gt_size, sample_name):
+                print(
+                    "{} / {}: Sample already preprocessed".format(
+                        sample_idx + 1, num_samples, sample_name
+                    )
+                )
                 continue
 
             # Get ground truth and filter based on difficulty
@@ -75,48 +75,52 @@ class LabelSegPreprocessor(object):
 
             image = Image.open(dataset.get_rgb_image_path(sample_name))
             image_shape = [image.size[1], image.size[0]]
-            point_cloud = dataset_utils.get_point_cloud(dataset.pc_source,
-                                                           img_idx,
-                                                           image_shape)
-            point_cloud = point_cloud.T
+            point_cloud, _ = dataset_utils.get_point_cloud(img_idx, image_shape)
             # Filtering by class has no valid ground truth, skip this image
             if len(obj_labels) == 0:
-                print("{} / {} No {}s for sample {} "
-                      "(Ground Truth Filter)".format(
-                          sample_idx + 1, num_samples,
-                          classes_name, sample_name))
+                print(
+                    "{} / {} No {}s for sample {} "
+                    "(Ground Truth Filter)".format(
+                        sample_idx + 1, num_samples, classes_name, sample_name
+                    )
+                )
                 label_seg = np.zeros((point_cloud.shape[0], 8), dtype=np.float32)
-                self._save_to_file(classes_name, expand_gt_size,
-                                   sample_name, label_seg)
+                self._save_to_file(classes_name, expand_gt_size, sample_name, label_seg)
                 continue
-            
+
             label_boxes_3d = np.asarray(
-                [box_3d_encoder.object_label_to_box_3d(obj_label)
-                 for obj_label in obj_labels])
-            
+                [
+                    box_3d_encoder.object_label_to_box_3d(obj_label)
+                    for obj_label in obj_labels
+                ]
+            )
+
             label_classes = [
                 dataset_utils.class_str_to_index(obj_label.type)
-                for obj_label in obj_labels]
+                for obj_label in obj_labels
+            ]
             label_classes = np.asarray(label_classes, dtype=np.int32)
 
             label_seg = self.label_seg_utils.label_point_cloud(
-                                    point_cloud, 
-                                    label_boxes_3d,
-                                    label_classes,
-                                    expand_gt_size)
-            foreground_points = label_seg[label_seg[:,0] > 0]
-            print("{} / {}:"
-                  "{:>6} foreground points, "
-                  "for {:>3} {}(s) for sample {}".format(
-                      sample_idx + 1, num_samples,
-                      foreground_points.shape[0],
-                      len(obj_labels), classes_name, sample_name
-                  ))
+                point_cloud, label_boxes_3d, label_classes, expand_gt_size
+            )
+            foreground_points = label_seg[label_seg[:, 0] > 0]
+            print(
+                "{} / {}:"
+                "{:>6} foreground points, "
+                "for {:>3} {}(s) for sample {}".format(
+                    sample_idx + 1,
+                    num_samples,
+                    foreground_points.shape[0],
+                    len(obj_labels),
+                    classes_name,
+                    sample_name,
+                )
+            )
 
             # Save label segs
-            self._save_to_file(classes_name, expand_gt_size,
-                               sample_name, label_seg)
-    
+            self._save_to_file(classes_name, expand_gt_size, sample_name, label_seg)
+
     def _check_for_existing(self, classes_name, expand_gt_size, sample_name):
         """
         Checks if a label seg file exists already
@@ -130,16 +134,17 @@ class LabelSegPreprocessor(object):
             True if the label seg file already exists
         """
 
-        file_name = self.label_seg_utils.get_file_path(classes_name, 
-                                                       expand_gt_size, 
-                                                       sample_name)
+        file_name = self.label_seg_utils.get_file_path(
+            classes_name, expand_gt_size, sample_name
+        )
         if os.path.exists(file_name):
             return True
 
         return False
 
-    def _save_to_file(self, classes_name, expand_gt_size, sample_name,
-                      label_seg=np.array([])):
+    def _save_to_file(
+        self, classes_name, expand_gt_size, sample_name, label_seg=np.array([])
+    ):
         """
         Saves the label seg info to a file
 
@@ -151,9 +156,9 @@ class LabelSegPreprocessor(object):
                 defaults to an empty array
         """
 
-        file_name = self.label_seg_utils.get_file_path(classes_name,
-                                                        expand_gt_size,
-                                                        sample_name)
+        file_name = self.label_seg_utils.get_file_path(
+            classes_name, expand_gt_size, sample_name
+        )
 
         # Save to npy file
         label_seg = np.asarray(label_seg, dtype=np.float32)

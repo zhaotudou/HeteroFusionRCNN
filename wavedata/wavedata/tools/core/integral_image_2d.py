@@ -24,8 +24,9 @@ class IntegralImage2D(object):
         """
         # Check if points are 2D, otherwise early exit
         if img.ndim != 2:
-            raise ValueError('Not a 2D image for integral image: input dim {}'
-                             .format(img.ndim))
+            raise ValueError(
+                "Not a 2D image for integral image: input dim {}".format(img.ndim)
+            )
 
         integral_image = np.cumsum(np.cumsum(img, 0), 1)
 
@@ -56,20 +57,25 @@ class IntegralImage2D(object):
 
         # check size
         if boxes.shape[0] != 4:
-            raise ValueError('Incorrect number of dimensions for query: '
-                             'input dim {}'.format(boxes.shape[0]))
+            raise ValueError(
+                "Incorrect number of dimensions for query: "
+                "input dim {}".format(boxes.shape[0])
+            )
 
         if boxes.shape[1] < 1:
-            raise ValueError('The dimension N must be an integer greater than '
-                             '1: input dim {}'.format(boxes.shape[1]))
+            raise ValueError(
+                "The dimension N must be an integer greater than "
+                "1: input dim {}".format(boxes.shape[1])
+            )
 
         if boxes.dtype != np.uint32:
-            raise TypeError('boxes must be type of np.uint32')
+            raise TypeError("boxes must be type of np.uint32")
 
         # Clip all the maximum coordinates to the voxelgrid size
         # Note: The integral image gets zero padded.
-        max_extents = np.array([self._x_size, self._z_size,
-                                self._x_size, self._z_size]) - 1
+        max_extents = (
+            np.array([self._x_size, self._z_size, self._x_size, self._z_size]) - 1
+        )
 
         # Make sure all boxes are within the maximum extents
         boxes = np.minimum(boxes, max_extents.reshape(4, -1)).astype(np.uint32)
@@ -79,9 +85,11 @@ class IntegralImage2D(object):
         x2 = boxes[2, :]
         z2 = boxes[3, :]
 
-        output = self._integral_image[x2, z2] + \
-            self._integral_image[x1, z1] - \
-            self._integral_image[x2, z1] - \
-            self._integral_image[x1, z2]
+        output = (
+            self._integral_image[x2, z2]
+            + self._integral_image[x1, z1]
+            - self._integral_image[x2, z1]
+            - self._integral_image[x1, z2]
+        )
 
         return output

@@ -9,7 +9,6 @@ ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
 
 class ObjUtilsTest(unittest.TestCase):
-
     def test_is_point_inside(self):
 
         p1 = [1.0, 0.0, 0.0]
@@ -71,15 +70,11 @@ class ObjUtilsTest(unittest.TestCase):
 
         # Test with offset planes at 0.5, and 2.0 distance
         filter1 = obj_utils.get_point_filter(
-            point_cloud, [[-2, 2],
-                          [-2, 2],
-                          [-2, 2]],
-            xz_plane, offset_dist=0.5)
+            point_cloud, [[-2, 2], [-2, 2], [-2, 2]], xz_plane, offset_dist=0.5
+        )
         filter2 = obj_utils.get_point_filter(
-            point_cloud, [[-2, 2],
-                          [-2, 2],
-                          [-2, 2]],
-            xz_plane, offset_dist=2.0)
+            point_cloud, [[-2, 2], [-2, 2], [-2, 2]], xz_plane, offset_dist=2.0
+        )
 
         self.assertEqual(np.sum(filter1), 1)
         self.assertEqual(np.sum(filter2), 2)
@@ -99,8 +94,8 @@ class ObjUtilsTest(unittest.TestCase):
         object_2 = obj_utils.ObjectLabel()
         self.assertTrue(object_1 == object_2)
 
-        object_1.t = (1., 2., 3.)
-        object_2.t = (1., 2., 3.)
+        object_1.t = (1.0, 2.0, 3.0)
+        object_2.t = (1.0, 2.0, 3.0)
         self.assertTrue(object_1 == object_2)
 
         # Case 2, negative case (single value)
@@ -109,75 +104,75 @@ class ObjUtilsTest(unittest.TestCase):
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.truncation = 1.
+        object_1.truncation = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.occlusion = 1.
+        object_1.occlusion = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.alpha = 1.
+        object_1.alpha = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.x1 = 1.
+        object_1.x1 = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.y1 = 1.
+        object_1.y1 = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.x2 = 1.
+        object_1.x2 = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.y2 = 1.
+        object_1.y2 = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.h = 1.
+        object_1.h = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.w = 1.
+        object_1.w = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.l = 1.
+        object_1.l = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.t = (1., 1., 1.)
+        object_1.t = (1.0, 1.0, 1.0)
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.ry = 1.
+        object_1.ry = 1.0
         self.assertFalse(object_1 == object_2)
 
         object_1 = obj_utils.ObjectLabel()
-        object_1.score = 1.
+        object_1.score = 1.0
         self.assertFalse(object_1 == object_2)
 
         # Case 2, negative case (multiple values)
         object_1 = obj_utils.ObjectLabel()
         object_1.type = ""  # Type of object
-        object_1.truncation = 1.
-        object_1.occlusion = 1.
-        object_1.alpha = 1.
-        object_1.x1 = 1.
-        object_1.y1 = 1.
-        object_1.x2 = 1.
-        object_1.y2 = 1.
-        object_1.h = 1.
-        object_1.w = 1.
-        object_1.l = 1.
-        object_1.t = [1., 1., 1.]
-        object_1.ry = 1.
-        object_1.score = 1.
+        object_1.truncation = 1.0
+        object_1.occlusion = 1.0
+        object_1.alpha = 1.0
+        object_1.x1 = 1.0
+        object_1.y1 = 1.0
+        object_1.x2 = 1.0
+        object_1.y2 = 1.0
+        object_1.h = 1.0
+        object_1.w = 1.0
+        object_1.l = 1.0
+        object_1.t = [1.0, 1.0, 1.0]
+        object_1.ry = 1.0
+        object_1.score = 1.0
         self.assertFalse(object_1 == object_2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

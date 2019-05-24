@@ -4,30 +4,30 @@ import numpy as np
 import tensorflow as tf
 
 import avod
-import avod.builders.config_builder_util as config_build
+import avod.builders.config_builder_util as config_builder
 from avod.builders.dataset_builder import DatasetBuilder
 from avod.core.models.rpn_model import RpnModel
 from avod.protos import pipeline_pb2
 
 
 class RpnModelTest(tf.test.TestCase):
-
     @classmethod
     def setUpClass(cls):
-        pipeline_config = pipeline_pb2.NetworkPipelineConfig()
-        dataset_config = pipeline_config.dataset_config
-        config_path = avod.root_dir() + '/configs/unittest_model.config'
+        config_path = avod.root_dir() + "/configs/rpn_cars.config"
+        # Parse pipeline config
+        model_config, _, _, dataset_config = config_builder.get_configs_from_pipeline_file(
+            config_path, is_training=True
+        )
 
-        cls.model_config = config_build.get_model_config_from_file(config_path)
+        cls.model_config = model_config
+        cls.dataset = DatasetBuilder.build_kitti_dataset(dataset_config, False)
 
-        dataset_config.MergeFrom(DatasetBuilder.KITTI_UNITTEST)
-        cls.dataset = DatasetBuilder.build_kitti_dataset(dataset_config)
-
+    """
     def test_rpn_loss(self):
         # Use "val" so that the first sample is loaded each time
-        rpn_model = RpnModel(self.model_config,
-                             train_val_test="val",
-                             dataset=self.dataset)
+        rpn_model = RpnModel(
+            self.model_config, train_val_test="val", dataset=self.dataset
+        )
 
         predictions = rpn_model.build()
 
@@ -39,8 +39,24 @@ class RpnModelTest(tf.test.TestCase):
             init = tf.global_variables_initializer()
             sess.run(init)
             loss_dict_out = sess.run(loss, feed_dict=feed_dict)
-            print('Losses ', loss_dict_out)
-    '''
+            print("Losses ", loss_dict_out)
+    """
+
+    def test_gather_mean_sizes(self):
+        rpn_model = RpnModel(
+            self.model_config, train_val_test="val", dataset=self.dataset
+        )
+        mean_sizes = rpn_model._gather_mean_sizes(
+            tf.convert_to_tensor(
+                np.asarray(rpn_model._cluster_sizes, dtype=np.float32)
+            ),
+            tf.constant([[1, 0, 1], [0, 0, 1]]),
+        )
+        with self.test_session() as sess:
+            mean_sizes = sess.run(mean_sizes)
+            print(mean_sizes)
+
+    """
     def test_create_path_drop_masks(self):
         # Tests creating path drop choices
         # based on the given probabilities
@@ -209,7 +225,8 @@ class RpnModelTest(tf.test.TestCase):
                                           exp_img_input)
             np.testing.assert_array_equal(final_bev_input_out,
                                           exp_bev_input)
-        '''
+        """
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     tf.test.main()
