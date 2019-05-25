@@ -388,29 +388,38 @@ class RpnModel(model.DetectionModel):
         # Return the proposals
         ######################################################
         with tf.variable_scope("proposals"):
-            bin_x = tf.argmax(bin_x_logits, axis=-1, output_type=tf.int32)  # (B,P)
-            bin_z = tf.argmax(bin_z_logits, axis=-1, output_type=tf.int32)  # (B,P)
-            bin_theta = tf.argmax(
-                bin_theta_logits, axis=-1, output_type=tf.int32
-            )  # (B,P)
-
-            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
-                res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
-            )
-
             # NMS
             if self._train_val_test == "train":
                 # to speed up training, skip NMS, as we don't care what top_* is during training
                 print("Skip RPN-NMS during training")
             else:
-                mean_sizes = self._gather_mean_sizes(
-                    tf.convert_to_tensor(
-                        np.asarray(self._cluster_sizes, dtype=np.float32)
-                    ),
-                    proposal_preds,
-                )
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
+                    bin_x = tf.argmax(
+                        bin_x_logits, axis=-1, output_type=tf.int32
+                    )  # (B,P)
+                    bin_z = tf.argmax(
+                        bin_z_logits, axis=-1, output_type=tf.int32
+                    )  # (B,P)
+                    bin_theta = tf.argmax(
+                        bin_theta_logits, axis=-1, output_type=tf.int32
+                    )  # (B,P)
+
+                    res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                        res_x_norms,
+                        res_z_norms,
+                        res_theta_norms,
+                        bin_x,
+                        bin_z,
+                        bin_theta,
+                    )
+
+                    mean_sizes = self._gather_mean_sizes(
+                        tf.convert_to_tensor(
+                            np.asarray(self._cluster_sizes, dtype=np.float32)
+                        ),
+                        proposal_preds,
+                    )
                     proposals = bin_based_box3d_encoder.tf_decode(
                         proposal_pts,
                         0,
@@ -525,11 +534,11 @@ class RpnModel(model.DetectionModel):
                 )
                 (
                     bin_x_gt,
-                    res_x_gt,
+                    res_x_norm_gt,
                     bin_z_gt,
-                    res_z_gt,
+                    res_z_norm_gt,
                     bin_theta_gt,
-                    res_theta_gt,
+                    res_theta_norm_gt,
                     res_y_gt,
                     res_size_norm_gt,
                 ) = bin_based_box3d_encoder.tf_encode(
@@ -541,6 +550,15 @@ class RpnModel(model.DetectionModel):
                     self.DELTA,
                     self.R,
                     self.DELTA_THETA,
+                )
+
+                res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                    res_x_norms,
+                    res_z_norms,
+                    res_theta_norms,
+                    bin_x_gt,
+                    bin_z_gt,
+                    bin_theta_gt,
                 )
 
                 bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = model_util.x_z_theta_one_hot_encoding(
@@ -577,9 +595,9 @@ class RpnModel(model.DetectionModel):
                 bin_theta_gt_one_hot,
             )
             predictions[self.PRED_REG_GT] = (
-                res_x_gt,
-                res_z_gt,
-                res_theta_gt,
+                res_x_norm_gt,
+                res_z_norm_gt,
+                res_theta_norm_gt,
                 res_y_gt,
                 res_size_norm_gt,
             )
@@ -812,7 +830,7 @@ class RpnModel(model.DetectionModel):
                 reg_loss_weight = self._config.loss_config.reg_loss_weight
                 regression_loss = 0.0
                 # res_x_norm, res_z_norm, res_theta_norm, res_y, res_size_norm = prediction_dict[self.PRED_FG_REG]
-                # res_x_gt, res_z_gt, res_theta_gt, res_y_gt, res_size_norm_gt = prediction_dict[self.PRED_FG_REG_GT]
+                # res_x_norm_gt, res_z_norm_gt, res_theta_norm_gt, res_y_gt, res_size_norm_gt = prediction_dict[self.PRED_FG_REG_GT]
                 for elem in zip(
                     prediction_dict[self.PRED_REG], prediction_dict[self.PRED_REG_GT]
                 ):
