@@ -219,22 +219,23 @@ class AvodModel(model.DetectionModel):
         """
         #TF version: (if N is not None)
         ##########
-        N = bin_x.shape[0].value
-        Ns = tf.reshape(tf.range(N), [N,1])
-
-        NK_x = tf.concat([Ns, tf.reshape(bin_x, [N,1])], axis=1) # (N,2)
-        res_x_norm = tf.gather_nd(res_x_norms, NK_x) #(N)
-        
-        NK_z = tf.concat([Ns, tf.reshape(bin_z, [N,1])], axis=1) # (N,2)
-        res_z_norm = tf.gather_nd(res_z_norms, NK_z) #(N)
-        
-        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N,1])], axis=1) # (N,2)
-        res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta) #(N)
         """
+        N = tf.shape(bin_x)[0]
+        Ns = tf.reshape(tf.range(N), [N, 1])
+
+        NK_x = tf.concat([Ns, tf.reshape(bin_x, [N, 1])], axis=1)  # (N,2)
+        res_x_norm = tf.gather_nd(res_x_norms, NK_x)  # (N)
+
+        NK_z = tf.concat([Ns, tf.reshape(bin_z, [N, 1])], axis=1)  # (N,2)
+        res_z_norm = tf.gather_nd(res_z_norms, NK_z)  # (N)
+
+        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N, 1])], axis=1)  # (N,2)
+        res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta)  # (N)
 
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
+        """
         """
         res_x_norm = np.take_along_axis(
             res_x_norms, np.expand_dims(bin_x, -1), axis=-1
@@ -250,6 +251,7 @@ class AvodModel(model.DetectionModel):
             res_theta_norms, np.expand_dims(bin_theta, -1), axis=-1
         )  # (N,1)
         res_theta_norm = np.squeeze(res_theta_norm, -1)
+        """
 
         return res_x_norm, res_z_norm, res_theta_norm
 
@@ -264,25 +266,27 @@ class AvodModel(model.DetectionModel):
         """
         #TF version: (if N is not None)
         ##########
-        N = cls.shape[0].value
-        
-        Ns = tf.reshape(tf.range(N), [N,1])
+        """
+        N = tf.shape(cls)[0]
 
-        K_mean_sizes = tf.reshape(cluster_sizes, [-1,3])
+        Ns = tf.reshape(tf.range(N), [N, 1])
+
+        K_mean_sizes = tf.reshape(cluster_sizes, [-1, 3])
         # insert 0-background mean size as mean size of all foreground class
-        K_mean_sizes = tf.concat([tf.expand_dims(tf.reduce_mean(K_mean_sizes, 0), axis=0), K_mean_sizes], axis=0)
-        NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N,1,1])
+        K_mean_sizes = tf.concat(
+            [tf.expand_dims(tf.reduce_mean(K_mean_sizes, 0), axis=0), K_mean_sizes],
+            axis=0,
+        )
+        NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N, 1, 1])
 
-        NK = tf.concat([Ns, tf.reshape(cls, [N,1])], axis=1) # (N,2)
-        
+        NK = tf.concat([Ns, tf.reshape(cls, [N, 1])], axis=1)  # (N,2)
+
         mean_sizes = tf.gather_nd(NK_mean_sizes, NK)
         return mean_sizes
-        """
 
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
-        """
         K_mean_sizes = np.reshape(cluster_sizes, (-1, 3))
         K_mean_sizes = np.vstack(
             [np.mean(K_mean_sizes, axis=0), K_mean_sizes]
@@ -290,6 +294,7 @@ class AvodModel(model.DetectionModel):
         mean_sizes = K_mean_sizes[cls]
 
         return mean_sizes.astype(np.float32)
+        """
 
     def build(self, **kwargs):
         self._set_up_input_pls()
@@ -508,28 +513,20 @@ class AvodModel(model.DetectionModel):
                     bin_z = tf.argmax(bin_z_logits, axis=-1)  # (N)
                     bin_theta = tf.argmax(bin_theta_logits, axis=-1)  # (N)
 
-                    res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
-                        self._gather_residuals,
-                        [
-                            res_x_norms,
-                            res_z_norms,
-                            res_theta_norms,
-                            bin_x,
-                            bin_z,
-                            bin_theta,
-                        ],
-                        (tf.float32, tf.float32, tf.float32),
+                    res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                        res_x_norms,
+                        res_z_norms,
+                        res_theta_norms,
+                        bin_x,
+                        bin_z,
+                        bin_theta,
                     )
 
-                    mean_sizes = tf.py_func(
-                        self._gather_mean_sizes,
-                        [
-                            tf.convert_to_tensor(
-                                np.asarray(self._cluster_sizes, dtype=np.float32)
-                            ),
-                            cls_preds,
-                        ],
-                        tf.float32,
+                    mean_sizes = self._gather_mean_sizes(
+                        tf.convert_to_tensor(
+                            np.asarray(self._cluster_sizes, dtype=np.float32)
+                        ),
+                        cls_preds,
                     )
                     reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
                         proposals[:, :3],
@@ -653,15 +650,9 @@ class AvodModel(model.DetectionModel):
             )
             pos_reg_mask = tf.logical_and(pos_reg_mask, non_empty_box_mask)
 
-            mean_sizes = tf.py_func(
-                self._gather_mean_sizes,
-                [
-                    tf.convert_to_tensor(
-                        np.asarray(self._cluster_sizes, dtype=np.float32)
-                    ),
-                    tf.to_int32(proposals_gt_cls),
-                ],
-                tf.float32,
+            mean_sizes = self._gather_mean_sizes(
+                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
+                tf.to_int32(proposals_gt_cls),
             )
             # reg gt
             (
@@ -684,17 +675,13 @@ class AvodModel(model.DetectionModel):
                 self.DELTA_THETA,
             )
 
-            res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
-                self._gather_residuals,
-                [
-                    res_x_norms,
-                    res_z_norms,
-                    res_theta_norms,
-                    bin_x_gt,
-                    bin_z_gt,
-                    bin_theta_gt,
-                ],
-                (tf.float32, tf.float32, tf.float32),
+            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                res_x_norms,
+                res_z_norms,
+                res_theta_norms,
+                bin_x_gt,
+                bin_z_gt,
+                bin_theta_gt,
             )
 
             bin_x_gt_one_hot = tf.one_hot(
