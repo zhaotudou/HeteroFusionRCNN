@@ -105,17 +105,17 @@ message AvodConfig {
     // AVOD Proposal ROI crop size
     required int32 avod_proposal_roi_crop_size = 1;
 
-    // Positive selection, one of ['corr_cls', 'not_bkg']
-    required string avod_positive_selection = 3;
-
+    // RPN proposal ROI fusion method, one of ['mean_concat', 'flat_concat']
+    required string avod_fusion_method = 2;
+    
     // AVOD Non-max suppression boxes
     required int32 avod_nms_size = 4;
 
     // AVOD NMS IoU threshold
     required float avod_nms_iou_thresh = 5;
 
-    // AVOD bounding box representation, one of ['box_3d', 'box_8c']
-    required string avod_box_representation = 6;
+    // AVOD Proposal ROI IMG crop size
+    required int32 avod_proposal_roi_img_crop_size = 6;
     
     required float avod_xz_search_range = 7;
     required float avod_xz_bin_len = 8;

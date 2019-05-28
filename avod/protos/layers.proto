@@ -144,7 +144,8 @@ message AVODLayersConfig{
     // FCLayer [channel, dropout_rate]
     repeated FCLayer mlp = 1;
     required FeatureExtractor pc_feature_extractor = 2;
-    repeated FCLayer fc_layer = 3;
+    required FeatureExtractor img_feature_extractor = 3;
+    repeated FCLayer fc_layer = 4;
 }
 
 message BasicFcLayers {

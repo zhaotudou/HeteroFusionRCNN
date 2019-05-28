@@ -6,6 +6,7 @@ from avod.builders import feature_extractor_builder
 from avod.core import anchor_projector
 from avod.core import box_3d_encoder
 from avod.core import box_8c_encoder
+from avod.core import projection
 from avod.core import bin_based_box3d_encoder
 from avod.core import pointfly as pf
 from avod.core import compute_iou
@@ -28,6 +29,9 @@ class AvodModel(model.DetectionModel):
     PL_RPN_INTENSITY = "rpn_intensity_pl"
     PL_RPN_FG_MASK = "rpn_fg_mask_pl"
     PL_RPN_FTS = "rpn_fts_pl"
+
+    PL_IMG_INPUT = "img_input_pl"
+    PL_CALIB_P2 = "frame_calib_p2"
     ##############################
     # Keys for Predictions
     ##############################
@@ -85,19 +89,21 @@ class AvodModel(model.DetectionModel):
         input_config = self._config.input_config
         self._pc_sample_pts = input_config.pc_sample_pts
 
-        # self._img_pixel_size = np.asarray([input_config.img_dims_h,
-        #                                   input_config.img_dims_w])
-        # self._img_depth = [input_config.img_depth]
+        self._img_h = input_config.img_dims_h
+        self._img_w = input_config.img_dims_w
+        self._img_depth = input_config.img_depth
 
         # AVOD config
         avod_config = self._config.avod_config
         self._use_intensity_feature = avod_config.avod_use_intensity_feature
+        self._fusion_method = avod_config.avod_fusion_method
         self._proposal_roi_crop_size = avod_config.avod_proposal_roi_crop_size
-        self._positive_selection = avod_config.avod_positive_selection
+        self._proposal_roi_img_crop_size = [
+            avod_config.avod_proposal_roi_img_crop_size
+        ] * 2
         self._nms_size = avod_config.avod_nms_size
         self._nms_iou_thresh = avod_config.avod_nms_iou_thresh
         self._path_drop_probabilities = self._config.path_drop_probabilities
-        self._box_rep = avod_config.avod_box_representation
 
         self.S = avod_config.avod_xz_search_range
         self.DELTA = avod_config.avod_xz_bin_len
@@ -114,8 +120,9 @@ class AvodModel(model.DetectionModel):
         self._pc_feature_extractor = feature_extractor_builder.get_extractor(
             self._config.layers_config.avod_config.pc_feature_extractor
         )
-        if self._box_rep not in ["box_3d", "box_8c", "box_8co", "box_4c", "box_4ca"]:
-            raise ValueError("Invalid box representation", self._box_rep)
+        self._img_feature_extractor = feature_extractor_builder.get_extractor(
+            self._config.layers_config.avod_config.img_feature_extractor
+        )
 
         if train_val_test not in ["train", "val", "test"]:
             raise ValueError(
@@ -169,9 +176,31 @@ class AvodModel(model.DetectionModel):
             # TODO: rm channel size hard coding
             self._add_placeholder(
                 tf.float32,
-                [self._batch_size, self._pc_sample_pts, 256],
+                [self._batch_size, self._pc_sample_pts, 256 + 32],
                 self.PL_RPN_FTS,
             )
+
+        with tf.variable_scope("img_input"):
+            img_input_placeholder = self._add_placeholder(
+                tf.float32,
+                [self._batch_size, self._img_h, self._img_w, self._img_depth],
+                self.PL_IMG_INPUT,
+            )
+
+            self._img_preprocessed = self._img_feature_extractor.preprocess_input(
+                img_input_placeholder
+            )
+
+        with tf.variable_scope("sample_info"):
+            # the calib matrix shape is (3 x 4)
+            self._add_placeholder(
+                tf.float32, [self._batch_size, 3, 4], self.PL_CALIB_P2
+            )
+
+    def _set_up_feature_extractors(self):
+        self._img_fts, _ = self._img_feature_extractor.build(
+            self._img_preprocessed, self._is_training
+        )  # (B,H,W,C1)
 
     @classmethod
     def _canonical_transform(cls, pts, boxes_3d):
@@ -219,23 +248,22 @@ class AvodModel(model.DetectionModel):
         """
         #TF version: (if N is not None)
         ##########
-        N = bin_x.shape[0].value
-        Ns = tf.reshape(tf.range(N), [N,1])
-
-        NK_x = tf.concat([Ns, tf.reshape(bin_x, [N,1])], axis=1) # (N,2)
-        res_x_norm = tf.gather_nd(res_x_norms, NK_x) #(N)
-        
-        NK_z = tf.concat([Ns, tf.reshape(bin_z, [N,1])], axis=1) # (N,2)
-        res_z_norm = tf.gather_nd(res_z_norms, NK_z) #(N)
-        
-        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N,1])], axis=1) # (N,2)
-        res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta) #(N)
         """
+        N = tf.shape(bin_x)[0]
+        Ns = tf.reshape(tf.range(N), [N, 1])
+
+        NK_x = tf.concat([Ns, tf.reshape(bin_x, [N, 1])], axis=1)  # (N,2)
+        res_x_norm = tf.gather_nd(res_x_norms, NK_x)  # (N)
+
+        NK_z = tf.concat([Ns, tf.reshape(bin_z, [N, 1])], axis=1)  # (N,2)
+        res_z_norm = tf.gather_nd(res_z_norms, NK_z)  # (N)
+
+        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N, 1])], axis=1)  # (N,2)
+        res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta)  # (N)
 
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
-        """
         res_x_norm = np.take_along_axis(
             res_x_norms, np.expand_dims(bin_x, -1), axis=-1
         )  # (N,1)
@@ -250,6 +278,7 @@ class AvodModel(model.DetectionModel):
             res_theta_norms, np.expand_dims(bin_theta, -1), axis=-1
         )  # (N,1)
         res_theta_norm = np.squeeze(res_theta_norm, -1)
+        """
 
         return res_x_norm, res_z_norm, res_theta_norm
 
@@ -264,24 +293,28 @@ class AvodModel(model.DetectionModel):
         """
         #TF version: (if N is not None)
         ##########
-        N = cls.shape[0].value
-        
-        Ns = tf.reshape(tf.range(N), [N,1])
+        """
+        N = tf.shape(cls)[0]
 
-        K_mean_sizes = tf.reshape(cluster_sizes, [-1,3])
+        Ns = tf.reshape(tf.range(N), [N, 1])
+
+        K_mean_sizes = tf.reshape(cluster_sizes, [-1, 3])
         # insert 0-background mean size as mean size of all foreground class
-        K_mean_sizes = tf.concat([tf.expand_dims(tf.reduce_mean(K_mean_sizes, 0), axis=0), K_mean_sizes], axis=0)
-        NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N,1,1])
+        K_mean_sizes = tf.concat(
+            [tf.expand_dims(tf.reduce_mean(K_mean_sizes, 0), axis=0), K_mean_sizes],
+            axis=0,
+        )
+        NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [N, 1, 1])
 
-        NK = tf.concat([Ns, tf.reshape(cls, [N,1])], axis=1) # (N,2)
-        
+        NK = tf.concat([Ns, tf.reshape(cls, [N, 1])], axis=1)  # (N,2)
+
         mean_sizes = tf.gather_nd(NK_mean_sizes, NK)
         return mean_sizes
-        """
 
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
+        """
         """
         K_mean_sizes = np.reshape(cluster_sizes, (-1, 3))
         K_mean_sizes = np.vstack(
@@ -290,9 +323,12 @@ class AvodModel(model.DetectionModel):
         mean_sizes = K_mean_sizes[cls]
 
         return mean_sizes.astype(np.float32)
+        """
 
     def build(self, **kwargs):
         self._set_up_input_pls()
+        self._set_up_feature_extractors()
+
         pc_pts = self.placeholders[self.PL_RPN_PTS]  # (B,P,3)
         pc_fts = self.placeholders[self.PL_RPN_FTS]  # (B,P,C)
         foreground_mask = self.placeholders[self.PL_RPN_FG_MASK]  # (B,P)
@@ -305,42 +341,8 @@ class AvodModel(model.DetectionModel):
         ]  # (B,n,7)
         proposals_gt_cls = self.placeholders[self.PL_PROPOSALS_GT][:, :, 7]  # (B,n)
 
-        """
-        if not (self._path_drop_probabilities[0] ==
-                self._path_drop_probabilities[1] == 1.0):
-
-            with tf.variable_scope('avod_path_drop'):
-
-                img_mask = rpn_model.img_path_drop_mask
-                bev_mask = rpn_model.bev_path_drop_mask
-
-                img_feature_maps = tf.multiply(img_feature_maps,
-                                               img_mask)
-
-                bev_feature_maps = tf.multiply(bev_feature_maps,
-                                               bev_mask)
-        else:
-            bev_mask = tf.constant(1.0)
-            img_mask = tf.constant(1.0)
-        """
         # ROI Pooling
         with tf.variable_scope("avod_roi_pooling"):
-            # Expand proposals' size
-            with tf.variable_scope("expand_proposal"):
-                expand_length = self._pooling_context_length
-                expanded_size = proposals[:, :, 3:6] + 2 * expand_length
-                expanded_proposals = tf.stack(
-                    [
-                        proposals[:, :, 0],
-                        proposals[:, :, 1] + expand_length,
-                        proposals[:, :, 2],
-                        expanded_size[:, :, 0],
-                        expanded_size[:, :, 1],
-                        expanded_size[:, :, 2],
-                        proposals[:, :, 6],
-                    ],
-                    axis=2,
-                )  # (B,n,7)
 
             def get_box_indices(boxes):
                 proposals_shape = boxes.get_shape().as_list()
@@ -352,16 +354,56 @@ class AvodModel(model.DetectionModel):
                 )
                 return tf.reshape(ones_mat * multiplier, [-1])
 
-            tf_box_indices = get_box_indices(expanded_proposals)
+            tf_box_indices = get_box_indices(proposals)
 
-            # Do ROI Pooling on PC
+            def sb_project_to_image_space(args):
+                (sb_proposal, sb_calib, sb_image_shape) = args
+                return projection.tf_project_to_image_space(
+                    sb_proposal, sb_calib, sb_image_shape
+                )
+
+            _, proj_proposals_box2d_norm = tf.map_fn(
+                sb_project_to_image_space,
+                elems=[
+                    proposals,
+                    self.placeholders[self.PL_CALIB_P2],
+                    tf.tile(
+                        tf.expand_dims(tf.constant([self._img_h, self._img_w]), axis=0),
+                        [self._batch_size, 1],
+                    ),
+                ],
+                dtype=(tf.float32, tf.float32),
+            )  # (B,n,4)
+            # y1, x1, y2, x2
+            proj_proposals_box2d_norm_reorder = anchor_projector.reorder_projected_boxes(
+                tf.reshape(proj_proposals_box2d_norm, [-1, 4])
+            )  # (N=Bn,4)
+
             proposals = tf.reshape(proposals, [-1, 7])  # (N=Bn,7)
-            expanded_proposals = tf.reshape(expanded_proposals, [-1, 7])  # (N=Bn,7)
             proposals_iou3d = tf.reshape(proposals_iou3d, [-1])  # (N=Bn)
             proposals_gt_box3d = tf.reshape(proposals_gt_box3d, [-1, 7])  # (N=Bn,7)
             proposals_gt_cls = tf.reshape(proposals_gt_cls, [-1])  # (N=Bn)
+
+            # Expand proposals' size
+            with tf.variable_scope("expand_proposal"):
+                expand_length = self._pooling_context_length
+                expanded_size = proposals[:, 3:6] + 2 * expand_length
+                expanded_proposals = tf.stack(
+                    [
+                        proposals[:, 0],
+                        proposals[:, 1] + expand_length,
+                        proposals[:, 2],
+                        expanded_size[:, 0],
+                        expanded_size[:, 1],
+                        expanded_size[:, 2],
+                        proposals[:, 6],
+                    ],
+                    axis=1,
+                )  # (N=Bn,7)
+
             from cropping import tf_cropping
 
+            # Do ROI Pooling on PC
             crop_pts, crop_fts, crop_intensities, crop_mask, _, non_empty_box_mask = tf_cropping.pc_crop_and_sample(
                 pc_pts,
                 pc_fts,
@@ -375,15 +417,15 @@ class AvodModel(model.DetectionModel):
                 "non_empty_box_mask", tf.cast(non_empty_box_mask, tf.int8)
             )
 
-            """
             # Do ROI Pooling on image
             img_rois = tf.image.crop_and_resize(
-                img_feature_maps,
-                img_proposal_boxes_norm_tf_order,
+                self._img_fts,
+                proj_proposals_box2d_norm_reorder,
                 tf_box_indices,
-                self._proposal_roi_crop_size,
-                name='img_rois')
-            """
+                self._proposal_roi_img_crop_size,
+                name="img_rois",
+            )  # (N,r1,r1,C1)
+
         with tf.variable_scope("local_spatial_feature"):
             with tf.variable_scope("canonical_transform"):
                 crop_pts_ct = self._canonical_transform(crop_pts, proposals)
@@ -438,23 +480,72 @@ class AvodModel(model.DetectionModel):
 
         with tf.variable_scope("pc_encoder"):
             merged_fts = tf.concat([crop_fts, fc_layers[-1]], axis=-1)  # (N,R,2C)
-            encode_pts, encode_fts = self._pc_feature_extractor.build(
+            _, pc_rois = self._pc_feature_extractor.build(
                 crop_pts_ct, merged_fts, self._is_training
-            )  # (N,r,3), (N,r,C')
+            )  # (N,r,C')
+
+        # fuse roi pc + img features
+        #########################################
+        with tf.variable_scope("fts_fuse"):
+            fusion_mean_div_factor = 2.0
+            if not (
+                self._path_drop_probabilities[0]
+                == self._path_drop_probabilities[1]
+                == 1.0
+            ):
+
+                with tf.variable_scope("avod_path_drop"):
+                    random_values = tf.random_uniform(shape=[3], minval=0.0, maxval=1.0)
+                    img_mask, pc_mask = self.create_path_drop_masks(
+                        self._path_drop_probabilities[0],
+                        self._path_drop_probabilities[1],
+                        random_values,
+                    )
+                    pc_rois = tf.multiply(pc_rois, pc_mask)  # (N,r,C')
+                    img_rois = tf.multiply(img_rois, img_mask)  # (N,r1,r1,C1)
+
+                    # Overwrite the division factor
+                    fusion_mean_div_factor = img_mask + pc_mask
+
+            if self._fusion_method == "mean_concat":
+                pc_rois = tf.reduce_mean(pc_rois, axis=1)  # (N,C')
+                img_rois = tf.reduce_mean(img_rois, axis=1)
+                img_rois = tf.reduce_mean(img_rois, axis=1)  # (N,C1)
+                fuse_rois = tf.concat([pc_rois, img_rois], axis=-1)  # (N,C'+C1)
+            elif self._fusion_method == "flat_concat":
+                pc_rois = tf.layers.flatten(pc_rois)  # (N, rC')
+                img_rois = tf.layers.flatten(img_rois)  # (N, r1r1C1)
+                fuse_rois = tf.concat([pc_rois, img_rois], axis=-1)  # (N,rC'+r1r1C1)
+            else:
+                raise ValueError("Invalid fusion method", self._fusion_method)
 
         # branch-1: Box classification
         #########################################
         with tf.variable_scope("classification_confidence"):
-            cls_multi_logits = pf.dense(
-                encode_fts,
+            # Parse brn layers config
+            fc_layers = [fuse_rois]
+            layers_config = self._config.layers_config.avod_config.fc_layer
+            for layer_idx, layer_param in enumerate(layers_config):
+                C = layer_param.C
+                dropout_rate = layer_param.dropout_rate
+                fc = pf.dense(
+                    fc_layers[-1], C, "fc{:d}".format(layer_idx), self._is_training
+                )
+                fc_drop = tf.layers.dropout(
+                    fc,
+                    dropout_rate,
+                    training=self._is_training,
+                    name="fc{:d}_drop".format(layer_idx),
+                )
+                fc_layers.append(fc_drop)
+
+            cls_logits = pf.dense(
+                fc_layers[-1],
                 self.num_classes + 1,
-                "cls_multi_logits",
+                "cls_logits",
                 self._is_training,
                 with_bn=False,
                 activation=None,
-            )  # (N,r,K)
-            cls_logits = tf.reduce_mean(
-                cls_multi_logits, axis=1, name="cls_logits"
             )  # (N,K)
             cls_softmax = tf.nn.softmax(cls_logits, name="cls_softmax")  # (N,K)
             cls_preds = tf.argmax(cls_softmax, axis=-1, name="cls_predictions")
@@ -464,8 +555,7 @@ class AvodModel(model.DetectionModel):
         #########################################
         with tf.variable_scope("bin_based_box_refinement"):
             # Parse brn layers config
-            encode_mean_fts = tf.reduce_mean(encode_fts, axis=1)  # (N,C')
-            fc_layers = [encode_mean_fts]
+            fc_layers = [fuse_rois]
             layers_config = self._config.layers_config.avod_config.fc_layer
             for layer_idx, layer_param in enumerate(layers_config):
                 C = layer_param.C
@@ -484,7 +574,7 @@ class AvodModel(model.DetectionModel):
             fc_output = pf.dense(
                 fc_layers[-1],
                 self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 4,
-                "fc_output",
+                "reg_output",
                 self._is_training,
                 activation=None,
             )
@@ -508,28 +598,20 @@ class AvodModel(model.DetectionModel):
                     bin_z = tf.argmax(bin_z_logits, axis=-1)  # (N)
                     bin_theta = tf.argmax(bin_theta_logits, axis=-1)  # (N)
 
-                    res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
-                        self._gather_residuals,
-                        [
-                            res_x_norms,
-                            res_z_norms,
-                            res_theta_norms,
-                            bin_x,
-                            bin_z,
-                            bin_theta,
-                        ],
-                        (tf.float32, tf.float32, tf.float32),
+                    res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                        res_x_norms,
+                        res_z_norms,
+                        res_theta_norms,
+                        bin_x,
+                        bin_z,
+                        bin_theta,
                     )
 
-                    mean_sizes = tf.py_func(
-                        self._gather_mean_sizes,
-                        [
-                            tf.convert_to_tensor(
-                                np.asarray(self._cluster_sizes, dtype=np.float32)
-                            ),
-                            cls_preds,
-                        ],
-                        tf.float32,
+                    mean_sizes = self._gather_mean_sizes(
+                        tf.convert_to_tensor(
+                            np.asarray(self._cluster_sizes, dtype=np.float32)
+                        ),
+                        cls_preds,
                     )
                     reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
                         proposals[:, :3],
@@ -653,15 +735,9 @@ class AvodModel(model.DetectionModel):
             )
             pos_reg_mask = tf.logical_and(pos_reg_mask, non_empty_box_mask)
 
-            mean_sizes = tf.py_func(
-                self._gather_mean_sizes,
-                [
-                    tf.convert_to_tensor(
-                        np.asarray(self._cluster_sizes, dtype=np.float32)
-                    ),
-                    tf.to_int32(proposals_gt_cls),
-                ],
-                tf.float32,
+            mean_sizes = self._gather_mean_sizes(
+                tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
+                tf.to_int32(proposals_gt_cls),
             )
             # reg gt
             (
@@ -684,17 +760,13 @@ class AvodModel(model.DetectionModel):
                 self.DELTA_THETA,
             )
 
-            res_x_norm, res_z_norm, res_theta_norm = tf.py_func(
-                self._gather_residuals,
-                [
-                    res_x_norms,
-                    res_z_norms,
-                    res_theta_norms,
-                    bin_x_gt,
-                    bin_z_gt,
-                    bin_theta_gt,
-                ],
-                (tf.float32, tf.float32, tf.float32),
+            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
+                res_x_norms,
+                res_z_norms,
+                res_theta_norms,
+                bin_x_gt,
+                bin_z_gt,
+                bin_theta_gt,
             )
 
             bin_x_gt_one_hot = tf.one_hot(
@@ -856,22 +928,32 @@ class AvodModel(model.DetectionModel):
             if self._train_val_test == "train":
                 # Get the a random sample from the remaining epoch
                 batch_data, sample_names = self.dataset.next_batch(
-                    batch_size, True, model="rcnn"
+                    batch_size, True, model="rcnn", img_w=self._img_w, img_h=self._img_h
                 )
 
             else:  # self._train_val_test == "val"
                 # Load samples in order for validation
                 batch_data, sample_names = self.dataset.next_batch(
-                    batch_size, False, model="rcnn"
+                    batch_size,
+                    False,
+                    model="rcnn",
+                    img_w=self._img_w,
+                    img_h=self._img_h,
                 )
         else:
             # For testing, any sample should work
             if sample_index is not None:
-                samples = self.dataset.load_samples([sample_index], model="rcnn")
+                samples = self.dataset.load_samples(
+                    [sample_index], model="rcnn", img_w=self._img_w, img_h=self._img_h
+                )
                 batch_data, sample_names = self.dataset.collate_batch(samples)
             else:
                 batch_data, sample_names = self.dataset.next_batch(
-                    batch_size, False, model="rcnn"
+                    batch_size,
+                    False,
+                    model="rcnn",
+                    img_w=self._img_w,
+                    img_h=self._img_h,
                 )
 
         self._placeholder_inputs[self.PL_PROPOSALS] = batch_data[constants.KEY_RPN_ROI]
@@ -891,6 +973,12 @@ class AvodModel(model.DetectionModel):
         ].astype(np.bool)
         self._placeholder_inputs[self.PL_RPN_FTS] = batch_data[constants.KEY_RPN_FTS]
 
+        self._placeholder_inputs[self.PL_IMG_INPUT] = batch_data[
+            constants.KEY_IMAGE_INPUT
+        ]
+        self._placeholder_inputs[self.PL_CALIB_P2] = batch_data[
+            constants.KEY_STEREO_CALIB_P2
+        ]
         self._sample_names = sample_names
 
         feed_dict = dict()
@@ -1013,3 +1101,70 @@ class AvodModel(model.DetectionModel):
         }
 
         return loss_dict, rcnn_loss
+
+    def create_path_drop_masks(self, p_img, p_bev, random_values):
+        """Determines global path drop decision based on given probabilities.
+
+        Args:
+            p_img: A tensor of float32, probability of keeping image branch
+            p_bev: A tensor of float32, probability of keeping bev branch
+            random_values: A tensor of float32 of shape [3], the results
+                of coin flips, values should range from 0.0 - 1.0.
+
+        Returns:
+            final_img_mask: A constant tensor mask containing either one or zero
+                depending on the final coin flip probability.
+            final_bev_mask: A constant tensor mask containing either one or zero
+                depending on the final coin flip probability.
+        """
+
+        def keep_branch():
+            return tf.constant(1.0)
+
+        def kill_branch():
+            return tf.constant(0.0)
+
+        # The logic works as follows:
+        # We have flipped 3 coins, first determines the chance of keeping
+        # the image branch, second determines keeping bev branch, the third
+        # makes the final decision in the case where both branches were killed
+        # off, otherwise the initial img and bev chances are kept.
+
+        img_chances = tf.case(
+            [(tf.less(random_values[0], p_img), keep_branch)], default=kill_branch
+        )
+
+        bev_chances = tf.case(
+            [(tf.less(random_values[1], p_bev), keep_branch)], default=kill_branch
+        )
+
+        # Decision to determine whether both branches were killed off
+        third_flip = tf.logical_or(
+            tf.cast(img_chances, dtype=tf.bool), tf.cast(bev_chances, dtype=tf.bool)
+        )
+        third_flip = tf.cast(third_flip, dtype=tf.float32)
+
+        # Make a second choice, for the third case
+        # Here we use a 50/50 chance to keep either image or bev
+        # If its greater than 0.5, keep the image
+        img_second_flip = tf.case(
+            [(tf.greater(random_values[2], 0.5), keep_branch)], default=kill_branch
+        )
+        # If its less than or equal to 0.5, keep bev
+        bev_second_flip = tf.case(
+            [(tf.less_equal(random_values[2], 0.5), keep_branch)], default=kill_branch
+        )
+
+        # Use lambda since this returns another condition and it needs to
+        # be callable
+        final_img_mask = tf.case(
+            [(tf.equal(third_flip, 1), lambda: img_chances)],
+            default=lambda: img_second_flip,
+        )
+
+        final_bev_mask = tf.case(
+            [(tf.equal(third_flip, 1), lambda: bev_chances)],
+            default=lambda: bev_second_flip,
+        )
+
+        return final_img_mask, final_bev_mask

@@ -981,6 +981,7 @@ class Evaluator:
         batch_rpn_fts = predictions[RpnModel.SAVE_RPN_FTS]
         batch_rpn_intensity = predictions[RpnModel.SAVE_RPN_INTENSITY]
         batch_rpn_fg_mask = predictions[RpnModel.SAVE_RPN_FG_MASK]
+        batch_rpn_img_fts = predictions[RpnModel.SAVE_RPN_IMG_FTS]
 
         batch = batch_rpn_pts.shape[0]
         assert batch == len(rpn_feature_paths)
@@ -989,10 +990,11 @@ class Evaluator:
             rpn_fts = batch_rpn_fts[b, :]
             rpn_intensity = batch_rpn_intensity[b, :]
             rpn_fg_mask = batch_rpn_fg_mask[b, :].reshape((-1, 1))
+            rpn_img_fts = batch_rpn_img_fts[b, :]
 
             np.save(
                 rpn_feature_paths[b],
-                np.hstack((rpn_pts, rpn_intensity, rpn_fg_mask, rpn_fts)),
+                np.hstack((rpn_pts, rpn_intensity, rpn_fg_mask, rpn_fts, rpn_img_fts)),
             )
 
     def calculate_proposals_info(

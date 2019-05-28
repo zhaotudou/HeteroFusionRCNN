@@ -47,6 +47,7 @@ def foreground_masking(
     batch_size,
     pc_pts,
     pc_fts,
+    proj_img_fts,
     seg_preds,
     seg_scores,
     label_box_3d,
@@ -64,6 +65,10 @@ def foreground_masking(
         tf.gather_nd(pc_fts, fg_indices),
         [batch_size, num_fg_point, pc_fts.shape[2].value],
     )  # (B,F,C)
+    foreground_img_fts = tf.reshape(
+        tf.gather_nd(proj_img_fts, fg_indices),
+        [batch_size, num_fg_point, proj_img_fts.shape[2].value],
+    )  # (B,F,C1)
     foreground_preds = tf.reshape(
         tf.gather_nd(seg_preds, fg_indices), [batch_size, num_fg_point]
     )  # (B,F)
@@ -79,6 +84,7 @@ def foreground_masking(
     return (
         foreground_pts,
         foreground_fts,
+        foreground_img_fts,
         foreground_preds,
         foreground_scores,
         foreground_label_boxes_3d,

@@ -312,6 +312,12 @@ class KittiDataset:
                 obj_labels = self.kitti_utils.filter_labels(obj_labels)
                 if len(obj_labels) <= 0:
                     continue
+                label_boxes_3d = np.asarray(
+                    [
+                        box_3d_encoder.object_label_to_box_3d(obj_label)
+                        for obj_label in obj_labels
+                    ]
+                )
 
             # Load image (BGR -> RGB)
             cv_bgr_image = cv2.imread(self.get_rgb_image_path(sample.name))
@@ -366,25 +372,15 @@ class KittiDataset:
                 if kitti_aug.AUG_FLIPPING in sample.augs:
                     image_input = kitti_aug.flip_image(image_input)
                     sampled_pc = kitti_aug.flip_points(sampled_pc)
-                    obj_labels = [
-                        kitti_aug.flip_label_in_3d_only(obj) for obj in obj_labels
-                    ]
                     stereo_calib_p2 = kitti_aug.flip_stereo_calib_p2(
                         stereo_calib_p2, image_shape
                     )
-
+                    label_boxes_3d = kitti_aug.flip_boxes_3d(label_boxes_3d)
                 # Augmentation (Image Jitter)
                 if kitti_aug.AUG_PCA_JITTER in sample.augs:
                     image_input[:, :, 0:3] = kitti_aug.apply_pca_jitter(
                         image_input[:, :, 0:3]
                     )
-
-                label_boxes_3d = np.asarray(
-                    [
-                        box_3d_encoder.object_label_to_box_3d(obj_label)
-                        for obj_label in obj_labels
-                    ]
-                )
 
                 # generate training labels
                 label_seg, label_reg = self.generate_rpn_training_labels(
@@ -439,7 +435,7 @@ class KittiDataset:
 
         return cls_label, reg_label
 
-    def load_rcnn_samples(self, indices):
+    def load_rcnn_samples(self, indices, img_w=1200, img_h=360):
         sample_dicts = []
         for sample_idx in indices:
             sample = self.sample_list[sample_idx]
@@ -464,18 +460,45 @@ class KittiDataset:
                     ]
                 )
 
-                gt_info = np.hstack((gt_boxes3d, gt_classes.reshape((-1, 1))))
-
                 iou3d = self.get_proposal_iou(sample.name).reshape(
                     (-1, gt_boxes3d.shape[0])
                 )
 
+            # Load image (BGR -> RGB)
+            cv_bgr_image = cv2.imread(self.get_rgb_image_path(sample.name))
+            rgb_image = cv_bgr_image[..., ::-1]
+            image_shape = rgb_image.shape[0:2]
+            image_input = rgb_image
+
+            # Get calibration
+            stereo_calib_p2 = calib_utils.read_calibration(
+                self.calib_dir, int(sample.name)
+            ).p2
+
+            # Load PC & RPN features
             rpn_pts, rpn_intensity, rpn_fg_mask, rpn_fts = self.get_rpn_features(
                 sample.name
             )
             roi_boxes3d = self.get_proposal(sample.name)
 
             if self.train_val_test == "train":
+                # Augmentation (Flipping)
+                if kitti_aug.AUG_FLIPPING in sample.augs:
+                    image_input = kitti_aug.flip_image(image_input)
+                    rpn_pts = kitti_aug.flip_points(rpn_pts)
+                    stereo_calib_p2 = kitti_aug.flip_stereo_calib_p2(
+                        stereo_calib_p2, image_shape
+                    )
+                    gt_boxes3d = kitti_aug.flip_boxes_3d(gt_boxes3d)
+                    roi_boxes3d = kitti_aug.flip_boxes_3d(roi_boxes3d)
+
+                # Augmentation (Image Jitter)
+                if kitti_aug.AUG_PCA_JITTER in sample.augs:
+                    image_input[:, :, 0:3] = kitti_aug.apply_pca_jitter(
+                        image_input[:, :, 0:3]
+                    )
+
+                gt_info = np.hstack((gt_boxes3d, gt_classes.reshape((-1, 1))))
                 rois, iou_of_rois, gt_of_rois = self.sample_rois_for_rcnn_training(
                     roi_boxes3d, iou3d, gt_info
                 )
@@ -493,6 +516,10 @@ class KittiDataset:
                     'should be one of ["train", "val", "test"]'
                 )
 
+            image_input_resized = cv2.resize(image_input, (img_w, img_h))
+            stereo_calib_p2[0, :] *= img_w / image_input.shape[1]
+            stereo_calib_p2[1, :] *= img_h / image_input.shape[0]
+
             sample_dict = {
                 constants.KEY_RPN_PTS: rpn_pts,
                 constants.KEY_RPN_INTENSITY: rpn_intensity,
@@ -501,6 +528,8 @@ class KittiDataset:
                 constants.KEY_RPN_ROI: rois,
                 constants.KEY_RPN_IOU: iou_of_rois,
                 constants.KEY_RPN_GT: gt_of_rois,
+                constants.KEY_IMAGE_INPUT: image_input_resized,
+                constants.KEY_STEREO_CALIB_P2: stereo_calib_p2,
                 constants.KEY_SAMPLE_NAME: sample.name,
                 constants.KEY_SAMPLE_AUGS: sample.augs,
             }

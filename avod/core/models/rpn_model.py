@@ -49,6 +49,7 @@ class RpnModel(model.DetectionModel):
     SAVE_RPN_FTS = "save_rpn_fts"
     SAVE_RPN_INTENSITY = "save_rpn_intensity"
     SAVE_RPN_FG_MASK = "save_rpn_fg_mask"
+    SAVE_RPN_IMG_FTS = "save_rpn_img_fts"
 
     ##############################
     # Keys for Loss
@@ -181,7 +182,6 @@ class RpnModel(model.DetectionModel):
             )
 
         with tf.variable_scope("img_input"):
-            # Take variable size input images
             img_input_placeholder = self._add_placeholder(
                 tf.float32,
                 [self._batch_size, self._img_h, self._img_w, self._img_depth],
@@ -227,7 +227,15 @@ class RpnModel(model.DetectionModel):
             self._img_preprocessed, self._is_training
         )  # (B,H,W,C1)
 
-        tf.summary.histogram("pc_fts", self._pc_fts)
+        proj_pts2d = projection.tf_rect_to_image(
+            self._pc_pts, self.placeholders[self.PL_CALIB_P2]
+        )  # (B,P,2)
+        proj_pts2d = tf.cast(proj_pts2d, tf.int32)  # (B,P,2)
+        proj_indices = self._get_proj_indices(proj_pts2d)  # (B,P,3)
+        proj_indices = tf.gather(
+            proj_indices, [0, 2, 1], axis=-1
+        )  # (B,P,3), image's shape is (y,x)
+        self._proj_img_fts = tf.gather_nd(self._img_fts, proj_indices)  # (B,P,C1)
 
     def _gather_residuals(
         self, res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
@@ -242,8 +250,8 @@ class RpnModel(model.DetectionModel):
         TF version: (if p is not None)
         ##########
         """
-        B = bin_x.shape[0].value
-        p = bin_x.shape[1].value  # maybe None
+        B = tf.shape(bin_x)[0]
+        p = tf.shape(bin_x)[1]  # maybe None
         Bs = tf.range(B)
         ps = tf.range(p)
         mB, mp = tf.meshgrid(Bs, ps)
@@ -282,8 +290,8 @@ class RpnModel(model.DetectionModel):
         TF version: (if p is not None)
         ##########
         """
-        B = cls.shape[0].value
-        p = cls.shape[1].value
+        B = tf.shape(cls)[0]
+        p = tf.shape(cls)[1]
 
         Bs = tf.range(B)
         ps = tf.range(p)
@@ -325,8 +333,8 @@ class RpnModel(model.DetectionModel):
         TF version: (if P is not None)
         ##########
         """
-        B = proj_pts2d.shape[0].value
-        P = proj_pts2d.shape[1].value
+        B = tf.shape(proj_pts2d)[0]
+        P = tf.shape(proj_pts2d)[1]
         proj_indices = tf.concat(
             [
                 tf.expand_dims(
@@ -380,6 +388,7 @@ class RpnModel(model.DetectionModel):
 
         proposal_pts = self._pc_pts
         proposal_fts = self._pc_fts
+        proposal_img_fts = self._proj_img_fts
         proposal_preds = seg_preds
         proposal_scores = seg_scores
         proposal_label_reg = label_reg
@@ -396,12 +405,13 @@ class RpnModel(model.DetectionModel):
                 self._train_val_test in ["val", "test"]
                 and not self._fixed_num_proposal_nms
             ):
-                proposal_pts, proposal_fts, proposal_preds, proposal_scores, proposal_label_reg, proposal_label_cls = model_util.foreground_masking(
+                proposal_pts, proposal_fts, proposal_img_fts, proposal_preds, proposal_scores, proposal_label_reg, proposal_label_cls = model_util.foreground_masking(
                     self._foreground_mask,
                     self.NUM_FG_POINT,
                     self._batch_size,
                     self._pc_pts,
                     self._pc_fts,
+                    self._proj_img_fts,
                     seg_preds,
                     seg_scores,
                     label_reg,
@@ -411,16 +421,6 @@ class RpnModel(model.DetectionModel):
         # fuse fg pc + img features
         #########################################
         with tf.variable_scope("fts_fuse"):
-            proj_pts2d = projection.tf_rect_to_image(
-                proposal_pts, self.placeholders[self.PL_CALIB_P2]
-            )  # (B,P,2)
-            proj_pts2d = tf.cast(proj_pts2d, tf.int32)  # (B,P,2)
-            proj_indices = self._get_proj_indices(proj_pts2d)  # (B,P,3)
-            self._proj_indices = tf.gather(
-                proj_indices, [0, 2, 1], axis=-1
-            )  # (B,P,3), image's shape is (y,x)
-            proj_img_fts = tf.gather_nd(self._img_fts, self._proj_indices)  # (B,P,C1)
-
             fusion_mean_div_factor = 2.0
             # If both img and pc probabilites are set to 1.0, don't do
             # path drop.
@@ -430,33 +430,27 @@ class RpnModel(model.DetectionModel):
                 == 1.0
             ):
                 with tf.variable_scope("rpn_path_drop"):
-
                     random_values = tf.random_uniform(shape=[3], minval=0.0, maxval=1.0)
-
                     img_mask, pc_mask = self.create_path_drop_masks(
                         self._path_drop_probabilities[0],
                         self._path_drop_probabilities[1],
                         random_values,
                     )
-
                     proposal_fts = tf.multiply(proposal_fts, pc_mask)
-                    proj_img_fts = tf.multiply(proj_img_fts, img_mask)
-
-                    self.img_path_drop_mask = img_mask
-                    self.pc_path_drop_mask = pc_mask
+                    proposal_img_fts = tf.multiply(proposal_img_fts, img_mask)
 
                     # Overwrite the division factor
                     fusion_mean_div_factor = img_mask + pc_mask
 
             if self._fusion_method == "mean":
                 assert self._pc_fts.shape[-1].value == self._img_fts.shape[-1].value
-                tf_features_sum = tf.add(proposal_fts, proj_img_fts)
+                tf_features_sum = tf.add(proposal_fts, proposal_img_fts)
                 proposal_fuse_fts = tf.divide(
                     tf_features_sum, fusion_mean_div_factor
                 )  # (B,P,C)
             elif self._fusion_method == "concat":
                 proposal_fuse_fts = tf.concat(
-                    [proposal_fts, proj_img_fts], axis=-1
+                    [proposal_fts, proposal_img_fts], axis=-1
                 )  # (B,P,C+C1)
             else:
                 raise ValueError("Invalid fusion method", self._fusion_method)
@@ -736,6 +730,7 @@ class RpnModel(model.DetectionModel):
             predictions[self.SAVE_RPN_FTS] = self._pc_fts
             predictions[self.SAVE_RPN_INTENSITY] = self._pc_intensities
             predictions[self.SAVE_RPN_FG_MASK] = self._foreground_mask
+            predictions[self.SAVE_RPN_IMG_FTS] = self._proj_img_fts
         return predictions
 
     def _parse_rpn_output(self, rpn_output):
@@ -874,11 +869,7 @@ class RpnModel(model.DetectionModel):
                     img_h=self._img_h,
                 )
 
-        # this is a list to match the explicit shape for the placeholder
-        # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
-
         # Fill in the rest
-        # self._placeholder_inputs[self.PL_IMG_INPUT] = image_input
         self._placeholder_inputs[self.PL_PC_INPUTS] = batch_data[
             constants.KEY_POINT_CLOUD
         ]
@@ -899,8 +890,6 @@ class RpnModel(model.DetectionModel):
         ]
         # Sample Info
         self._sample_names = sample_names
-        # img_idx is a list to match the placeholder shape
-        # self._placeholder_inputs[self.PL_IMG_IDX] = [int(sample_name)]
 
         # Create a feed_dict and fill it with input values
         feed_dict = dict()
