@@ -251,7 +251,7 @@ class RpnModel(model.DetectionModel):
         ##########
         """
         B = tf.shape(bin_x)[0]
-        p = tf.shape(bin_x)[1]  # maybe None
+        p = tf.shape(bin_x)[1]
         Bs = tf.range(B)
         ps = tf.range(p)
         mB, mp = tf.meshgrid(Bs, ps)

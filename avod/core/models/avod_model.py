@@ -314,8 +314,6 @@ class AvodModel(model.DetectionModel):
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
         #############
-        """
-        """
         K_mean_sizes = np.reshape(cluster_sizes, (-1, 3))
         K_mean_sizes = np.vstack(
             [np.mean(K_mean_sizes, axis=0), K_mean_sizes]

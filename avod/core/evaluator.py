@@ -181,22 +181,12 @@ class Evaluator:
                 + "/proposals_and_scores/{}/{}".format(data_split, global_step)
             )
             trainer_utils.create_dir(prop_score_predictions_dir)
-            os.system(
-                "ln -snf {} {}".format(
-                    prop_score_predictions_dir, self.model.dataset.proposal_dir
-                )
-            )
 
             if self.eval_config.save_rpn_feature:
                 rpn_feature_dir = predictions_base_dir + "/rpn_feature/{}/{}".format(
                     data_split, global_step
                 )
                 trainer_utils.create_dir(rpn_feature_dir)
-                os.system(
-                    "ln -snf {} {}".format(
-                        rpn_feature_dir, self.model.dataset.rpn_feature_dir
-                    )
-                )
 
             if validation:
                 eval_rpn_stats = self._create_rpn_stats_dict()
@@ -205,11 +195,6 @@ class Evaluator:
                     data_split, global_step
                 )
                 trainer_utils.create_dir(prop_iou_dir)
-                os.system(
-                    "ln -snf {} {}".format(
-                        prop_iou_dir, self.model.dataset.proposal_iou_dir
-                    )
-                )
 
         num_valid_samples = 0
 
