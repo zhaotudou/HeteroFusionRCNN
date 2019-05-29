@@ -194,9 +194,9 @@ class KittiDataset:
         self.planes_dir = self._data_split_dir + "/planes"
         self.velo_dir = self._data_split_dir + "/velodyne"
         self.depth_dir = self._data_split_dir + "/depth_" + str(self._cam_idx)
-        self.proposal_dir = self._data_split_dir + "/proposal"
-        self.proposal_iou_dir = self._data_split_dir + "/proposal_iou"
-        self.rpn_feature_dir = self._data_split_dir + "/rpn_feature"
+        self.proposal_dir = self.config.rpn_proposal_dir
+        self.proposal_iou_dir = self.config.rpn_proposal_iou_dir
+        self.rpn_feature_dir = self.config.rpn_feature_dir
 
         # Labels are always in the training folder
         self.label_dir = self.dataset_dir + "/training/label_" + str(self._cam_idx)

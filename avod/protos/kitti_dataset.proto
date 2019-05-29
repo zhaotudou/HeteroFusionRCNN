@@ -40,4 +40,9 @@ message KittiDatasetConfig {
     optional KittiUtilsConfig kitti_utils_config = 20;
     
     optional MiniBatchConfig mini_batch_config = 12;
+
+    // for second stage rcnn train/eval
+    optional string rpn_proposal_dir = 13;
+    optional string rpn_proposal_iou_dir = 14;
+    optional string rpn_feature_dir = 15;
 }
