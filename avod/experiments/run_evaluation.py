@@ -118,7 +118,7 @@ def main(_):
     parser.add_argument(
         "--save_rpn_feature",
         action="store_true",
-        default=True,
+        default=False,
         help="save features for separately rcnn training and evaluation",
     )
 

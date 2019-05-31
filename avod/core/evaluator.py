@@ -122,6 +122,7 @@ class Evaluator:
         if eval_mode == "val":
             # Setup loss and summary writer in val mode only
             self._loss_dict, self._total_loss = self.model.loss(self._prediction_dict)
+            tf.summary.scalar("eval_loss", self._total_loss)
 
             self.summary_writer, self.summary_merged = evaluator_utils.set_up_summary_writer(
                 self.model_config, self._sess
