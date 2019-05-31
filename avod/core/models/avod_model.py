@@ -462,7 +462,9 @@ class AvodModel(model.DetectionModel):
                 cls_multi_logits, axis=1, name="cls_logits"
             )  # (N,K)
             cls_softmax = tf.nn.softmax(cls_logits, name="cls_softmax")  # (N,K)
-            cls_preds = tf.argmax(cls_softmax, axis=-1, name="cls_predictions")
+            cls_preds = tf.argmax(
+                cls_softmax, axis=-1, name="cls_predictions", output_type=tf.int32
+            )
             cls_scores = tf.reduce_max(cls_softmax[:, 1:], axis=-1, name="cls_scores")
 
         # branch-2: bin-based 3D box refinement
@@ -509,9 +511,15 @@ class AvodModel(model.DetectionModel):
             else:
                 # Decode bin-based 3D Box
                 with tf.variable_scope("decoding"):
-                    bin_x = tf.argmax(bin_x_logits, axis=-1)  # (N)
-                    bin_z = tf.argmax(bin_z_logits, axis=-1)  # (N)
-                    bin_theta = tf.argmax(bin_theta_logits, axis=-1)  # (N)
+                    bin_x = tf.argmax(
+                        bin_x_logits, axis=-1, output_type=tf.int32
+                    )  # (N)
+                    bin_z = tf.argmax(
+                        bin_z_logits, axis=-1, output_type=tf.int32
+                    )  # (N)
+                    bin_theta = tf.argmax(
+                        bin_theta_logits, axis=-1, output_type=tf.int32
+                    )  # (N)
 
                     res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
                         res_x_norms,
