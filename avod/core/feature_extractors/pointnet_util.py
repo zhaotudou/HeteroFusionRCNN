@@ -15,7 +15,7 @@ import sys
 # sys.path.append(os.path.join(ROOT_DIR, 'tf_ops/3d_interpolation'))
 from sampling.tf_sampling import farthest_point_sample, gather_point
 from grouping.tf_grouping import query_ball_point, group_point, knn_point
-from interpolation.tf_interpolate import three_nn, three_interpolate
+from interpolate.tf_interpolate import three_nn, three_interpolate
 import tensorflow as tf
 import numpy as np
 import avod.core.feature_extractors.tf_util as tf_util
@@ -246,7 +246,7 @@ def pointnet_sa_module_msg(
             use_nchw: bool, if True, use NCHW data format for conv2d, which is usually faster than NHWC format
         Return:
             new_xyz: (batch_size, npoint, 3) TF tensor
-            new_points: (batch_size, npoint, \sum_k{mlp[k][-1]}) TF tensor
+            new_points: (batch_size, npoint, sum_k{mlp[k][-1]}) TF tensor
     """
     # data_format = "NCHW" if use_nchw else "NHWC"
     with tf.variable_scope(scope):
