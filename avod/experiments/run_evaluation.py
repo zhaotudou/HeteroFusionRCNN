@@ -64,7 +64,7 @@ def evaluate(model_config, eval_config, dataset_config):
     model_config = config_builder.proto_to_obj(model_config)
 
     # Switch path drop off during evaluation
-    # model_config.path_drop_probabilities = [1.0, 1.0]
+    model_config.path_drop_probabilities = [1.0, 1.0]
 
     with tf.Graph().as_default():
         if model_name == "avod_model":

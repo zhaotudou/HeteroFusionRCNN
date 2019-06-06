@@ -1,5 +1,3 @@
-#include <curand.h>
-#include <curand_kernel.h>
 #include <stdio.h>
 
 __device__ float dot(float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -109,13 +107,10 @@ __global__ void pccropandsampleKernel(
         //printf("[EMPTY] PcCropAndSample: box = %d, box_pts_num = %d\n", b, box_pts_num);
       } else if (box_pts_num < resize) {
         //printf("[LESS] PcCropAndSample: box = %d, box_pts_num = %d\n", b, box_pts_num);
-        int max = box_pts_num - 1;
-        curandState state;
-        curand_init((unsigned long long)clock(), 0, 0, &state);
+        int counter = 0;
+        int init_box_pts_num = box_pts_num;
         while (box_pts_num < resize) {
-          float r = curand_uniform(&state);
-          r *= (max + 0.999999);
-          int idx = (int)truncf(r);
+          int idx = counter++ % init_box_pts_num;
           crop_pts[box_pts_num*3] = crop_pts[idx*3];
           crop_pts[box_pts_num*3 + 1] = crop_pts[idx*3 + 1];
           crop_pts[box_pts_num*3 + 2] = crop_pts[idx*3 + 2];

@@ -1113,19 +1113,14 @@ class Evaluator:
             # Find max class score index
             not_bkg_scores = final_pred_softmax[:, 1:]
             final_pred_types = np.argmax(not_bkg_scores, axis=1)
-
-            # Take max class score (ignoring background)
-            final_pred_scores = np.array([])
-            for pred_idx in range(len(final_pred_boxes_3d)):
-                all_class_scores = not_bkg_scores[pred_idx]
-                max_class_score = all_class_scores[final_pred_types[pred_idx]]
-                final_pred_scores = np.append(final_pred_scores, max_class_score)
+            final_pred_scores = np.max(not_bkg_scores, axis=1)
 
             # Stack into prediction format
             predictions_and_scores = np.column_stack(
                 [final_pred_boxes_3d, final_pred_scores, final_pred_types]
             )
-
+            sort_by_score = np.argsort(-predictions_and_scores[:, -2])
+            predictions_and_scores = predictions_and_scores[sort_by_score]
             np.savetxt(avod_file_paths[b], predictions_and_scores, fmt="%.5f")
 
     def get_avod_predicted_box_corners_and_scores(self, predictions, box_rep):

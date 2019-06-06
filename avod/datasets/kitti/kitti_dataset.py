@@ -505,6 +505,7 @@ class KittiDataset:
             elif self.train_val_test == "val":
                 rois = roi_boxes3d
                 iou_of_rois = iou3d.max(axis=1)
+                gt_info = np.hstack((gt_boxes3d, gt_classes.reshape((-1, 1))))
                 gt_of_rois = gt_info[iou3d.argmax(axis=1)]
             elif self.train_val_test == "test":
                 rois = roi_boxes3d
