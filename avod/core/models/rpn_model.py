@@ -242,29 +242,35 @@ class RpnModel(model.DetectionModel):
     ):
         """
         Input:
-            res_x_norms: (B,p,K)
-            bin_x:(B,p)
+            res_x_norms: (B,P,K,C)
+            bin_x:(B,P,K)
         return:
-            res_x_norm: (B,p)
+            res_x_norm: (B,P,K)
 
         TF version: (if p is not None)
         ##########
         """
         B = tf.shape(bin_x)[0]
-        p = tf.shape(bin_x)[1]
+        P = tf.shape(bin_x)[1]
+        K = tf.shape(bin_x)[2]
         Bs = tf.range(B)
-        ps = tf.range(p)
-        mB, mp = tf.meshgrid(Bs, ps)
-        Bp = tf.stack([tf.transpose(mB), tf.transpose(mp)], axis=2)  # (B,p,2)
+        Ps = tf.range(P)
+        Ks = tf.range(K)
+        mB, mP, mK = tf.meshgrid(Bs, Ps, Ks)
+        BPK = tf.stack(
+            [tf.transpose(mB), tf.transpose(mP), tf.transpose(mK)], axis=3
+        )  # (B,P,K,3)
 
-        BpK_x = tf.concat([Bp, tf.reshape(bin_x, [B, p, 1])], axis=2)  # (B,p,3)
-        res_x_norm = tf.gather_nd(res_x_norms, BpK_x)  # (B,p)
+        BPKC_x = tf.concat([BPK, tf.reshape(bin_x, [B, P, K, 1])], axis=3)  # (B,P,K,4)
+        res_x_norm = tf.gather_nd(res_x_norms, BPKC_x)  # (B,P,K)
 
-        BpK_z = tf.concat([Bp, tf.reshape(bin_z, [B, p, 1])], axis=2)  # (B,p,3)
-        res_z_norm = tf.gather_nd(res_z_norms, BpK_z)  # (B,p)
+        BPKC_z = tf.concat([BPK, tf.reshape(bin_z, [B, P, K, 1])], axis=3)  # (B,P,K,4)
+        res_z_norm = tf.gather_nd(res_z_norms, BPKC_z)  # (B,P,K)
 
-        BpK_theta = tf.concat([Bp, tf.reshape(bin_theta, [B, p, 1])], axis=2)  # (B,p,3)
-        res_theta_norm = tf.gather_nd(res_theta_norms, BpK_theta)  # (B,p)
+        BPKC_theta = tf.concat(
+            [BPK, tf.reshape(bin_theta, [B, P, K, 1])], axis=3
+        )  # (B,P,K,4)
+        res_theta_norm = tf.gather_nd(res_theta_norms, BPKC_theta)  # (B,P,K)
 
         """
         NumPy version: if p is None, by using tf.py_func, p should be determined
@@ -279,6 +285,64 @@ class RpnModel(model.DetectionModel):
 
         return res_x_norm, res_z_norm, res_theta_norm
 
+    def _gather_cls_residuals(
+        self, res_x_norms, res_z_norms, res_theta_norms, cls, bin_x, bin_z, bin_theta
+    ):
+        """
+        Input:
+            res_x_norms: (B,P,K,C)
+            cls: (B,P)
+            bin_x:(B,P)
+        return:
+            res_x_norm: (B,P)
+
+        TF version: (if p is not None)
+        ##########
+        """
+        B = tf.shape(cls)[0]
+        P = tf.shape(cls)[1]
+        Bs = tf.range(B)
+        Ps = tf.range(P)
+        mB, mP = tf.meshgrid(Bs, Ps)
+        BP = tf.stack([tf.transpose(mB), tf.transpose(mP)], axis=2)  # (B,P,2)
+
+        BPKC_x = tf.concat(
+            [BP, tf.reshape(cls, [B, P, 1]), tf.reshape(bin_x, [B, P, 1])], axis=2
+        )  # (B,P,4)
+        res_x_norm = tf.gather_nd(res_x_norms, BPKC_x)  # (B,P)
+
+        BPKC_z = tf.concat(
+            [BP, tf.reshape(cls, [B, P, 1]), tf.reshape(bin_z, [B, P, 1])], axis=2
+        )  # (B,P,4)
+        res_z_norm = tf.gather_nd(res_z_norms, BPKC_z)  # (B,P)
+
+        BPKC_theta = tf.concat(
+            [BP, tf.reshape(cls, [B, P, 1]), tf.reshape(bin_theta, [B, P, 1])], axis=2
+        )  # (B,P,4)
+        res_theta_norm = tf.gather_nd(res_theta_norms, BPKC_theta)  # (B,P)
+
+        return res_x_norm, res_z_norm, res_theta_norm
+
+    def _gather_cls_preds(
+        bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm, cls
+    ):
+        B = tf.shape(cls)[0]
+        P = tf.shape(cls)[1]
+        Bs = tf.range(B)
+        Ps = tf.range(P)
+        mB, mP = tf.meshgrid(Bs, Ps)
+        BP = tf.stack([tf.transpose(mB), tf.transpose(mP)], axis=2)  # (B,P,2)
+
+        BPK_x = tf.concat([BP, tf.reshape(cls, [B, P, 1])], axis=2)  # (B,P,3)
+
+        bin_x_logits = tf.gather_nd(bin_x_logits, BPK_x)  # (B,P,C)
+        bin_z_logits = tf.gather_nd(bin_z_logits, BPK_x)  # (B,P,C)
+        bin_theta_logits = tf.gather_nd(bin_theta_logits, BPK_x)  # (B,P,C)
+        res_y = tf.gather_nd(res_y, BPK_x)  # (B,P)
+        res_size_norm = tf.gather_nd(res_size_norm, BPK_x)  # (B,P,3)
+
+        return bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm
+
     def _gather_mean_sizes(self, cluster_sizes, cls):
         """
         Input:
@@ -292,7 +356,6 @@ class RpnModel(model.DetectionModel):
         """
         B = tf.shape(cls)[0]
         p = tf.shape(cls)[1]
-
         Bs = tf.range(B)
         ps = tf.range(p)
         mB, mp = tf.meshgrid(Bs, ps)
@@ -308,7 +371,6 @@ class RpnModel(model.DetectionModel):
         BpK_mean_sizes = tf.tile(tf.expand_dims(pK_mean_sizes, 0), [B, 1, 1, 1])
 
         BpK = tf.concat([Bp, tf.reshape(cls, [B, p, 1])], axis=2)  # (B,p,3)
-
         mean_sizes = tf.gather_nd(BpK_mean_sizes, BpK)
 
         """
@@ -477,7 +539,8 @@ class RpnModel(model.DetectionModel):
 
             fc_output = pf.dense(
                 fc_layers[-1],
-                self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 4,
+                (self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 4)
+                * self.num_classes,
                 "fc_output",
                 self._is_training,
                 activation=None,
@@ -500,13 +563,13 @@ class RpnModel(model.DetectionModel):
                 with tf.variable_scope("decoding"):
                     bin_x = tf.argmax(
                         bin_x_logits, axis=-1, output_type=tf.int32
-                    )  # (B,P)
+                    )  # (B,P,K)
                     bin_z = tf.argmax(
                         bin_z_logits, axis=-1, output_type=tf.int32
-                    )  # (B,P)
+                    )  # (B,P,K)
                     bin_theta = tf.argmax(
                         bin_theta_logits, axis=-1, output_type=tf.int32
-                    )  # (B,P)
+                    )  # (B,P,K)
 
                     res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
                         res_x_norms,
@@ -516,13 +579,17 @@ class RpnModel(model.DetectionModel):
                         bin_z,
                         bin_theta,
                     )
-
-                    mean_sizes = self._gather_mean_sizes(
-                        tf.convert_to_tensor(
-                            np.asarray(self._cluster_sizes, dtype=np.float32)
-                        ),
-                        proposal_preds,
+                    cluster_sizes = tf.convert_to_tensor(
+                        np.asarray(self._cluster_sizes, dtype=np.float32)
                     )
+                    K_mean_sizes = tf.reshape(cluster_sizes, [-1, 3])
+                    pK_mean_sizes = tf.tile(
+                        tf.expand_dims(K_mean_sizes, 0), [self._pc_sample_pts, 1, 1]
+                    )
+                    BpK_mean_sizes = tf.tile(
+                        tf.expand_dims(pK_mean_sizes, 0), [self._batch_size, 1, 1, 1]
+                    )
+
                     proposals = bin_based_box3d_encoder.tf_decode(
                         proposal_pts,
                         0,
@@ -534,15 +601,37 @@ class RpnModel(model.DetectionModel):
                         res_theta_norm,
                         res_y,
                         res_size_norm,
-                        mean_sizes,
+                        BpK_mean_sizes,
                         self.S,
                         self.DELTA,
                         self.R,
                         self.DELTA_THETA,
-                    )  # (B,P,7)
+                    )  # (B,P,K,7)
 
+                bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
+                bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
+                bin_theta_scores = tf.reduce_max(
+                    tf.nn.softmax(bin_theta_logits), axis=-1
+                )
+                proposal_scores_tiled = tf.tile(
+                    tf.expand_dims(proposal_scores, axis=2), [1, 1, self.num_classes]
+                )
+                confidences = (
+                    proposal_scores_tiled
+                    * bin_x_scores
+                    * bin_z_scores
+                    * bin_theta_scores
+                )  # (B,P,K)
+
+                proposals = tf.reshape(
+                    proposals,
+                    [self._batch_size, self._pc_sample_pts * self.num_classes],
+                )  # (B, PK)
+                confidences = tf.reshape(
+                    confidences,
+                    [self._batch_size, self._pc_sample_pts * self.num_classes],
+                )  # (B, PK)
                 if self._fixed_num_proposal_nms:
-                    confidences = proposal_scores
                     # get _pre_nms_size number of proposals for NMS
                     _, sorted_idxs = tf.nn.top_k(
                         confidences, k=self._pre_nms_size, sorted=True
@@ -554,15 +643,6 @@ class RpnModel(model.DetectionModel):
                         dtype=(tf.float32, tf.float32),
                     )
                 else:
-                    bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
-                    bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
-                    bin_theta_scores = tf.reduce_max(
-                        tf.nn.softmax(bin_theta_logits), axis=-1
-                    )
-
-                    confidences = (
-                        proposal_scores * bin_x_scores * bin_z_scores * bin_theta_scores
-                    )  # (B,P)
                     pre_nms_proposals, pre_nms_confidences = (proposals, confidences)
 
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
@@ -613,7 +693,7 @@ class RpnModel(model.DetectionModel):
             # Ground Truth Seg
             with tf.variable_scope("seg_one_hot_classes"):
                 segs_gt_one_hot = tf.one_hot(
-                    tf.to_int32(label_cls), 2, on_value=1.0, off_value=0.0
+                    tf.to_int32(label_cls > 0), 2, on_value=1.0, off_value=0.0
                 )
 
             with tf.variable_scope("segmentation_accuracy"):
@@ -623,7 +703,7 @@ class RpnModel(model.DetectionModel):
                 )
                 tf.summary.scalar("avg_foreground_points_num", avg_num_foreground_pts)
                 # seg accuracy
-                seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls))
+                seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls > 0))
                 seg_accuracy = tf.reduce_mean(tf.to_float(seg_correct))
                 tf.summary.scalar("segmentation_accuracy", seg_accuracy)
 
@@ -655,15 +735,6 @@ class RpnModel(model.DetectionModel):
                     self.DELTA_THETA,
                 )
 
-                res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
-                    res_x_norms,
-                    res_z_norms,
-                    res_theta_norms,
-                    bin_x_gt,
-                    bin_z_gt,
-                    bin_theta_gt,
-                )
-
                 bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = model_util.x_z_theta_one_hot_encoding(
                     bin_x_gt,
                     bin_z_gt,
@@ -672,6 +743,26 @@ class RpnModel(model.DetectionModel):
                     self.DELTA,
                     self.R,
                     self.DELTA_THETA,
+                )
+
+                # reduce K by label_cls
+                bin_x_ligits, bin_z_logits, bin_theta_logits, res_y, res_size_norm = self._gather_cls_preds(
+                    bin_x_logits,
+                    bin_z_logits,
+                    bin_theta_logits,
+                    res_y,
+                    res_size_norm,
+                    tf.to_int32(proposal_label_cls - 1),
+                )
+
+                res_x_norm, res_z_norm, res_theta_norm = self._gather_cls_residuals(
+                    res_x_norms,
+                    res_z_norms,
+                    res_theta_norms,
+                    tf.to_int32(proposal_label_cls - 1),
+                    bin_x_gt,
+                    bin_z_gt,
+                    bin_theta_gt,
                 )
 
             ######################################################
@@ -736,7 +827,7 @@ class RpnModel(model.DetectionModel):
     def _parse_rpn_output(self, rpn_output):
         """
         Input:
-            rpn_output: (B, p, NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4)
+            rpn_output: (B, P, (NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4)*K)
         Output:
             bin_x_logits
             res_x_norms
@@ -751,35 +842,39 @@ class RpnModel(model.DetectionModel):
 
             res_size_norm: (l,w,h)
         """
-        bin_x_logits = tf.slice(rpn_output, [0, 0, 0], [-1, -1, self.NUM_BIN_X])
+        rpn_output = tf.reshape(
+            rpn_output, [self._batch_size, self._pc_sample_pts, self.num_classes, -1]
+        )
+
+        bin_x_logits = tf.slice(rpn_output, [0, 0, 0, 0], [-1, -1, -1, self.NUM_BIN_X])
         res_x_norms = tf.slice(
-            rpn_output, [0, 0, self.NUM_BIN_X], [-1, -1, self.NUM_BIN_X]
+            rpn_output, [0, 0, 0, self.NUM_BIN_X], [-1, -1, -1, self.NUM_BIN_X]
         )
 
         bin_z_logits = tf.slice(
-            rpn_output, [0, 0, self.NUM_BIN_X * 2], [-1, -1, self.NUM_BIN_Z]
+            rpn_output, [0, 0, 0, self.NUM_BIN_X * 2], [-1, -1, -1, self.NUM_BIN_Z]
         )
         res_z_norms = tf.slice(
             rpn_output,
-            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z],
-            [-1, -1, self.NUM_BIN_Z],
+            [0, 0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z],
+            [-1, -1, -1, self.NUM_BIN_Z],
         )
 
         bin_theta_logits = tf.slice(
             rpn_output,
-            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2],
-            [-1, -1, self.NUM_BIN_THETA],
+            [0, 0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2],
+            [-1, -1, -1, self.NUM_BIN_THETA],
         )
         res_theta_norms = tf.slice(
             rpn_output,
-            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA],
-            [-1, -1, self.NUM_BIN_THETA],
+            [0, 0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA],
+            [-1, -1, -1, self.NUM_BIN_THETA],
         )
 
         res_y = tf.slice(
             rpn_output,
-            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2],
-            [-1, -1, 1],
+            [0, 0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2],
+            [-1, -1, -1, 1],
         )
 
         res_size_norm = tf.slice(
@@ -787,9 +882,10 @@ class RpnModel(model.DetectionModel):
             [
                 0,
                 0,
+                0,
                 self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 1,
             ],
-            [-1, -1, 3],
+            [-1, -1, -1, 3],
         )
 
         return (

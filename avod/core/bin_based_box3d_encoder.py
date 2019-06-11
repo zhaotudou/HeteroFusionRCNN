@@ -76,9 +76,11 @@ def tf_decode(
             dz = dxz_rot[:, :, 1]
         else:
             assert ref_theta == 0
-        x = dx + ref_pts[:, :, 0]
-        z = dz + ref_pts[:, :, 2]
-        y = ref_pts[:, :, 1] + res_y
+        K = tf.shape(bin_x)[2]
+        ref_pts_tiled = tf.tile(tf.expand_dims(ref_pts, axis=2), [1, 1, K, 1])
+        x = dx + ref_pts_tiled[:, :, :, 0]
+        z = dz + ref_pts_tiled[:, :, :, 2]
+        y = res_y + ref_pts_tiled[:, :, :, 1]
     elif ndims == 2:  # rcnn
         if isinstance(ref_theta, tf.Tensor):
             # rotate along y
@@ -116,9 +118,9 @@ def tf_decode(
     size = mean_sizes + res_size_norm * mean_sizes
 
     if ndims == 3:
-        l = size[:, :, 0]
-        w = size[:, :, 1]
-        h = size[:, :, 2]
+        l = size[:, :, :, 0]
+        w = size[:, :, :, 1]
+        h = size[:, :, :, 2]
         # combine all
         boxes_3d = tf.stack([x, y, z, l, w, h, theta], axis=2)  # y+h/2
     elif ndims == 2:
