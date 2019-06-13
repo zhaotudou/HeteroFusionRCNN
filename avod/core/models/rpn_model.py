@@ -324,7 +324,7 @@ class RpnModel(model.DetectionModel):
         return res_x_norm, res_z_norm, res_theta_norm
 
     def _gather_cls_preds(
-        bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm, cls
+        self, bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm, cls
     ):
         B = tf.shape(cls)[0]
         P = tf.shape(cls)[1]
@@ -746,7 +746,7 @@ class RpnModel(model.DetectionModel):
                 )
 
                 # reduce K by label_cls
-                bin_x_ligits, bin_z_logits, bin_theta_logits, res_y, res_size_norm = self._gather_cls_preds(
+                bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm = self._gather_cls_preds(
                     bin_x_logits,
                     bin_z_logits,
                     bin_theta_logits,
