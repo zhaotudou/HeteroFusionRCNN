@@ -1184,11 +1184,13 @@ class Evaluator:
             target=evaluator_utils.run_kitti_native_script,
             args=(checkpoint_name, kitti_score_threshold, global_step),
         )
+        """
         native_eval_proc_05_iou = Process(
             target=evaluator_utils.run_kitti_native_script_with_05_iou,
             args=(checkpoint_name, kitti_score_threshold, global_step),
         )
+        """
         # Don't call join on this cuz we do not want to block
         # this will cause one zombie process - should be fixed later.
         native_eval_proc.start()
-        native_eval_proc_05_iou.start()
+        # native_eval_proc_05_iou.start()
