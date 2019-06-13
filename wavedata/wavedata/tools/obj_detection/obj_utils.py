@@ -410,13 +410,13 @@ def compute_orientation_3d(obj, p=None):
     orientation3d[0, :] = orientation3d[0, :] + obj.t[0]
     orientation3d[1, :] = orientation3d[1, :] + obj.t[1]
     orientation3d[2, :] = orientation3d[2, :] + obj.t[2]
-    ''' 
+    """
     # only draw for boxes that are in front of the camera
     for idx in np.arange(orientation3d.shape[1]):
         if orientation3d[2, idx] < 0.1:
             return None
-    '''
-    if p:
+    """
+    if p is not None:
         return calib_utils.project_to_image(orientation3d, p)
     else:
         return orientation3d

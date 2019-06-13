@@ -32,7 +32,7 @@ class DatasetBuilder(object):
         has_labels=True,
         cluster_split="train",
         classes=["Car"],
-        num_clusters=[2],
+        num_clusters=[1],
     )
 
     KITTI_VAL = KittiDatasetConfig(
@@ -43,7 +43,7 @@ class DatasetBuilder(object):
         has_labels=True,
         cluster_split="train",
         classes=["Car"],
-        num_clusters=[2],
+        num_clusters=[1],
     )
 
     KITTI_TEST = KittiDatasetConfig(

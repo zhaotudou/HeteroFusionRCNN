@@ -51,7 +51,7 @@ class LabelClusterUtils:
         Returns a unique file path for a text file based on
         the dataset name, split, object class, and number of clusters.
         The file path will look like:
-            avod/data/<dataset_name>/<data_split>/<class>_<n_clusters>
+            avod/data/label_clusters/<dataset_name>/<cluster_split>/<class>_<n_clusters>
 
 
         Args:
@@ -63,7 +63,7 @@ class LabelClusterUtils:
         """
 
         file_path = "{}/{}/{}/".format(
-            self.data_dir, dataset.name, dataset.cluster_split, dataset.data_split
+            self.data_dir, dataset.name, dataset.cluster_split
         )
         file_path += "{}_{}.txt".format(cls, num_clusters)
 

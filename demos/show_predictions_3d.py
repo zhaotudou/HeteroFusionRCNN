@@ -20,7 +20,7 @@ from avod.core import box_3d_projector
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
-sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))   #viz_util
+sys.path.append(os.path.join(ROOT_DIR, "mayavi"))  # viz_util
 from viz_util import draw_lidar_simple, draw_lidar, draw_gt_boxes3d
 
 
@@ -43,16 +43,14 @@ def main():
     The prediction score and IoU with ground truth can be toggled on or off
     as well, shown as (score, IoU) above the detection.
     """
-    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_TRAIN)
+    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_VAL)
 
     ##############################
     # Options
     ##############################
-    dataset_config.data_split = "train"
+    dataset_config.data_split = "val"
 
-    fig_size = (10, 6.1)
-
-    rpn_score_threshold = 0.5
+    rpn_score_threshold = 0.1
     avod_score_threshold = 0.1
 
     gt_classes = ["Car"]
@@ -60,21 +58,18 @@ def main():
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = "rpn_cars"
+    checkpoint_name = "rpn_cars_fuse"
 
     # Drawing Toggles
-    draw_proposals_separate = True
+    draw_proposals_separate = False
     draw_rpn_feature = False
     draw_overlaid = False
-    draw_predictions_separate = False
+    draw_predictions_separate = True
 
     # Show orientation for both GT and proposals/predictions
     draw_orientations_on_prop = True
     draw_orientations_on_pred = True
 
-
-    draw_score = True
-    draw_iou = True
     ##############################
     # End of Options
     ##############################
@@ -84,18 +79,19 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
-        #avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_eval"
-        #avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
+        # avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
+        # avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_eval"
+        avod.root_dir()
+        + "/data/outputs/"
+        + checkpoint_name
+        + "/predictions"
     )
 
     proposals_and_scores_dir = (
         predictions_dir + "/proposals_and_scores/" + dataset.data_split
     )
 
-    rpn_feature_dir = (
-        predictions_dir + "/rpn_feature/" + dataset.data_split
-    )
+    rpn_feature_dir = predictions_dir + "/rpn_feature/" + dataset.data_split
 
     predictions_and_scores_dir = (
         predictions_dir + "/final_predictions_and_scores/" + dataset.data_split
@@ -196,7 +192,9 @@ def main():
                 print("\tSample {}: No proposals, skipping".format(sample_name))
                 continue
 
-            proposals_and_scores = np.unique(np.loadtxt(proposals_file_path).reshape(-1, 8), axis=0)
+            proposals_and_scores = np.unique(
+                np.loadtxt(proposals_file_path).reshape(-1, 8), axis=0
+            )
 
             proposal_boxes_3d = proposals_and_scores[:, 0:7]
             proposal_scores = proposals_and_scores[:, 7]
@@ -219,7 +217,7 @@ def main():
                     rpn_features[:, 0:3],
                     rpn_features[:, 3],
                     rpn_features[:, 4],
-                    rpn_features[:, 5:]
+                    rpn_features[:, 5:],
                 )
 
         ##############################
@@ -264,9 +262,7 @@ def main():
 
             # Convert to objs
             prediction_objs = [
-                box_3d_encoder.box_3d_to_object_label(
-                    prediction, obj_type="Prediction"
-                )
+                box_3d_encoder.box_3d_to_object_label(prediction, obj_type="Prediction")
                 for prediction in prediction_boxes_3d
             ]
             for (obj, score) in zip(prediction_objs, prediction_scores):
@@ -286,11 +282,13 @@ def main():
         filtered_gt_objs = dataset.kitti_utils.filter_labels(
             gt_objects, classes=gt_classes
         )
-        
+
         image_path = dataset.get_rgb_image_path(sample_name)
         image = Image.open(image_path)
         image_size = image.size
-        pts_rect, pts_intensity = dataset.kitti_utils.get_point_cloud(int(sample_name), (image_size[1], image_size[0]))
+        pts_rect, pts_intensity = dataset.kitti_utils.get_point_cloud(
+            int(sample_name), (image_size[1], image_size[0])
+        )
 
         ##############################
         # Reformat and prepare to draw
@@ -298,10 +296,7 @@ def main():
         if draw_proposals_separate or draw_overlaid:
             print("\tSample {}: Drawing proposals".format(sample_name))
             fig = draw_3d_predictions(
-                pts_rect,
-                filtered_gt_objs,
-                proposal_objs,
-                draw_orientations_on_prop,
+                pts_rect, filtered_gt_objs, proposal_objs, draw_orientations_on_prop
             )
 
             # Save just the proposals
@@ -332,10 +327,10 @@ def main():
                 # Now only draw prediction boxes on images
                 # on a new figure handler
                 fig = draw_3d_predictions(
-                        pts_rect,
-                        filtered_gt_objs,
-                        prediction_objs,
-                        draw_orientations_on_pred,
+                    pts_rect,
+                    filtered_gt_objs,
+                    prediction_objs,
+                    draw_orientations_on_pred,
                 )
                 filename = pred_out_dir + "/" + sample_name + ".png"
                 mlab.savefig(filename, figure=fig)
@@ -344,53 +339,68 @@ def main():
 
 
 def draw_3d_predictions(
-    pts_rect,
-    filtered_gt_objs,
-    proposal_objs,
-    draw_orientations_on_prop,
+    pts_rect, filtered_gt_objs, proposal_objs, draw_orientations_on_prop
 ):
 
-    ''' Show all LiDAR points.
-        Draw 3d box in LiDAR point cloud (in rect coord system) '''
+    """ Show all LiDAR points.
+        Draw 3d box in LiDAR point cloud (in rect coord system) """
 
     print("\tFOV point num: {}".format(pts_rect.shape[0]))
-    fig = mlab.figure(figure=None, bgcolor=(0,0,0),
-        fgcolor=None, engine=None, size=(1000, 500))
+    fig = mlab.figure(
+        figure=None, bgcolor=(0, 0, 0), fgcolor=None, engine=None, size=(1000, 500)
+    )
     draw_lidar(pts_rect, fig=fig)
     for obj in filtered_gt_objs:
         # Draw 3d bounding box
         box3d_pts_3d = obj_utils.compute_box_corners_3d(obj).T
-        draw_gt_boxes3d([box3d_pts_3d], fig=fig, color=(1,0,0), draw_text=False)
+        draw_gt_boxes3d([box3d_pts_3d], fig=fig, color=(1, 0, 0), draw_text=False)
         if draw_orientations_on_prop:
             # Draw heading arrow
             ori3d_pts_3d = obj_utils.compute_orientation_3d(obj).T
-            x1,y1,z1 = ori3d_pts_3d[0,:]
-            x2,y2,z2 = ori3d_pts_3d[1,:]
-            mlab.plot3d([x1, x2], [y1, y2], [z1,z2], color=(0.8,0.5,0.5),
-                tube_radius=None, line_width=1, figure=fig)
+            x1, y1, z1 = ori3d_pts_3d[0, :]
+            x2, y2, z2 = ori3d_pts_3d[1, :]
+            mlab.plot3d(
+                [x1, x2],
+                [y1, y2],
+                [z1, z2],
+                color=(0.8, 0.5, 0.5),
+                tube_radius=None,
+                line_width=1,
+                figure=fig,
+            )
     for obj in proposal_objs:
         # Draw 3d bounding box
         box3d_pts_3d = obj_utils.compute_box_corners_3d(obj).T
-        draw_gt_boxes3d([box3d_pts_3d], fig=fig, color=(0,1,0), draw_text=False)
+        draw_gt_boxes3d([box3d_pts_3d], fig=fig, color=(0, 1, 0), draw_text=False)
         if draw_orientations_on_prop:
             # Draw heading arrow
             ori3d_pts_3d = obj_utils.compute_orientation_3d(obj).T
-            x1,y1,z1 = ori3d_pts_3d[0,:]
-            x2,y2,z2 = ori3d_pts_3d[1,:]
-            mlab.plot3d([x1, x2], [y1, y2], [z1,z2], color=(0.5,0.5,0.5),
-                tube_radius=None, line_width=1, figure=fig)
+            x1, y1, z1 = ori3d_pts_3d[0, :]
+            x2, y2, z2 = ori3d_pts_3d[1, :]
+            mlab.plot3d(
+                [x1, x2],
+                [y1, y2],
+                [z1, z2],
+                color=(0.5, 0.5, 0.5),
+                tube_radius=None,
+                line_width=1,
+                figure=fig,
+            )
     mlab.show(1)
     input()
     return fig
 
+
 def draw_rpn_feature(rpn_pts, rpn_fg_mask):
     print("\tRPN point num: ".format(rpn_pts.shape[0]))
-    fig = mlab.figure(figure=None, bgcolor=(0,0,0),
-        fgcolor=None, engine=None, size=(1000, 500))
-    draw_lidar(rpn_pts, color=rpn_pts[:,2] + rpn_fg_mask * 100, fig=fig)
+    fig = mlab.figure(
+        figure=None, bgcolor=(0, 0, 0), fgcolor=None, engine=None, size=(1000, 500)
+    )
+    draw_lidar(rpn_pts, color=rpn_pts[:, 2] + rpn_fg_mask * 100, fig=fig)
     mlab.show(1)
     input()
     return fig
+
 
 def draw_prediction_info(
     ax,

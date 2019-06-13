@@ -40,12 +40,12 @@ def main():
     The prediction score and IoU with ground truth can be toggled on or off
     as well, shown as (score, IoU) above the detection.
     """
-    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_TRAIN)
+    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_VAL)
 
     ##############################
     # Options
     ##############################
-    dataset_config.data_split = "train"
+    dataset_config.data_split = "val"
 
     fig_size = (10, 6.1)
 
@@ -57,12 +57,12 @@ def main():
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = "rpn_cars_alt_1"
+    checkpoint_name = "avod_cars_fuse"
 
     # Drawing Toggles
-    draw_proposals_separate = True
+    draw_proposals_separate = False
     draw_overlaid = False
-    draw_predictions_separate = False
+    draw_predictions_separate = True
 
     # Show orientation for both GT and proposals/predictions
     draw_orientations_on_prop = False
