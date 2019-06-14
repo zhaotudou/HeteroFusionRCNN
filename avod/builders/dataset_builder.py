@@ -31,8 +31,8 @@ class DatasetBuilder(object):
         data_split_dir="training",
         has_labels=True,
         cluster_split="train",
-        classes=["Car"],
-        num_clusters=[2],
+        classes=['Car', 'Pedestrian', 'Cyclist'],
+        num_clusters=[1,1,1],
     )
 
     KITTI_VAL = KittiDatasetConfig(

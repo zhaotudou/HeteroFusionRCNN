@@ -256,9 +256,9 @@ class RpnModel(model.DetectionModel):
         Bs = tf.range(B)
         Ps = tf.range(P)
         Ks = tf.range(K)
-        mB, mP, mK = tf.meshgrid(Bs, Ps, Ks)
+        mP, mB, mK = tf.meshgrid(Ps, Bs, Ks)
         BPK = tf.stack(
-            [tf.transpose(mB), tf.transpose(mP), tf.transpose(mK)], axis=3
+            [mB, mP, mK], axis=3
         )  # (B,P,K,3)
 
         BPKC_x = tf.concat([BPK, tf.reshape(bin_x, [B, P, K, 1])], axis=3)  # (B,P,K,4)
@@ -343,7 +343,7 @@ class RpnModel(model.DetectionModel):
 
         return bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm
 
-    def _gather_mean_sizes(self, cluster_sizes, cls):
+    def _gather_cls_mean_sizes(self, cluster_sizes, cls):
         """
         Input:
             cluster_sizes: (Klass, Cluster=1, 3) [l,w,h], Klass is 0-based
@@ -625,8 +625,8 @@ class RpnModel(model.DetectionModel):
 
                 proposals = tf.reshape(
                     proposals,
-                    [self._batch_size, self._pc_sample_pts * self.num_classes],
-                )  # (B, PK)
+                    [self._batch_size, self._pc_sample_pts * self.num_classes, 7],
+                )  # (B, PK, 7)
                 confidences = tf.reshape(
                     confidences,
                     [self._batch_size, self._pc_sample_pts * self.num_classes],
@@ -685,6 +685,7 @@ class RpnModel(model.DetectionModel):
                             dtype=(tf.float32, tf.float32),
                         )
 
+        predictions = dict()
         if self._train_val_test in ["train", "val"]:
             ######################################################
             # GTs for the loss function & metrics
@@ -709,7 +710,7 @@ class RpnModel(model.DetectionModel):
 
             # Ground Truth Box Cls/Reg
             with tf.variable_scope("box_cls_reg_gt"):
-                mean_sizes = self._gather_mean_sizes(
+                mean_sizes = self._gather_cls_mean_sizes(
                     tf.convert_to_tensor(
                         np.asarray(self._cluster_sizes, dtype=np.float32)
                     ),
@@ -768,7 +769,6 @@ class RpnModel(model.DetectionModel):
             ######################################################
             # Prediction Dict
             ######################################################
-            predictions = dict()
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_SEG_GT] = segs_gt_one_hot
 

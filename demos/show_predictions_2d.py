@@ -52,12 +52,12 @@ def main():
     rpn_score_threshold = 0.1
     avod_score_threshold = 0.1
 
-    gt_classes = ["Car"]
+    gt_classes = ['Car', 'Pedestrian', 'Cyclist']
     # gt_classes = ['Pedestrian', 'Cyclist']
 
     # Overwrite this to select a specific checkpoint
     global_step = None
-    checkpoint_name = "rpn_cars_alt_1"
+    checkpoint_name = "rpn_multiclass"
 
     # Drawing Toggles
     draw_proposals_separate = True
@@ -85,7 +85,7 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
+        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
     )
 
     proposals_and_scores_dir = (

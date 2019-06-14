@@ -53,6 +53,7 @@ def tf_decode(
     dx = (tf.to_float(bin_x) + 0.5) * DELTA - S + res_x_norm * DELTA
     dz = (tf.to_float(bin_z) + 0.5) * DELTA - S + res_z_norm * DELTA
     if ndims == 3:  # rpn
+        K = tf.shape(bin_x)[2]
         if isinstance(ref_theta, tf.Tensor):
             # rotate along y
             all_rys = ref_theta
@@ -65,23 +66,24 @@ def tf_decode(
                 ],
                 axis=3,
             )
+            rot_mats = tf.tile(tf.expand_dims(rot_mats, 2), [1, 1, K, 1, 1])
             dxz_rot = tf.matmul(
                 rot_mats,
-                tf.expand_dims(tf.stack([dx, dz], axis=2), axis=2),
+                tf.expand_dims(tf.stack([dx, dz], axis=3), axis=3),
                 transpose_a=True,
                 transpose_b=True,
             )
-            dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=2)
-            dx = dxz_rot[:, :, 0]
-            dz = dxz_rot[:, :, 1]
+            dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=3)
+            dx = dxz_rot[:, :, :, 0]
+            dz = dxz_rot[:, :, :, 1]
         else:
             assert ref_theta == 0
-        K = tf.shape(bin_x)[2]
         ref_pts_tiled = tf.tile(tf.expand_dims(ref_pts, axis=2), [1, 1, K, 1])
         x = dx + ref_pts_tiled[:, :, :, 0]
         z = dz + ref_pts_tiled[:, :, :, 2]
         y = res_y + ref_pts_tiled[:, :, :, 1]
     elif ndims == 2:  # rcnn
+        K = tf.shape(bin_x)[1]
         if isinstance(ref_theta, tf.Tensor):
             # rotate along y
             all_rys = ref_theta
@@ -94,20 +96,24 @@ def tf_decode(
                 ],
                 axis=2,
             )
+            rot_mats = tf.tile(tf.expand_dims(rot_mats, 1), [1, K, 1, 1])
             dxz_rot = tf.matmul(
                 rot_mats,
-                tf.expand_dims(tf.stack([dx, dz], axis=1), axis=1),
+                tf.expand_dims(tf.stack([dx, dz], axis=2), axis=2),
                 transpose_a=True,
                 transpose_b=True,
             )
-            dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=1)
-            dx = dxz_rot[:, 0]
-            dz = dxz_rot[:, 1]
+            dxz_rot = tf.squeeze(tf.matrix_transpose(dxz_rot), axis=2)
+            dx = dxz_rot[:, :, 0]
+            dz = dxz_rot[:, :, 1]
         else:
             assert ref_theta == 0
-        x = dx + ref_pts[:, 0]
-        z = dz + ref_pts[:, 2]
-        y = ref_pts[:, 1] + res_y
+        ref_pts_tiled = tf.tile(tf.expand_dims(ref_pts, axis=1), [1, K, 1])
+        x = dx + ref_pts_tiled[:, :, 0]
+        z = dz + ref_pts_tiled[:, :, 2]
+        y = res_y + ref_pts_tiled[:, :, 1]
+
+        ref_theta = tf.tile(tf.expand_dims(ref_theta, axis=1), [1, K])
 
     theta = (
         ref_theta
@@ -122,13 +128,13 @@ def tf_decode(
         w = size[:, :, :, 1]
         h = size[:, :, :, 2]
         # combine all
-        boxes_3d = tf.stack([x, y, z, l, w, h, theta], axis=2)  # y+h/2
+        boxes_3d = tf.stack([x, y, z, l, w, h, theta], axis=3)  # y+h/2
     elif ndims == 2:
-        l = size[:, 0]
-        w = size[:, 1]
-        h = size[:, 2]
+        l = size[:, :, 0]
+        w = size[:, :, 1]
+        h = size[:, :, 2]
         # combine all
-        boxes_3d = tf.stack([x, y, z, l, w, h, theta], axis=1)  # y+h/2
+        boxes_3d = tf.stack([x, y, z, l, w, h, theta], axis=2)  # y+h/2
 
     return boxes_3d
 

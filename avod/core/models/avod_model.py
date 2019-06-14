@@ -233,16 +233,23 @@ class AvodModel(model.DetectionModel):
         pts_rot = tf.matmul(rot_mats, pts_shift, transpose_a=True, transpose_b=True)
         return tf.matrix_transpose(pts_rot)
 
+    def _gather_cls_reg_boxes(self, reg_boxes_3d, cls):
+        N = tf.shape(reg_boxes_3d)[0]
+        Ns = tf.reshape(tf.range(N), [N,1])
+        NK = tf.concat([Ns, tf.reshape(cls, [N,1])], axis=1) #(N,2)
+        reg_boxes_3d = tf.gather_nd(reg_boxes_3d, NK) #(N,7)
+        return reg_boxes_3d
+    
     def _gather_residuals(
         self, res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
     ):
 
         """
         Input:
-            res_x_norms: (N,K)
+            res_x_norms: (N,K,C)
             bin_x:(N)
         return:
-            res_x_norm: (N)
+            res_x_norm: (N,K)
         """
 
         """
@@ -250,16 +257,20 @@ class AvodModel(model.DetectionModel):
         ##########
         """
         N = tf.shape(bin_x)[0]
-        Ns = tf.reshape(tf.range(N), [N, 1])
+        K = tf.shape(bin_x)[1]
+        Ns = tf.range(N)
+        Ks = tf.range(K)
+        mN, mK = tf.meshgrid(Ns, Ks)
+        NK = tf.stack([tf.transpose(mN), tf.transpose(mK)], axis=2) #(N,K,2)
 
-        NK_x = tf.concat([Ns, tf.reshape(bin_x, [N, 1])], axis=1)  # (N,2)
-        res_x_norm = tf.gather_nd(res_x_norms, NK_x)  # (N)
+        NKC_x = tf.concat([NK, tf.reshape(bin_x, [N, K, 1])], axis=2)  # (N,K,3)
+        res_x_norm = tf.gather_nd(res_x_norms, NKC_x)  # (N,K)
 
-        NK_z = tf.concat([Ns, tf.reshape(bin_z, [N, 1])], axis=1)  # (N,2)
-        res_z_norm = tf.gather_nd(res_z_norms, NK_z)  # (N)
+        NKC_z = tf.concat([NK, tf.reshape(bin_z, [N, K, 1])], axis=2)  # (N,K,3)
+        res_z_norm = tf.gather_nd(res_z_norms, NKC_z)  # (N,K)
 
-        NK_theta = tf.concat([Ns, tf.reshape(bin_theta, [N, 1])], axis=1)  # (N,2)
-        res_theta_norm = tf.gather_nd(res_theta_norms, NK_theta)  # (N)
+        NKC_theta = tf.concat([NK, tf.reshape(bin_theta, [N, K, 1])], axis=2)  # (N,K,3)
+        res_theta_norm = tf.gather_nd(res_theta_norms, NKC_theta)  # (N,K)
 
         """
         # NumPy version: if N is None, by using tf.py_func, N should be determined
@@ -281,8 +292,58 @@ class AvodModel(model.DetectionModel):
         """
 
         return res_x_norm, res_z_norm, res_theta_norm
+    
+    def _gather_cls_residuals(
+        self, res_x_norms, res_z_norms, res_theta_norms, cls, bin_x, bin_z, bin_theta
+    ):
+        """
+        Input:
+            res_x_norms: (N,K,C)
+            cls: (N)
+            bin_x:(N)
+        return:
+            res_x_norm: (N)
 
-    def _gather_mean_sizes(self, cluster_sizes, cls):
+        TF version: (if p is not None)
+        ##########
+        """
+        N = tf.shape(cls)[0]
+        Ns = tf.reshape(tf.range(N), [N,1])
+
+        NKC_x = tf.concat(
+            [Ns, tf.reshape(cls, [N, 1]), tf.reshape(bin_x, [N, 1])], axis=1
+        )  # (N,3)
+        res_x_norm = tf.gather_nd(res_x_norms, NKC_x)  # (N)
+
+        NKC_z = tf.concat(
+            [Ns, tf.reshape(cls, [N, 1]), tf.reshape(bin_z, [N, 1])], axis=1
+        )  # (N,3)
+        res_z_norm = tf.gather_nd(res_z_norms, NKC_z)  # (N)
+
+        NKC_theta = tf.concat(
+            [Ns, tf.reshape(cls, [N, 1]), tf.reshape(bin_theta, [N, 1])], axis=1
+        )  # (N,3)
+        res_theta_norm = tf.gather_nd(res_theta_norms, NKC_theta)  # (N)
+
+        return res_x_norm, res_z_norm, res_theta_norm
+    
+    def _gather_cls_preds(
+        self, bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm, cls
+    ):
+        N = tf.shape(cls)[0]
+        Ns = tf.reshape(tf.range(N), [N,1])
+
+        NK_x = tf.concat([Ns, tf.reshape(cls, [N, 1])], axis=1)  # (N,2)
+
+        bin_x_logits = tf.gather_nd(bin_x_logits, NK_x)  # (N,C)
+        bin_z_logits = tf.gather_nd(bin_z_logits, NK_x)  # (N,C)
+        bin_theta_logits = tf.gather_nd(bin_theta_logits, NK_x)  # (N,C)
+        res_y = tf.gather_nd(res_y, NK_x)  # (N)
+        res_size_norm = tf.gather_nd(res_size_norm, NK_x)  # (N,3)
+
+        return bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm
+    
+    def _gather_cls_mean_sizes(self, cluster_sizes, cls):
         """
         Input:
             cluster_sizes: (Klass, Cluster=1, 3) [l,w,h], Klass is 0-based
@@ -544,8 +605,8 @@ class AvodModel(model.DetectionModel):
                 self._is_training,
                 with_bn=False,
                 activation=None,
-            )  # (N,K)
-            cls_softmax = tf.nn.softmax(cls_logits, name="cls_softmax")  # (N,K)
+            )  # (N,K+1)
+            cls_softmax = tf.nn.softmax(cls_logits, name="cls_softmax")  # (N,K+1)
             cls_preds = tf.argmax(
                 cls_softmax, axis=-1, name="cls_predictions", output_type=tf.int32
             )
@@ -573,7 +634,7 @@ class AvodModel(model.DetectionModel):
 
             fc_output = pf.dense(
                 fc_layers[-1],
-                self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 4,
+                (self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 4) * self.num_classes,
                 "reg_output",
                 self._is_training,
                 activation=None,
@@ -596,13 +657,13 @@ class AvodModel(model.DetectionModel):
                 with tf.variable_scope("decoding"):
                     bin_x = tf.argmax(
                         bin_x_logits, axis=-1, output_type=tf.int32
-                    )  # (N)
+                    )  # (N,K)
                     bin_z = tf.argmax(
                         bin_z_logits, axis=-1, output_type=tf.int32
-                    )  # (N)
+                    )  # (N,K)
                     bin_theta = tf.argmax(
                         bin_theta_logits, axis=-1, output_type=tf.int32
-                    )  # (N)
+                    )  # (N,K)
 
                     res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
                         res_x_norms,
@@ -613,12 +674,12 @@ class AvodModel(model.DetectionModel):
                         bin_theta,
                     )
 
-                    mean_sizes = self._gather_mean_sizes(
-                        tf.convert_to_tensor(
-                            np.asarray(self._cluster_sizes, dtype=np.float32)
-                        ),
-                        cls_preds,
+                    cluster_sizes = tf.convert_to_tensor(
+                        np.asarray(self._cluster_sizes, dtype=np.float32)
                     )
+                    K_mean_sizes = tf.reshape(cluster_sizes, [-1, 3])
+                    NK_mean_sizes = tf.tile(tf.expand_dims(K_mean_sizes, 0), [tf.shape(bin_x)[0], 1, 1])
+
                     reg_boxes_3d = bin_based_box3d_encoder.tf_decode(
                         proposals[:, :3],
                         proposals[:, 6],
@@ -630,13 +691,14 @@ class AvodModel(model.DetectionModel):
                         res_theta_norm,
                         res_y,
                         res_size_norm,
-                        mean_sizes,
+                        NK_mean_sizes,
                         self.S,
                         self.DELTA,
                         self.R,
                         self.DELTA_THETA,
-                    )  # (N,7)
-
+                    )  # (N,K,7)
+                    reg_boxes_3d = self._gather_cls_reg_boxes(reg_boxes_3d, tf.to_int32(cls_preds - 1)) #(N,7)
+                
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
                 # while get significant higher proposal recall@IoU=0.7
                 oriented_NMS = True
@@ -741,7 +803,7 @@ class AvodModel(model.DetectionModel):
             )
             pos_reg_mask = tf.logical_and(pos_reg_mask, non_empty_box_mask)
 
-            mean_sizes = self._gather_mean_sizes(
+            mean_sizes = self._gather_cls_mean_sizes(
                 tf.convert_to_tensor(np.asarray(self._cluster_sizes, dtype=np.float32)),
                 tf.to_int32(proposals_gt_cls),
             )
@@ -766,15 +828,6 @@ class AvodModel(model.DetectionModel):
                 self.DELTA_THETA,
             )
 
-            res_x_norm, res_z_norm, res_theta_norm = self._gather_residuals(
-                res_x_norms,
-                res_z_norms,
-                res_theta_norms,
-                bin_x_gt,
-                bin_z_gt,
-                bin_theta_gt,
-            )
-
             bin_x_gt_one_hot = tf.one_hot(
                 bin_x_gt,
                 depth=int(2 * self.S / self.DELTA),
@@ -794,6 +847,26 @@ class AvodModel(model.DetectionModel):
                 depth=int(2 * self.R / self.DELTA_THETA),
                 on_value=1.0,
                 off_value=0.0,
+            )
+            
+            # reduce K by label_cls
+            bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm = self._gather_cls_preds(
+                bin_x_logits,
+                bin_z_logits,
+                bin_theta_logits,
+                res_y,
+                res_size_norm,
+                tf.to_int32(proposals_gt_cls - 1),
+            )
+
+            res_x_norm, res_z_norm, res_theta_norm = self._gather_cls_residuals(
+                res_x_norms,
+                res_z_norms,
+                res_theta_norms,
+                tf.to_int32(proposals_gt_cls - 1),
+                bin_x_gt,
+                bin_z_gt,
+                bin_theta_gt,
             )
 
         ######################################################
@@ -858,7 +931,7 @@ class AvodModel(model.DetectionModel):
     def _parse_brn_output(self, brn_output):
         """
         Input:
-            brn_output: (N, NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4
+            brn_output: (N, (NUM_BIN_X*2 + NUM_BIN_Z*2 + NUM_BIN_THETA*2 + 4)*K)
         Output:
             bin_x_logits
             res_x_norms
@@ -873,37 +946,38 @@ class AvodModel(model.DetectionModel):
 
             res_size_norm: (l,w,h)
         """
-        bin_x_logits = tf.slice(brn_output, [0, 0], [-1, self.NUM_BIN_X])
-        res_x_norms = tf.slice(brn_output, [0, self.NUM_BIN_X], [-1, self.NUM_BIN_X])
+        brn_output = tf.reshape(brn_output, [-1, self.num_classes, (self.NUM_BIN_X*2 + self.NUM_BIN_Z*2 + self.NUM_BIN_THETA*2 + 4)])
+        bin_x_logits = tf.slice(brn_output, [0, 0, 0], [-1, -1, self.NUM_BIN_X])
+        res_x_norms = tf.slice(brn_output, [0, 0, self.NUM_BIN_X], [-1, -1, self.NUM_BIN_X])
 
         bin_z_logits = tf.slice(
-            brn_output, [0, self.NUM_BIN_X * 2], [-1, self.NUM_BIN_Z]
+            brn_output, [0, 0, self.NUM_BIN_X * 2], [-1, -1, self.NUM_BIN_Z]
         )
         res_z_norms = tf.slice(
-            brn_output, [0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z], [-1, self.NUM_BIN_Z]
+            brn_output, [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z], [-1, -1, self.NUM_BIN_Z]
         )
 
         bin_theta_logits = tf.slice(
             brn_output,
-            [0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2],
-            [-1, self.NUM_BIN_THETA],
+            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2],
+            [-1, -1, self.NUM_BIN_THETA],
         )
         res_theta_norms = tf.slice(
             brn_output,
-            [0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA],
-            [-1, self.NUM_BIN_THETA],
+            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA],
+            [-1, -1, self.NUM_BIN_THETA],
         )
 
         res_y = tf.slice(
             brn_output,
-            [0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2],
-            [-1, 1],
+            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2],
+            [-1, -1, 1],
         )
 
         res_size_norm = tf.slice(
             brn_output,
-            [0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 1],
-            [-1, 3],
+            [0, 0, self.NUM_BIN_X * 2 + self.NUM_BIN_Z * 2 + self.NUM_BIN_THETA * 2 + 1],
+            [-1, -1, 3],
         )
 
         return (
