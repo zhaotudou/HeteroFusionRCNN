@@ -237,6 +237,17 @@ class RpnModel(model.DetectionModel):
         )  # (B,P,3), image's shape is (y,x)
         self._proj_img_fts = tf.gather_nd(self._img_fts, proj_indices)  # (B,P,C1)
 
+    def _gather_cls_proposals(self, proposals, cls):
+        B = tf.shape(cls)[0]
+        P = tf.shape(cls)[1]
+        Bs = tf.range(B)
+        Ps = tf.range(P)
+        mB, mP = tf.meshgrid(Bs, Ps)
+        BP = tf.stack([tf.transpose(mB), tf.transpose(mP)], axis=2)  # (B,P,2)
+        BPK = tf.concat([BP, tf.reshape(cls, [B, P, 1])], axis=2)  # (B,P,3)
+        proposals = tf.gather_nd(proposals, BPK)  # (B,P,7)
+        return proposals
+
     def _gather_residuals(
         self, res_x_norms, res_z_norms, res_theta_norms, bin_x, bin_z, bin_theta
     ):
@@ -257,9 +268,7 @@ class RpnModel(model.DetectionModel):
         Ps = tf.range(P)
         Ks = tf.range(K)
         mP, mB, mK = tf.meshgrid(Ps, Bs, Ks)
-        BPK = tf.stack(
-            [mB, mP, mK], axis=3
-        )  # (B,P,K,3)
+        BPK = tf.stack([mB, mP, mK], axis=3)  # (B,P,K,3)
 
         BPKC_x = tf.concat([BPK, tf.reshape(bin_x, [B, P, K, 1])], axis=3)  # (B,P,K,4)
         res_x_norm = tf.gather_nd(res_x_norms, BPKC_x)  # (B,P,K)
@@ -431,13 +440,13 @@ class RpnModel(model.DetectionModel):
         with tf.variable_scope("foreground_segmentation"):
             seg_logits = pf.dense(
                 self._pc_fts,
-                2,
+                self.num_classes + 1,
                 "seg_logits",
                 self._is_training,
                 with_bn=False,
                 activation=None,
-            )  # (B,P,K)
-            seg_softmax = tf.nn.softmax(seg_logits, name="seg_softmax")  # (B,P,K)
+            )  # (B,P,K+1)
+            seg_softmax = tf.nn.softmax(seg_logits, name="seg_softmax")  # (B,P,K+1)
             seg_preds = tf.argmax(
                 seg_softmax, axis=-1, name="seg_predictions", output_type=tf.int32
             )  # (B,P)
@@ -607,30 +616,11 @@ class RpnModel(model.DetectionModel):
                         self.R,
                         self.DELTA_THETA,
                     )  # (B,P,K,7)
+                    proposals = self._gather_cls_proposals(
+                        proposals, tf.to_int32(proposal_preds - 1)
+                    )  # (B,P,7)
 
-                bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
-                bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
-                bin_theta_scores = tf.reduce_max(
-                    tf.nn.softmax(bin_theta_logits), axis=-1
-                )
-                proposal_scores_tiled = tf.tile(
-                    tf.expand_dims(proposal_scores, axis=2), [1, 1, self.num_classes]
-                )
-                confidences = (
-                    proposal_scores_tiled
-                    * bin_x_scores
-                    * bin_z_scores
-                    * bin_theta_scores
-                )  # (B,P,K)
-
-                proposals = tf.reshape(
-                    proposals,
-                    [self._batch_size, self._pc_sample_pts * self.num_classes, 7],
-                )  # (B, PK, 7)
-                confidences = tf.reshape(
-                    confidences,
-                    [self._batch_size, self._pc_sample_pts * self.num_classes],
-                )  # (B, PK)
+                confidences = proposal_scores
                 if self._fixed_num_proposal_nms:
                     # get _pre_nms_size number of proposals for NMS
                     _, sorted_idxs = tf.nn.top_k(
@@ -694,7 +684,10 @@ class RpnModel(model.DetectionModel):
             # Ground Truth Seg
             with tf.variable_scope("seg_one_hot_classes"):
                 segs_gt_one_hot = tf.one_hot(
-                    tf.to_int32(label_cls > 0), 2, on_value=1.0, off_value=0.0
+                    tf.to_int32(label_cls),
+                    self.num_classes + 1,
+                    on_value=1.0,
+                    off_value=0.0,
                 )
 
             with tf.variable_scope("segmentation_accuracy"):
@@ -704,7 +697,7 @@ class RpnModel(model.DetectionModel):
                 )
                 tf.summary.scalar("avg_foreground_points_num", avg_num_foreground_pts)
                 # seg accuracy
-                seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls > 0))
+                seg_correct = tf.equal(seg_preds, tf.to_int32(label_cls))
                 seg_accuracy = tf.reduce_mean(tf.to_float(seg_correct))
                 tf.summary.scalar("segmentation_accuracy", seg_accuracy)
 
