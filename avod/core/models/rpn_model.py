@@ -541,15 +541,8 @@ class RpnModel(model.DetectionModel):
                         self.DELTA_THETA,
                     )  # (B,P,7)
 
-                bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
-                bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
-                bin_theta_scores = tf.reduce_max(
-                    tf.nn.softmax(bin_theta_logits), axis=-1
-                )
-                confidences = (
-                    proposal_scores * bin_x_scores * bin_z_scores * bin_theta_scores
-                )  # (B,P)
                 if self._fixed_num_proposal_nms:
+                    confidences = proposal_scores
                     # get _pre_nms_size number of proposals for NMS
                     _, sorted_idxs = tf.nn.top_k(
                         confidences, k=self._pre_nms_size, sorted=True
@@ -561,6 +554,14 @@ class RpnModel(model.DetectionModel):
                         dtype=(tf.float32, tf.float32),
                     )
                 else:
+                    bin_x_scores = tf.reduce_max(tf.nn.softmax(bin_x_logits), axis=-1)
+                    bin_z_scores = tf.reduce_max(tf.nn.softmax(bin_z_logits), axis=-1)
+                    bin_theta_scores = tf.reduce_max(
+                        tf.nn.softmax(bin_theta_logits), axis=-1
+                    )
+                    confidences = (
+                        proposal_scores * bin_x_scores * bin_z_scores * bin_theta_scores
+                    )  # (B,P)
                     pre_nms_proposals, pre_nms_confidences = (proposals, confidences)
 
                 # oriented-NMS is much slower than non-oriented-NMS (tf.image.non_max_suppression)
