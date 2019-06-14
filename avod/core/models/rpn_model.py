@@ -803,6 +803,7 @@ class RpnModel(model.DetectionModel):
                     self.PRED_NUM_PROPOSALS_BEFORE_PADDING
                 ] = num_proposals_before_padding
         else:
+            predictions = dict()
             # self._train_val_test == 'test'
             predictions[self.PRED_SEG_SOFTMAX] = seg_softmax
             predictions[self.PRED_PROPOSALS] = post_nms_proposals
@@ -821,6 +822,19 @@ class RpnModel(model.DetectionModel):
             predictions[self.SAVE_RPN_INTENSITY] = self._pc_intensities
             predictions[self.SAVE_RPN_FG_MASK] = self._foreground_mask
             predictions[self.SAVE_RPN_IMG_FTS] = self._proj_img_fts
+
+        if self._train_val_test == "test":
+            output_proposals = tf.identity(post_nms_proposals, name="output_proposals")
+            output_pts = tf.identity(self._pc_pts, name="output_pts")
+            output_fts = tf.concat(
+                [self._pc_fts, self._proj_img_fts], axis=2, name="output_fts"
+            )
+            output_foreground_maks = tf.identity(
+                self._foreground_mask, name="output_foreground_mask"
+            )
+            output_intensities = tf.squeeze(
+                self._pc_intensities, axis=[-1], name="output_intensities"
+            )
         return predictions
 
     def _parse_rpn_output(self, rpn_output):

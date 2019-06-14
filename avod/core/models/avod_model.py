@@ -937,7 +937,70 @@ class AvodModel(model.DetectionModel):
             prediction_dict[
                 self.PRED_NUM_BOXES_BEFORE_PADDING
             ] = num_boxes_before_padding
+
+            output_reg_boxes_3d = tf.identity(
+                batch_reg_boxes_3d, name="output_reg_boxes_3d"
+            )
+            output_cls_softmax = tf.identity(
+                batch_cls_softmax, name="output_cls_softmax"
+            )
+            output_non_empty_box_mask = tf.identity(
+                batch_non_empty_box_mask, name="output_non_empty_box_mask"
+            )
+            output_nms_indices = tf.identity(nms_indices, name="output_nms_indices")
+            output_num_boxes_before_padding = tf.identity(
+                num_boxes_before_padding, name="output_num_boxes_before_padding"
+            )
+
+            if self._batch_size == 1:
+                self._batch_prediction_to_final_prediction(
+                    batch_reg_boxes_3d,
+                    batch_cls_softmax,
+                    batch_non_empty_box_mask,
+                    nms_indices,
+                    num_boxes_before_padding,
+                )
+
         return prediction_dict
+
+    def _batch_prediction_to_final_prediction(
+        self,
+        batch_boxes,
+        batch_softmax,
+        batch_non_empty_mask,
+        batch_nms_indices,
+        batch_num_boxes,
+    ):
+        """Convert batch prediction to final prediction with 3d box, class score and class.
+           This function could be called only when batch size is exactly 1.
+           Note that final predicted boxes may have duplicated boxes. """
+        boxes = tf.squeeze(batch_boxes)
+        softmax = tf.squeeze(batch_softmax)
+        num_boxes_before_padding = tf.squeeze(batch_num_boxes)
+        nms_indices = tf.squeeze(batch_nms_indices)
+        non_empty_box_mask = tf.squeeze(batch_non_empty_mask)
+
+        # exclude empty boxes and duplicated boxes incurred by nms padding
+        non_empty_box_indices = tf.where(non_empty_box_mask)
+        non_empty_boxes = tf.gather(boxes, non_empty_box_indices)
+        non_empty_softmax = tf.gather(softmax, non_empty_box_indices)
+        final_boxes = tf.gather(non_empty_boxes, nms_indices[:num_boxes_before_padding])
+        final_boxes = tf.squeeze(final_boxes, name="final_boxes")
+        final_pred_softmax = tf.gather(
+            non_empty_softmax, nms_indices[:num_boxes_before_padding]
+        )
+        final_pred_softmax = tf.squeeze(final_pred_softmax)
+
+        # get box's class and score
+        not_bkg_scores = tf.slice(final_pred_softmax, [0, 1], [-1, -1])
+        final_pred_types = tf.argmax(
+            not_bkg_scores, axis=1, output_type=tf.int32, name="final_box_classes"
+        )
+        box_range = tf.range(tf.shape(final_boxes)[0], dtype=tf.int32)
+        final_pred_scores_indices = tf.stack([box_range, final_pred_types], axis=1)
+        final_pred_scores = tf.gather_nd(
+            not_bkg_scores, final_pred_scores_indices, name="final_box_class_scores"
+        )
 
     def _parse_brn_output(self, brn_output):
         """
