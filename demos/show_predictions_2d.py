@@ -40,23 +40,23 @@ def main():
     The prediction score and IoU with ground truth can be toggled on or off
     as well, shown as (score, IoU) above the detection.
     """
-    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_TRAIN)
+    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_VAL)
 
     ##############################
     # Options
     ##############################
-    dataset_config.data_split = "train"
+    dataset_config.data_split = "val"
 
     fig_size = (10, 6.1)
 
     rpn_score_threshold = 0.1
     avod_score_threshold = 0.1
 
-    gt_classes = ['Car', 'Pedestrian', 'Cyclist']
+    gt_classes = ["Car", "Pedestrian", "Cyclist"]
     # gt_classes = ['Pedestrian', 'Cyclist']
 
     # Overwrite this to select a specific checkpoint
-    global_step = None
+    global_step = 40000
     checkpoint_name = "rpn_multiclass"
 
     # Drawing Toggles
@@ -85,7 +85,10 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
+        avod.root_dir()
+        + "/data/outputs/"
+        + checkpoint_name
+        + "/predictions_for_rcnn_eval"
     )
 
     proposals_and_scores_dir = (

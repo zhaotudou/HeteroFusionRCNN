@@ -450,6 +450,12 @@ class RpnModel(model.DetectionModel):
             seg_preds = tf.argmax(
                 seg_softmax, axis=-1, name="seg_predictions", output_type=tf.int32
             )  # (B,P)
+            seg_fg_preds = tf.argmax(
+                seg_softmax[:, :, 1:],
+                axis=-1,
+                name="seg_fg_predictions",
+                output_type=tf.int32,
+            )  # (B,P)
             seg_scores = tf.reduce_max(
                 seg_softmax[:, :, 1:], axis=-1, name="seg_scores"
             )  # (B,P)
@@ -460,7 +466,7 @@ class RpnModel(model.DetectionModel):
         proposal_pts = self._pc_pts
         proposal_fts = self._pc_fts
         proposal_img_fts = self._proj_img_fts
-        proposal_preds = seg_preds
+        proposal_preds = seg_fg_preds
         proposal_scores = seg_scores
         proposal_label_reg = label_reg
         proposal_label_cls = label_cls
@@ -483,7 +489,7 @@ class RpnModel(model.DetectionModel):
                     self._pc_pts,
                     self._pc_fts,
                     self._proj_img_fts,
-                    seg_preds,
+                    seg_fg_preds,
                     seg_scores,
                     label_reg,
                     label_cls,
@@ -617,7 +623,7 @@ class RpnModel(model.DetectionModel):
                         self.DELTA_THETA,
                     )  # (B,P,K,7)
                     proposals = self._gather_cls_proposals(
-                        proposals, tf.to_int32(proposal_preds - 1)
+                        proposals, tf.to_int32(proposal_preds)
                     )  # (B,P,7)
 
                 confidences = proposal_scores
