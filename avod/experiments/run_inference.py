@@ -17,7 +17,7 @@ from avod.core.models.rpn_model import RpnModel
 from avod.core.evaluator import Evaluator
 
 
-def inference(model_config, eval_config, dataset_config):
+def inference(model_config, eval_config, dataset_config, ckpt_indices):
 
     # Overwrite the defaults
     dataset_config = config_builder.proto_to_obj(dataset_config)
@@ -34,6 +34,8 @@ def inference(model_config, eval_config, dataset_config):
     eval_config.allow_gpu_mem_growth = True
 
     eval_config = config_builder.proto_to_obj(eval_config)
+    # Grab the checkpoint indices to evaluate
+    eval_config.ckpt_indices = ckpt_indices
 
     # Remove augmentation during evaluation in test mode
     dataset_config.aug_list = []
@@ -146,13 +148,10 @@ def main(_):
     # Overwrite save_rpn_feature
     eval_config.save_rpn_feature = args.save_rpn_feature
 
-    # Grab the checkpoint indices to evaluate
-    eval_config.ckpt_indices = args.ckpt_indices
-
     # Set CUDA device id
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device
 
-    inference(model_config, eval_config, dataset_config)
+    inference(model_config, eval_config, dataset_config, args.ckpt_indices)
 
 
 if __name__ == "__main__":

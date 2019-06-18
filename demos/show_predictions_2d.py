@@ -5,6 +5,9 @@ import time
 import numpy as np
 
 from PIL import Image
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as patheffects
@@ -40,12 +43,12 @@ def main():
     The prediction score and IoU with ground truth can be toggled on or off
     as well, shown as (score, IoU) above the detection.
     """
-    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_VAL)
+    dataset_config = DatasetBuilder.copy_config(DatasetBuilder.KITTI_TEST)
 
     ##############################
     # Options
     ##############################
-    dataset_config.data_split = "val"
+    dataset_config.data_split = "test"
 
     fig_size = (10, 6.1)
 
@@ -56,7 +59,7 @@ def main():
     # gt_classes = ['Pedestrian', 'Cyclist']
 
     # Overwrite this to select a specific checkpoint
-    global_step = 40000
+    global_step = 76000
     checkpoint_name = "rpn_multiclass"
 
     # Drawing Toggles
@@ -85,10 +88,7 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        avod.root_dir()
-        + "/data/outputs/"
-        + checkpoint_name
-        + "/predictions_for_rcnn_eval"
+        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
     )
 
     proposals_and_scores_dir = (
