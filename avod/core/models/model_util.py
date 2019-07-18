@@ -179,19 +179,14 @@ def sb_compute_iou(args):
     return compute_iou.box3d_iou_tf(proposal_boxes, gt_boxes)
 
 
-def x_z_theta_one_hot_encoding(bin_x, bin_z, bin_theta, S, DELTA, R, DELTA_THETA):
-    bin_x_one_hot = tf.one_hot(
-        tf.to_int32(bin_x), depth=int(2 * S / DELTA), on_value=1.0, off_value=0.0
-    )
+def x_z_theta_one_hot_encoding(
+    bin_x, bin_z, bin_theta, num_bin_x, num_bin_z, num_bin_theta
+):
+    bin_x_one_hot = tf.one_hot(bin_x, depth=num_bin_x, on_value=1.0, off_value=0.0)
 
-    bin_z_one_hot = tf.one_hot(
-        tf.to_int32(bin_z), depth=int(2 * S / DELTA), on_value=1.0, off_value=0.0
-    )
+    bin_z_one_hot = tf.one_hot(bin_z, depth=num_bin_z, on_value=1.0, off_value=0.0)
 
     bin_theta_one_hot = tf.one_hot(
-        tf.to_int32(bin_theta),
-        depth=int(2 * R / DELTA_THETA),
-        on_value=1.0,
-        off_value=0.0,
+        bin_theta, depth=num_bin_theta, on_value=1.0, off_value=0.0
     )
     return bin_x_one_hot, bin_z_one_hot, bin_theta_one_hot

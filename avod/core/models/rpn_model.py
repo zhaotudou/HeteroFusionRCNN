@@ -111,9 +111,9 @@ class RpnModel(model.DetectionModel):
             self._pre_nms_size >= self._post_nms_size
         ), "post nms size must be no greater than pre nms size"
 
-        self.S = rpn_config.rpn_xz_search_range
-        self.DELTA = rpn_config.rpn_xz_bin_len
-        self.NUM_BIN_X = int(2 * self.S / self.DELTA)
+        self.Ss = np.asarray(rpn_config.rpn_xz_search_range)
+        self.DELTAs = np.asarray(rpn_config.rpn_xz_bin_len)
+        self.NUM_BIN_X = int(2 * self.Ss[0] / self.DELTAs[0])
         self.NUM_BIN_Z = self.NUM_BIN_X
 
         self.R = rpn_config.rpn_theta_search_range * np.pi
@@ -351,6 +351,24 @@ class RpnModel(model.DetectionModel):
         res_size_norm = tf.gather_nd(res_size_norm, BPK_x)  # (B,P,3)
 
         return bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm
+
+    def _gather_cls_gt(self, bin_x_gt, res_x_norm_gt, bin_z_gt, res_z_norm_gt, cls):
+
+        B = tf.shape(cls)[0]
+        P = tf.shape(cls)[1]
+        Bs = tf.range(B)
+        Ps = tf.range(P)
+        mB, mP = tf.meshgrid(Bs, Ps)
+        BP = tf.stack([tf.transpose(mB), tf.transpose(mP)], axis=2)  # (B,P,2)
+
+        BPK = tf.concat([BP, tf.reshape(cls, [B, P, 1])], axis=2)  # (B,P,3)
+
+        bin_x_gt = tf.gather_nd(bin_x_gt, BPK)  # (B,P)
+        res_x_norm_gt = tf.gather_nd(res_x_norm_gt, BPK)  # (B,P)
+        bin_z_gt = tf.gather_nd(bin_z_gt, BPK)  # (B,P)
+        res_z_norm_gt = tf.gather_nd(res_z_norm_gt, BPK)  # (B,P)
+
+        return bin_x_gt, res_x_norm_gt, bin_z_gt, res_z_norm_gt
 
     def _gather_cls_mean_sizes(self, cluster_sizes, cls):
         """
@@ -617,8 +635,8 @@ class RpnModel(model.DetectionModel):
                         res_y,
                         res_size_norm,
                         BpK_mean_sizes,
-                        self.S,
-                        self.DELTA,
+                        self.Ss,
+                        self.DELTAs,
                         self.R,
                         self.DELTA_THETA,
                     )  # (B,P,K,7)
@@ -729,20 +747,28 @@ class RpnModel(model.DetectionModel):
                     0,
                     proposal_label_reg,
                     mean_sizes,
-                    self.S,
-                    self.DELTA,
+                    self.Ss,
+                    self.DELTAs,
                     self.R,
                     self.DELTA_THETA,
+                    self.num_classes,
+                )
+
+                bin_x_gt, res_x_norm_gt, bin_z_gt, res_z_norm_gt = self._gather_cls_gt(
+                    bin_x_gt,
+                    res_x_norm_gt,
+                    bin_z_gt,
+                    res_z_norm_gt,
+                    tf.to_int32(proposal_label_cls - 1),
                 )
 
                 bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = model_util.x_z_theta_one_hot_encoding(
                     bin_x_gt,
                     bin_z_gt,
                     bin_theta_gt,
-                    self.S,
-                    self.DELTA,
-                    self.R,
-                    self.DELTA_THETA,
+                    self.NUM_BIN_X,
+                    self.NUM_BIN_Z,
+                    self.NUM_BIN_THETA,
                 )
 
                 # reduce K by label_cls

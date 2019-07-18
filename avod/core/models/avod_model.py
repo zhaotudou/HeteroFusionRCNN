@@ -10,6 +10,7 @@ from avod.core import projection
 from avod.core import bin_based_box3d_encoder
 from avod.core import pointfly as pf
 from avod.core import compute_iou
+from avod.core.models import model_util
 
 from avod.core import constants
 
@@ -105,9 +106,9 @@ class AvodModel(model.DetectionModel):
         self._nms_iou_thresh = avod_config.avod_nms_iou_thresh
         self._path_drop_probabilities = self._config.path_drop_probabilities
 
-        self.S = avod_config.avod_xz_search_range
-        self.DELTA = avod_config.avod_xz_bin_len
-        self.NUM_BIN_X = int(2 * self.S / self.DELTA)
+        self.Ss = np.asarray(avod_config.avod_xz_search_range)
+        self.DELTAs = np.asarray(avod_config.avod_xz_bin_len)
+        self.NUM_BIN_X = int(2 * self.Ss[0] / self.DELTAs[0])
         self.NUM_BIN_Z = self.NUM_BIN_X
 
         self.R = avod_config.avod_theta_search_range * np.pi
@@ -342,6 +343,20 @@ class AvodModel(model.DetectionModel):
         res_size_norm = tf.gather_nd(res_size_norm, NK_x)  # (N,3)
 
         return bin_x_logits, bin_z_logits, bin_theta_logits, res_y, res_size_norm
+
+    def _gather_cls_gt(self, bin_x_gt, res_x_norm_gt, bin_z_gt, res_z_norm_gt, cls):
+
+        N = tf.shape(cls)[0]
+        Ns = tf.reshape(tf.range(N), [N, 1])
+
+        NK = tf.concat([Ns, tf.reshape(cls, [N, 1])], axis=1)  # (N,2)
+
+        bin_x_gt = tf.gather_nd(bin_x_gt, NK)  # (N)
+        res_x_norm_gt = tf.gather_nd(res_x_norm_gt, NK)  # (N)
+        bin_z_gt = tf.gather_nd(bin_z_gt, NK)  # (N)
+        res_z_norm_gt = tf.gather_nd(res_z_norm_gt, NK)  # (N)
+
+        return bin_x_gt, res_x_norm_gt, bin_z_gt, res_z_norm_gt
 
     def _gather_cls_mean_sizes(self, cluster_sizes, cls):
         """
@@ -701,8 +716,8 @@ class AvodModel(model.DetectionModel):
                         res_y,
                         res_size_norm,
                         NK_mean_sizes,
-                        self.S,
-                        self.DELTA,
+                        self.Ss,
+                        self.DELTAs,
                         self.R,
                         self.DELTA_THETA,
                     )  # (N,K,7)
@@ -833,31 +848,28 @@ class AvodModel(model.DetectionModel):
                 proposals[:, 6],
                 proposals_gt_box3d,
                 mean_sizes,
-                self.S,
-                self.DELTA,
+                self.Ss,
+                self.DELTAs,
                 self.R,
                 self.DELTA_THETA,
+                self.num_classes,
             )
 
-            bin_x_gt_one_hot = tf.one_hot(
+            bin_x_gt, res_x_norm_gt, bin_z_gt, res_z_norm_gt = self._gather_cls_gt(
                 bin_x_gt,
-                depth=int(2 * self.S / self.DELTA),
-                on_value=1.0,
-                off_value=0.0,
-            )
-
-            bin_z_gt_one_hot = tf.one_hot(
+                res_x_norm_gt,
                 bin_z_gt,
-                depth=int(2 * self.S / self.DELTA),
-                on_value=1.0,
-                off_value=0.0,
+                res_z_norm_gt,
+                tf.to_int32(proposals_gt_cls - 1),
             )
 
-            bin_theta_gt_one_hot = tf.one_hot(
+            bin_x_gt_one_hot, bin_z_gt_one_hot, bin_theta_gt_one_hot = model_util.x_z_theta_one_hot_encoding(
+                bin_x_gt,
+                bin_z_gt,
                 bin_theta_gt,
-                depth=int(2 * self.R / self.DELTA_THETA),
-                on_value=1.0,
-                off_value=0.0,
+                self.NUM_BIN_X,
+                self.NUM_BIN_Z,
+                self.NUM_BIN_THETA,
             )
 
             # reduce K by label_cls
