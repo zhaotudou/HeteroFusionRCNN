@@ -318,6 +318,12 @@ class KittiDataset:
                         for obj_label in obj_labels
                     ]
                 )
+                label_classes = np.asarray(
+                    [
+                        self.kitti_utils.class_str_to_index(obj_label.type)
+                        for obj_label in obj_labels
+                    ]
+                )
 
             # Load image (BGR -> RGB)
             cv_bgr_image = cv2.imread(self.get_rgb_image_path(sample.name))
@@ -384,7 +390,7 @@ class KittiDataset:
 
                 # generate training labels
                 label_seg, label_reg = self.generate_rpn_training_labels(
-                    sampled_pc[:, :3], label_boxes_3d
+                    sampled_pc[:, :3], label_boxes_3d, label_classes
                 )
             else:
                 label_boxes_3d = np.zeros((1, 7))
@@ -409,7 +415,7 @@ class KittiDataset:
 
         return sample_dicts
 
-    def generate_rpn_training_labels(self, pts_rect, gt_boxes3d):
+    def generate_rpn_training_labels(self, pts_rect, gt_boxes3d, gt_classes):
         cls_label = np.zeros((pts_rect.shape[0]), dtype=np.int32)
         reg_label = np.zeros((pts_rect.shape[0], 7), dtype=np.float32)
         extend_gt_boxes3d = gt_boxes3d.copy()
@@ -422,7 +428,7 @@ class KittiDataset:
         for k in range(gt_boxes3d.shape[0]):
             box_corners = gt_corners[k]
             fg_pt_flag = obj_utils.is_point_inside(pts_rect.T, box_corners.T)
-            cls_label[fg_pt_flag] = 1
+            cls_label[fg_pt_flag] = gt_classes[k]
             reg_label[fg_pt_flag, :] = gt_boxes3d[k]
 
             # enlarge the bbox3d, ignore nearby points

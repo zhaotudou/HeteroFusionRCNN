@@ -88,8 +88,8 @@ message RpnConfig {
     // RPN NMS IoU threshold during testing
     required float rpn_test_nms_iou_thresh = 6;
 
-    required float rpn_xz_search_range = 7;
-    required float rpn_xz_bin_len = 8;
+    repeated float rpn_xz_search_range = 7;
+    repeated float rpn_xz_bin_len = 8;
     // in fraction of PI
     required float rpn_theta_search_range = 9;
     required int32 rpn_theta_bin_num = 10;
@@ -117,8 +117,8 @@ message AvodConfig {
     // AVOD Proposal ROI IMG crop size
     required int32 avod_proposal_roi_img_crop_size = 6;
     
-    required float avod_xz_search_range = 7;
-    required float avod_xz_bin_len = 8;
+    repeated float avod_xz_search_range = 7;
+    repeated float avod_xz_bin_len = 8;
     // in fraction of PI
     required float avod_theta_search_range = 9;
     // in units of degree

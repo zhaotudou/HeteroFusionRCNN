@@ -5,6 +5,9 @@ import time
 import numpy as np
 
 from PIL import Image
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as patheffects
@@ -52,12 +55,12 @@ def main():
     rpn_score_threshold = 0.1
     avod_score_threshold = 0.1
 
-    gt_classes = ["Car"]
+    gt_classes = ["Car", "Pedestrian", "Cyclist"]
     # gt_classes = ['Pedestrian', 'Cyclist']
 
     # Overwrite this to select a specific checkpoint
-    global_step = None
-    checkpoint_name = "avod_cars_fuse"
+    global_step = 76000
+    checkpoint_name = "rpn_multiclass"
 
     # Drawing Toggles
     draw_proposals_separate = False
