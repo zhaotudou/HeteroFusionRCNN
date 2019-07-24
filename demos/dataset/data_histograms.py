@@ -3,9 +3,9 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 
-from wavedata.tools.obj_detection import obj_utils
+from hf.core import obj_utils
 
-from avod.builders.dataset_builder import DatasetBuilder
+from hf.builders.dataset_builder import DatasetBuilder
 
 
 def main():

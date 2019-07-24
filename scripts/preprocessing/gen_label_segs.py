@@ -2,8 +2,8 @@ import os
 
 import numpy as np
 
-import avod
-from avod.builders.dataset_builder import DatasetBuilder
+import hf
+from hf.builders.dataset_builder import DatasetBuilder
 
 
 def do_preprocessing(dataset, indices):
@@ -88,16 +88,16 @@ def main(dataset=None):
         return
 
     car_dataset_config_path = (
-        avod.root_dir() + "/configs/label_seg_preprocessing/rpn_cars.config"
+        hf.root_dir() + "/configs/label_seg_preprocessing/rpn_cars.config"
     )
     ped_dataset_config_path = (
-        avod.root_dir() + "/configs/label_seg_preprocessing/rpn_pedestrians.config"
+        hf.root_dir() + "/configs/label_seg_preprocessing/rpn_pedestrians.config"
     )
     cyc_dataset_config_path = (
-        avod.root_dir() + "/configs/label_seg_preprocessing/rpn_cyclists.config"
+        hf.root_dir() + "/configs/label_seg_preprocessing/rpn_cyclists.config"
     )
     ppl_dataset_config_path = (
-        avod.root_dir() + "/configs/label_seg_preprocessing/rpn_people.config"
+        hf.root_dir() + "/configs/label_seg_preprocessing/rpn_people.config"
     )
 
     ##############################
@@ -122,7 +122,7 @@ def main(dataset=None):
     # Dataset setup
     ##############################
     if process_car:
-        # from avod.protos import pipeline_pb2
+        # from hf.protos import pipeline_pb2
         # pipeline_config = pipeline_pb2.NetworkPipelineConfig()
         # dataset_config = pipeline_config.dataset_config
         # dataset_config.MergeFrom(DatasetBuilder.KITTI_UNITTEST)

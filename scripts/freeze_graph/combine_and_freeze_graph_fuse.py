@@ -7,11 +7,11 @@ import horovod.tensorflow
 from tensorflow.python.framework import graph_util
 from tensorflow.python.ops import variable_scope
 
-import avod.builders.config_builder_util as config_builder
-from avod.builders.dataset_builder import DatasetBuilder
-from avod.core.models.avod_model import AvodModel
-from avod.core.models.rpn_model import RpnModel
-from avod.core.evaluator import Evaluator
+import hf.builders.config_builder_util as config_builder
+from hf.builders.dataset_builder import DatasetBuilder
+from hf.core.models.rcnn_model import RcnnModel
+from hf.core.models.rpn_model import RpnModel
+from hf.core.evaluator import Evaluator
 
 dir(tf.contrib)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.5f}".format(x)})
@@ -19,8 +19,8 @@ np.set_printoptions(formatter={"float": lambda x: "{0:0.5f}".format(x)})
 SAVE_INFERENCE_MODEL = True
 OUTPUT_FINAL_PREDICTION = True
 TEST_PB_GRAPH = True
-RPN_CONFIG = "../../avod/configs/rpn_multiclass.config"
-RCNN_CONFIG = "../../avod/configs/avod_multiclass_rpn60k.config"
+RPN_CONFIG = "../../hf/configs/rpn_multiclass.config"
+RCNN_CONFIG = "../../hf/configs/rcnn_multiclass.config"
 DATA_SPLIT = "val"
 EVAL_MODE = "test"
 SAVE_RPN_FEATURE = True
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     with tf.Graph().as_default() as rcnn_graph:
         getter = lambda next_creator, **kwargs: variable_creator(**kwargs)
         with variable_scope.variable_creator_scope(getter):
-            rcnn_model = AvodModel(
+            rcnn_model = RcnnModel(
                 rcnn_model_config,
                 train_val_test=rcnn_eval_config.eval_mode,
                 dataset=rcnn_dataset,
@@ -352,11 +352,11 @@ if __name__ == "__main__":
             print(final_prediction_pb)
     else:
         prediction_dict = dict()
-        prediction_dict[AvodModel.PRED_BOXES] = outputs[0]
-        prediction_dict[AvodModel.PRED_SOFTMAX] = outputs[1]
-        prediction_dict[AvodModel.PRED_NON_EMPTY_BOX_MASK] = outputs[2]
-        prediction_dict[AvodModel.PRED_NMS_INDICES] = outputs[3]
-        prediction_dict[AvodModel.PRED_NUM_BOXES_BEFORE_PADDING] = outputs[4]
+        prediction_dict[RcnnModel.PRED_BOXES] = outputs[0]
+        prediction_dict[RcnnModel.PRED_SOFTMAX] = outputs[1]
+        prediction_dict[RcnnModel.PRED_NON_EMPTY_BOX_MASK] = outputs[2]
+        prediction_dict[RcnnModel.PRED_NMS_INDICES] = outputs[3]
+        prediction_dict[RcnnModel.PRED_NUM_BOXES_BEFORE_PADDING] = outputs[4]
 
         import pickle
 
@@ -364,7 +364,7 @@ if __name__ == "__main__":
             pickle.dump(prediction_dict, handle)
 
         prediction_save_path = ["/tmp/prediction.txt"]
-        Evaluator.save_avod_predicted_boxes_3d_and_scores(
+        Evaluator.save_rcnn_predicted_boxes_3d_and_scores(
             prediction_dict, prediction_save_path
         )
 

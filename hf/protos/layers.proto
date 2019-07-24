@@ -1,0 +1,149 @@
+package hf.protos;
+
+// Message for configuring Model Layer params.
+message LayersConfig {
+
+    required FeatureExtractor pc_feature_extractor = 1;
+    required FeatureExtractor img_feature_extractor = 2;
+
+    required RPNLayersConfig rpn_config = 3;
+    required RCNNLayersConfig rcnn_config = 4;
+}
+
+message FeatureExtractor {
+    oneof feature_extractor {
+
+        PointCNNLayersConfig pc_pointcnn = 1;
+        VGGLayersConfig img_vgg = 2;
+
+        PyramidLayersConfig img_vgg_pyr = 3;
+        PyramidLayersConfig bev_vgg_pyr = 4;
+
+        PointNetLayersConfig pc_pointnet = 5;
+    }
+}
+
+message FCLayer {
+    required int32 C = 1;
+    required float dropout_rate = 2;
+}
+
+message PointCNNLayersConfig {
+    required string sampling = 1;
+    required bool with_X_transformation = 2;
+    required bool with_global = 3;
+    optional bool multi_scale_grouping = 8 [default=false];
+    optional string sorting_method = 4 [default = ''];
+
+
+    //[K, D, P, C, links]
+    message XConvParam {
+      repeated int32 param = 1;
+    }
+
+    message XConvLayer {
+      repeated XConvParam xconv_param = 1;
+      repeated int32 links = 2;
+    }
+    repeated XConvLayer xconv_layer = 5;
+    
+    // XDConv layer [K, D, pts_layer_idx, qrs_layer_idx]
+    message XDConvLayer {
+      repeated int32 xdconv_param = 1;
+    }
+    repeated XDConvLayer xdconv_layer = 6;
+    
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer fc_layer = 7;
+}
+
+message PointNetLayersConfig {
+    required bool use_knn = 1;
+    required bool use_sa_msg_module = 7;
+    required bool pointcnn_like_structure = 2;
+
+    // MLP
+    message MLP {
+        repeated int32 channel = 1;
+    }
+    //  Set Abstraction (SA) Module
+    message SAModule {
+      required int32 npoint = 1;
+      required int32 nsample = 2;
+      optional float radius = 3;
+      required MLP mlp = 4;
+    }
+
+    repeated SAModule sa_module = 3;
+
+    //  Set Abstraction (SA) Multi-Scale Grouping Module
+    message SAMSGModule {
+      required int32 npoint = 1;
+      repeated int32 nsample = 2;
+      repeated float radius = 3;
+      repeated MLP mlp = 4;
+    }
+
+    repeated SAMSGModule sa_msg_module = 4;
+    
+    // Feature Propagation Module
+    message FPModule {
+      optional int32 pts_layer_idx = 1;
+      optional int32 qrs_layer_idx = 2;
+      required MLP mlp = 3;
+    }
+    repeated FPModule fp_module = 5;
+    
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer fc_layer = 6;
+}
+
+message VGGLayersConfig {
+    // Conv layer 1 [repeat, num filter]
+    repeated int32 vgg_conv1 = 1;
+
+    // Conv layer 2 [repeat, num filter]
+    repeated int32 vgg_conv2 = 2;
+
+    // Conv layer 3 [repeat, num filter]
+    repeated int32 vgg_conv3 = 3;
+
+    // Conv layer 4 [repeat, num filter]
+    repeated int32 vgg_conv4 = 4;
+
+    // Upsampling multiplier
+    required int32 upsampling_multiplier = 5;
+
+    // L2 norm weight decay
+    optional float l2_weight_decay = 6 [default = 0.0005];
+}
+
+message PyramidLayersConfig {
+    // Conv layer 1 [repeat, num filter]
+    repeated int32 vgg_conv1 = 1;
+
+    // Conv layer 2 [repeat, num filter]
+    repeated int32 vgg_conv2 = 2;
+
+    // Conv layer 3 [repeat, num filter]
+    repeated int32 vgg_conv3 = 3;
+
+    // Conv layer 4 [repeat, num filter]
+    repeated int32 vgg_conv4 = 4;
+
+    // L2 norm weight decay
+    optional float l2_weight_decay = 6 [default = 0.0005];
+}
+
+message RPNLayersConfig {
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer fc_layer = 1;
+}
+
+message RCNNLayersConfig{
+    // FCLayer [channel, dropout_rate]
+    repeated FCLayer mlp = 1;
+    required FeatureExtractor pc_feature_extractor = 2;
+    required FeatureExtractor img_feature_extractor = 3;
+    repeated FCLayer fc_layer = 4;
+}

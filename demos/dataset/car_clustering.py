@@ -3,10 +3,10 @@ import sys
 import numpy as np
 from sklearn.cluster import KMeans
 
-from wavedata.tools.obj_detection import obj_utils
+from hf.core import obj_utils
 
-from avod.builders.dataset_builder import DatasetBuilder
-from avod.core.label_cluster_utils import LabelClusterUtils
+from hf.builders.dataset_builder import DatasetBuilder
+from hf.core.label_cluster_utils import LabelClusterUtils
 
 
 def main():

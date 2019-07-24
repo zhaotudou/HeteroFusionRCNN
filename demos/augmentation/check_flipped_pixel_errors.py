@@ -6,12 +6,12 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from wavedata.tools.core import calib_utils
-from wavedata.tools.obj_detection import obj_utils
+from hf.core import calib_utils
+from hf.core import obj_utils
 
-from avod.builders.dataset_builder import DatasetBuilder
-from avod.core import box_3d_projector, box_3d_encoder
-from avod.datasets.kitti import kitti_aug
+from hf.builders.dataset_builder import DatasetBuilder
+from hf.core import box_3d_projector, box_3d_encoder
+from hf.datasets.kitti import kitti_aug
 
 
 def main():

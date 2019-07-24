@@ -4,7 +4,6 @@ import sys
 import os
 import numpy as np
 
-# from avod.core import box_8c_encoder
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)

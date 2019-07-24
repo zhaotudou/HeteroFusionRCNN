@@ -9,19 +9,20 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as patheffects
 import mayavi.mlab as mlab
-from wavedata.tools.core import calib_utils
-from wavedata.tools.obj_detection import obj_utils
-from wavedata.tools.obj_detection import evaluation
+from hf.core import calib_utils
+from hf.core import obj_utils
 
-import avod
-from avod.builders.dataset_builder import DatasetBuilder
-from avod.core import box_3d_encoder
-from avod.core import box_3d_projector
+import hf
+from hf.builders.dataset_builder import DatasetBuilder
+from hf.core import box_3d_encoder
+from hf.core import box_3d_projector
+
+import demo_utils
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, "mayavi"))  # viz_util
-from viz_util import draw_lidar_simple, draw_lidar, draw_gt_boxes3d
+from vis_utils_3d import draw_lidar_simple, draw_lidar, draw_gt_boxes3d
 
 
 BOX_COLOUR_SCHEME = {
@@ -32,7 +33,7 @@ BOX_COLOUR_SCHEME = {
 
 
 def main():
-    """This demo shows RPN proposals and AVOD predictions in 3D
+    """This demo shows RPN proposals and RCNN predictions in 3D
     and 2D in image space. Given certain thresholds for proposals
     and predictions, it selects and draws the bounding boxes on
     the image sample. It goes through the entire proposal and
@@ -51,7 +52,7 @@ def main():
     dataset_config.data_split = "val"
 
     rpn_score_threshold = 0.1
-    avod_score_threshold = 0.1
+    rcnn_score_threshold = 0.1
 
     gt_classes = ["Car"]
     # gt_classes = ['Pedestrian', 'Cyclist']
@@ -79,9 +80,9 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        # avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
-        # avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_eval"
-        avod.root_dir()
+        # hf.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_train"
+        # hf.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions_for_rcnn_eval"
+        hf.root_dir()
         + "/data/outputs/"
         + checkpoint_name
         + "/predictions"
@@ -135,7 +136,7 @@ def main():
 
     if draw_overlaid:
         overlaid_out_dir = output_dir_base + "/overlaid/{}/{}/{}".format(
-            dataset.data_split, global_step, avod_score_threshold
+            dataset.data_split, global_step, rcnn_score_threshold
         )
 
         if not os.path.exists(overlaid_out_dir):
@@ -145,7 +146,7 @@ def main():
 
     if draw_predictions_separate:
         pred_out_dir = output_dir_base + "/predictions/{}/{}/{}".format(
-            dataset.data_split, global_step, avod_score_threshold
+            dataset.data_split, global_step, rcnn_score_threshold
         )
 
         if not os.path.exists(pred_out_dir):
@@ -246,10 +247,10 @@ def main():
             if len(prediction_boxes_3d) > 0:
 
                 # Apply score mask
-                avod_score_mask = prediction_scores >= avod_score_threshold
-                prediction_boxes_3d = prediction_boxes_3d[avod_score_mask]
-                prediction_scores = prediction_scores[avod_score_mask]
-                prediction_class_indices = prediction_class_indices[avod_score_mask]
+                rcnn_score_mask = prediction_scores >= rcnn_score_threshold
+                prediction_boxes_3d = prediction_boxes_3d[rcnn_score_mask]
+                prediction_scores = prediction_scores[rcnn_score_mask]
+                prediction_class_indices = prediction_class_indices[rcnn_score_mask]
 
                 # # Swap l, w for predictions where w > l
                 # swapped_indices = \
@@ -423,7 +424,7 @@ def draw_prediction_info(
     if draw_iou and len(ground_truth) > 0:
         if draw_score:
             label += ", "
-        iou = evaluation.two_d_iou(pred_box_2d, ground_truth)
+        iou = demo_utils.two_d_iou(pred_box_2d, ground_truth)
         label += "{:.3f}".format(max(iou))
 
     box_cls = gt_classes[int(pred_class_idx)]

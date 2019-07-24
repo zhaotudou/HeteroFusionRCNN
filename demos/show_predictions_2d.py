@@ -12,17 +12,17 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as patheffects
 
-from wavedata.tools.core import calib_utils
-from wavedata.tools.obj_detection import obj_utils
-from wavedata.tools.obj_detection import evaluation
-from wavedata.tools.visualization import vis_utils
+from hf.core import calib_utils
+from hf.core import obj_utils
 
-import avod
-from avod.builders.dataset_builder import DatasetBuilder
-from avod.core import box_3d_encoder
-from avod.core import box_3d_projector
-from avod.core import anchor_projector
+import hf
+from hf.builders.dataset_builder import DatasetBuilder
+from hf.core import box_3d_encoder
+from hf.core import box_3d_projector
+from hf.core import anchor_projector
 
+import demo_utils
+import vis_utils_2d
 
 BOX_COLOUR_SCHEME = {
     "Car": "#00FF00",  # Green
@@ -32,7 +32,7 @@ BOX_COLOUR_SCHEME = {
 
 
 def main():
-    """This demo shows RPN proposals and AVOD predictions in 3D
+    """This demo shows RPN proposals and RCNN predictions in 3D
     and 2D in image space. Given certain thresholds for proposals
     and predictions, it selects and draws the bounding boxes on
     the image sample. It goes through the entire proposal and
@@ -53,7 +53,7 @@ def main():
     fig_size = (10, 6.1)
 
     rpn_score_threshold = 0.1
-    avod_score_threshold = 0.1
+    rcnn_score_threshold = 0.1
 
     gt_classes = ["Car", "Pedestrian", "Cyclist"]
     # gt_classes = ['Pedestrian', 'Cyclist']
@@ -88,7 +88,7 @@ def main():
 
     # Setup Paths
     predictions_dir = (
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
+        hf.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
     )
 
     proposals_and_scores_dir = (
@@ -127,7 +127,7 @@ def main():
 
     if draw_overlaid:
         overlaid_out_dir = output_dir_base + "/overlaid/{}/{}/{}".format(
-            dataset.data_split, global_step, avod_score_threshold
+            dataset.data_split, global_step, rcnn_score_threshold
         )
 
         if not os.path.exists(overlaid_out_dir):
@@ -137,7 +137,7 @@ def main():
 
     if draw_predictions_separate:
         pred_out_dir = output_dir_base + "/predictions/{}/{}/{}".format(
-            dataset.data_split, global_step, avod_score_threshold
+            dataset.data_split, global_step, rcnn_score_threshold
         )
 
         if not os.path.exists(pred_out_dir):
@@ -225,10 +225,10 @@ def main():
             if len(prediction_boxes_3d) > 0:
 
                 # Apply score mask
-                avod_score_mask = prediction_scores >= avod_score_threshold
-                prediction_boxes_3d = prediction_boxes_3d[avod_score_mask]
-                prediction_scores = prediction_scores[avod_score_mask]
-                prediction_class_indices = prediction_class_indices[avod_score_mask]
+                rcnn_score_mask = prediction_scores >= rcnn_score_threshold
+                prediction_boxes_3d = prediction_boxes_3d[rcnn_score_mask]
+                prediction_scores = prediction_scores[rcnn_score_mask]
+                prediction_class_indices = prediction_class_indices[rcnn_score_mask]
 
                 # # Swap l, w for predictions where w > l
                 # swapped_indices = \
@@ -278,7 +278,7 @@ def main():
 
             num_of_proposals = proposal_boxes_3d.shape[0]
 
-            prop_fig, prop_2d_axes, prop_3d_axes = vis_utils.visualization(
+            prop_fig, prop_2d_axes, prop_3d_axes = vis_utils_2d.visualization(
                 dataset.rgb_image_dir, img_idx, display=False
             )
 
@@ -338,7 +338,7 @@ def main():
                     obj.score = score
             else:
                 if save_empty_images:
-                    pred_fig, pred_2d_axes, pred_3d_axes = vis_utils.visualization(
+                    pred_fig, pred_2d_axes, pred_3d_axes = vis_utils_2d.visualization(
                         dataset.rgb_image_dir, img_idx, display=False, fig_size=fig_size
                     )
                     filename = pred_out_dir + "/" + sample_name + ".png"
@@ -371,7 +371,7 @@ def main():
                 # Now only draw prediction boxes on images
                 # on a new figure handler
                 if draw_projected_2d_boxes:
-                    pred_fig, pred_2d_axes, pred_3d_axes = vis_utils.visualization(
+                    pred_fig, pred_2d_axes, pred_3d_axes = vis_utils_2d.visualization(
                         dataset.rgb_image_dir, img_idx, display=False, fig_size=fig_size
                     )
 
@@ -390,7 +390,7 @@ def main():
                         draw_orientations_on_pred,
                     )
                 else:
-                    pred_fig, pred_3d_axes = vis_utils.visualize_single_plot(
+                    pred_fig, pred_3d_axes = vis_utils_2d.visualize_single_plot(
                         dataset.rgb_image_dir, img_idx, display=False
                     )
 
@@ -427,10 +427,10 @@ def draw_proposals(
     # Draw filtered ground truth boxes
     for obj in filtered_gt_objs:
         # Draw 2D boxes
-        vis_utils.draw_box_2d(prop_2d_axes, obj, test_mode=True, color_tm="r")
+        vis_utils_2d.draw_box_2d(prop_2d_axes, obj, test_mode=True, color_tm="r")
 
         # Draw 3D boxes
-        vis_utils.draw_box_3d(
+        vis_utils_2d.draw_box_3d(
             prop_3d_axes,
             obj,
             p_matrix,
@@ -465,7 +465,7 @@ def draw_proposals(
         prop_2d_axes.add_patch(rect)
 
         # Draw 3D boxes
-        vis_utils.draw_box_3d(
+        vis_utils_2d.draw_box_3d(
             prop_3d_axes,
             obj_label,
             p_matrix,
@@ -494,10 +494,10 @@ def draw_predictions(
     gt_boxes = []
     for obj in filtered_gt_objs:
         # Draw 2D boxes
-        vis_utils.draw_box_2d(pred_2d_axes, obj, test_mode=True, color_tm="r")
+        vis_utils_2d.draw_box_2d(pred_2d_axes, obj, test_mode=True, color_tm="r")
 
         # Draw 3D boxes
-        vis_utils.draw_box_3d(
+        vis_utils_2d.draw_box_3d(
             pred_3d_axes,
             obj,
             p_matrix,
@@ -538,7 +538,7 @@ def draw_predictions(
         pred_2d_axes.add_patch(rect)
 
         # Draw 3D boxes
-        vis_utils.draw_box_3d(
+        vis_utils_2d.draw_box_3d(
             pred_3d_axes,
             pred_obj,
             p_matrix,
@@ -589,7 +589,7 @@ def draw_3d_predictions(
     gt_boxes = []
     for obj in filtered_gt_objs:
         # Draw 3D boxes
-        vis_utils.draw_box_3d(
+        vis_utils_2d.draw_box_3d(
             pred_3d_axes,
             obj,
             p_matrix,
@@ -617,7 +617,7 @@ def draw_3d_predictions(
 
         # Draw 3D boxes
         box_cls = gt_classes[int(pred_class_idx)]
-        vis_utils.draw_box_3d(
+        vis_utils_2d.draw_box_3d(
             pred_3d_axes,
             pred_obj,
             p_matrix,
@@ -671,7 +671,7 @@ def draw_prediction_info(
     if draw_iou and len(ground_truth) > 0:
         if draw_score:
             label += ", "
-        iou = evaluation.two_d_iou(pred_box_2d, ground_truth)
+        iou = demo_utils.two_d_iou(pred_box_2d, ground_truth)
         label += "{:.3f}".format(max(iou))
 
     box_cls = gt_classes[int(pred_class_idx)]

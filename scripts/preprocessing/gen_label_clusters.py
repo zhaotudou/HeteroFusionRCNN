@@ -1,4 +1,4 @@
-from avod.builders.dataset_builder import DatasetBuilder
+from hf.builders.dataset_builder import DatasetBuilder
 
 
 def main(dataset=None):

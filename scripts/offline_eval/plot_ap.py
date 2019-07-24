@@ -8,7 +8,7 @@ def main():
     """
 
     # Output from native eval
-    results_file = "results/avod_cars_example_results_0.1.txt"
+    results_file = "results/rcnn_cars_example_results_0.1.txt"
     # results_file = 'results/pyramid_cars_example_results_0.1.txt'
     # results_file = 'results/pyramid_cars_with_aug_example_results_0.1.txt'
 

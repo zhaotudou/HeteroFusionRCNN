@@ -11,7 +11,7 @@ CUDA: 9.0
 #### Clone this repo
 
 ```
-git clone -b PointRCNN-seg ssh://git@git.sankuai.com/~lijiahong/heterofusion.git
+git clone -b HeteroFusion ssh://git@git.sankuai.com/~lijiahong/heterofusion.git
 ```
 
 ####  Install Python dependencies
@@ -22,44 +22,37 @@ pip3 install -r requirements.txt
 pip3 install tensorflow-gpu==1.6.0
 ```
 
-#### Add `heterofusion (top level)` and `wavedata` to your PYTHONPATH
+#### Add `heterofusion (top level)` to your PYTHONPATH
 
 ```
 # For virtualenvwrapper users
 add2virtualenv .
-add2virtualenv wavedata
 ```
 
 ```
 # For nonvirtualenv users
 export PYTHONPATH=$PYTHONPATH:'/path/to/heterofusion'
-export PYTHONPATH=$PYTHONPATH:'/path/to/heterofusion/wavedata'
 ```
 
 #### Compile proto
 
-Avod uses Protobufs to configure model and training parameters. Before the framework can be used, the protos must be compiled (from top level avod folder):
+HeteroFusion uses Protobufs to configure model and training parameters. Before the framework can be used, the protos must be compiled (from top level heterofusion folder):
 
 ```
-sh avod/protos/run_protoc.sh
+bash hf/protos/run_protoc.sh
 ```
 
 Alternatively, you can run the `protoc` command directly:
 
 ```
-protoc avod/protos/*.proto --python_out=.
+protoc hf/protos/*.proto --python_out=.
 ```
 #### Compile other tensorflow ops
 
 **Note:** If compilation does not succeed, check the `TF_PATH` in `.sh` files to adpat to your environment setup. 
 
 ```
-cd sampling
-bash tf_sampling_compile.sh
-```
-```
-cd cropping
-bash tf_cropping_compile.sh
+bash scripts/install/build_tf_ops.sh 
 ```
 ## Dataset
 To train on the [Kitti Object Detection Dataset](http://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d):
@@ -82,59 +75,48 @@ Kitti
         val.txt
 ```
 
-Alternatively, we provide a small dataset with few samples to validate your developing code. The path to this small dataset is `avod/tests/datasets/Kitti/object/`.
+Alternatively, we provide a small dataset with few samples to validate your developing code. The path to this small dataset is `hf/tests/datasets/Kitti/object/`.
 
 ## Training
 
 First of all, we will use the following three config file:
 
-  1. `avod/configs/label_seg_preprocessing/rpn_cars.config`
-  2. `avod/configs/rpb_cars_alt_1.config`
-  3. `avod/configs/avod_cars_alt_2.config`
+  1. `hf/configs/rpn_multiclass.config`
+  2. `hf/configs/rcnn_multiclass.config`
   
 Before running any scripts, check the `dataset_dir` field in those config files and make sure it sets to:
 
 ```
 dataset_dir: '/path/to/dataset/Kitti/object'
 ```
-### 1. Preprocessing
-
-The training data needs to be pre-processed to generate point level label for the RPN. 
-
-Note: This script does parallel processing with `num_[class]_children` processes for faster processing. This can also be disabled inside the script by setting `in_parallel` to `False`.
+### 1. Train stage-1 network - RPN network
+To start training, run the following (single-GPU version):
 
 ```bash
-cd avod
-python scripts/preprocessing/gen_label_segs.py 
+python hf/experiments/run_training.py --pipeline_config=hf/configs/rpn_multiclass.config  --device='0' --data_split='train'
 ```
 
-Once this script is done, you should now have the following folders inside `avod/data`:
-
+or the multi-GPU version:
+```bash
+bash hf/experiments/mpi_run_training.sh hf/configs/rpn_multiclass.config  '0,1,2,3'
 ```
-data
-    label_clusters
-    label_segs
-```
-
-### 2. Train part-1 network - RPN network
-To start training, run the following:
+### 2. Generate data for stage-2 network - RCNN network
 
 ```bash
-python avod/experiments/run_training.py --pipeline_config=avod/configs/rpn_cars_alt_1.config  --device='0' --data_split='train'
+python hf/experiments/run_evaluation.py --pipeline_config=hf/configs/rpn_multiclass.config --data_split='train' --for_rcnn_train --save_rpn_feature
 ```
-### 3. Generate data for part-2 network - RCNN network
-
-```bash
-python avod/experiments/run_evaluation.py --pipeline_config=avod/configs/rpn_cars_alt_1.config --data_split='train'
-```
-After running, you should see `proposals_and_scores` and `proposals_info` folders under `avod/data/outputs/rpn_cars_alt_1/predictions/
+After running, you should see `proposals_and_scores`, `proposals_iou` and `rpn_feature` folders under `hf/data/outputs/rpn_multiclass/predictions_for_rcnn_train/
 `.
-### 4. Train part-2 network - RCNN network
-To start training, run the following:
+### 3. Train stage-2 network - RCNN network
+To start training, run the following (single-GPU version):
 
 ```bash
-python avod/experiments/run_training.py --pipeline_config=avod/configs/avod_cars_alt_2.config  --device='0' --data_split='train'
+python hf/experiments/run_training.py --pipeline_config=hf/configs/rcnn_multiclass.config  --device='0' --data_split='train'
+```
+or the multi-GPU version:
+```bash
+bash hf/experiments/mpi_run_training.sh hf/configs/rcnn_multiclass.config  '0,1,2,3'
 ```
 
 ### (Optional) Viewing Results
-All results should be saved in `avod/data/outputs`. Here you should see `proposals_and_scores` and `final_predictions_and_scores` results. To visualize these results, you can run `demos/show_predictions_2d.py`. The script needs to be configured to your specific experiments. The `scripts/offline_eval/plot_ap.py` will plot the AP vs. step, and print the 5 highest performing checkpoints for each evaluation metric at the moderate difficulty.
+All results should be saved in `hf/data/outputs`. Here you should see `proposals_and_scores` and `final_predictions_and_scores` results. To visualize these results, you can run `demos/show_predictions_2d.py` or `demos/show_predictions_3d.py`. The script needs to be configured to your specific experiments. The `scripts/offline_eval/plot_ap.py` will plot the AP vs. step, and print the 5 highest performing checkpoints for each evaluation metric at the moderate difficulty.

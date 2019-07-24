@@ -4,12 +4,12 @@ import numpy as np
 import os
 from PIL import Image
 
-from wavedata.tools.core import calib_utils
+from hf.core import calib_utils
 
-import avod
-from avod.builders import config_builder_util
-from avod.builders.dataset_builder import DatasetBuilder
-from avod.core import box_3d_projector
+import hf
+from hf.builders import config_builder_util
+from hf.builders.dataset_builder import DatasetBuilder
+from hf.core import box_3d_projector
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
     ##############################
     # Options
     ##############################
-    checkpoint_name = "avod_cars_example"
+    checkpoint_name = "rcnn_cars_example"
 
     data_split = "val"
 
@@ -42,7 +42,7 @@ def main():
 
     # Parse experiment config
     pipeline_config_file = (
-        avod.root_dir()
+        hf.root_dir()
         + "/data/outputs/"
         + checkpoint_name
         + "/"
@@ -65,7 +65,7 @@ def main():
 
     # Get available prediction folders
     predictions_root_dir = (
-        avod.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
+        hf.root_dir() + "/data/outputs/" + checkpoint_name + "/predictions"
     )
 
     final_predictions_root_dir = (

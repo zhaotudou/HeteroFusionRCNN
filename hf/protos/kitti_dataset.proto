@@ -1,0 +1,48 @@
+package hf.protos;
+
+import "hf/protos/kitti_utils.proto";
+import "hf/protos/mini_batch.proto";
+
+message KittiDatasetConfig {
+
+    // Unique name for dataset
+    optional string name = 1 [default = "kitti"];
+
+    // Top level directory of the dataset
+    optional string dataset_dir = 2 [default = "~/HeteroFusion/dataset/Kitti/object"];
+
+    // Split for the data (e.g. 'train', 'val')
+    optional string data_split = 3 [default = "train"];
+
+    // Folder that holds the data for the chosen data split
+    optional string data_split_dir = 4 [default = "training"];
+
+    // Whether the samples have labels
+    optional bool has_labels = 5 [default = true];
+
+    // The data split to be used for calculating clusters (e.g. val split
+    // should use the train split for clustering)
+    optional string cluster_split = 6 [default = "train"];
+
+    // Classes to be classified (e.g. ['Car', 'Pedestrian', 'Cyclist']
+    repeated string classes = 7;
+
+    // Number of clusters corresponding to each class (e.g. [2, 1, 2])
+    repeated int32 num_clusters = 8;
+
+    // Augmentations (e.g. [], ['flipping'], ['flipping', 'pca_jitter'])
+    repeated string aug_list = 10;
+    
+    // ROI Augmentations (e.g. ['single', 'multiple', 'normal'])
+    optional string aug_roi_method = 11 [default = 'multiple'];
+
+    // KittiUtils configuration
+    optional KittiUtilsConfig kitti_utils_config = 20;
+    
+    optional MiniBatchConfig mini_batch_config = 12;
+
+    // for second stage rcnn train/eval
+    optional string rpn_proposal_dir = 13;
+    optional string rpn_proposal_iou_dir = 14;
+    optional string rpn_feature_dir = 15;
+}
