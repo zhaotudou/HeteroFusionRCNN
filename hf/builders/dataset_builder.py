@@ -42,7 +42,7 @@ class DatasetBuilder(object):
         data_split_dir="training",
         has_labels=True,
         cluster_split="train",
-        classes=["Car", "Pedestrian", "Cyclist"],
+        classes=["Cyclist"],
         num_clusters=[1, 1, 1],
     )
 
@@ -98,8 +98,6 @@ class DatasetBuilder(object):
     CONFIG_DEFAULTS_PROTO = """
         kitti_utils_config {
             area_extents: [-40, 40, -5, 3, 0, 70]
-            voxel_size: 0.1
-            anchor_strides: [0.5, 0.5]
         }
         """
 

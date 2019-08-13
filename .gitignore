@@ -1,6 +1,6 @@
-avod/data
-avod/checkpoints
-avod/logs
+hf/data
+hf/checkpoints
+hf/logs
 
 # Python
 *.pyc
@@ -22,7 +22,7 @@ tags
 # Distribution / packaging
 build/
 dist/
-avod.egg-info/
+hf.egg-info/
 
 # Protobuf files
 *_pb2.py

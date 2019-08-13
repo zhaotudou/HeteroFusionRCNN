@@ -5,6 +5,7 @@ import time
 import numpy as np
 
 from PIL import Image
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -12,14 +13,13 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as patheffects
 
+import hf
 from hf.core import calib_utils
 from hf.core import obj_utils
-
-import hf
-from hf.builders.dataset_builder import DatasetBuilder
 from hf.core import box_3d_encoder
 from hf.core import box_3d_projector
 from hf.core import anchor_projector
+from hf.builders.dataset_builder import DatasetBuilder
 
 import demo_utils
 import vis_utils_2d
@@ -55,12 +55,12 @@ def main():
     rpn_score_threshold = 0.1
     rcnn_score_threshold = 0.1
 
-    gt_classes = ["Car", "Pedestrian", "Cyclist"]
-    # gt_classes = ['Pedestrian', 'Cyclist']
+    # gt_classes = ["Car", "Pedestrian", "Cyclist"]
+    gt_classes = ["Cyclist"]
 
     # Overwrite this to select a specific checkpoint
-    global_step = 76000
-    checkpoint_name = "rpn_multiclass"
+    global_step = 30000
+    checkpoint_name = "rcnn_cyclist"
 
     # Drawing Toggles
     draw_proposals_separate = False
